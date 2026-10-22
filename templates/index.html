@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FloorPlan3D - 2D Floor Plan to Navigable 3D Map</title>
+    
+    <!-- Pinned Tailwind CSS via CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        darkblue: {
+                            900: '#070d1e',
+                            800: '#0b132b',
+                            700: '#1c2541',
+                            600: '#3a506b',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/static/css/custom.css">
+
+    <!-- Pinned Three.js r128 via CDN (cdnjs) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    
+    <!-- Pinned Three.js OrbitControls via CDN (jsdelivr) -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    
+    <!-- Pinned Three.js GLTFExporter via CDN (jsdelivr) -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans antialiased overflow-hidden">
+
+    <!-- Top Header Bar -->
+    <header class="h-14 border-b border-slate-800 bg-slate-900/90 px-6 flex items-center justify-between shrink-0 z-20">
+        <div class="flex items-center space-x-3">
+            <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center font-bold text-white shadow-lg shadow-blue-500/20">
+                3D
+            </div>
+            <div>
+                <h1 class="text-lg font-bold tracking-tight text-white flex items-center gap-2">
+                    FloorPlan3D
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-400 font-medium">Meta SAM 3.1 + Muse Spark</span>
+                </h1>
+            </div>
+        </div>
+
+        <!-- System & API Status Indicator -->
+        <div class="flex items-center space-x-4">
+            <div class="flex items-center space-x-2 text-xs">
+                {% if api_key_configured %}
+                    <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span class="text-emerald-400 font-medium">Meta API Ready (SAM 3.1 & Muse Spark)</span>
+                {% else %}
+                    <span class="inline-block w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                    <span class="text-amber-400 font-medium">Demo Mode (Set MODEL_API_KEY in .env for live API)</span>
+                {% endif %}
+            </div>
+            <a href="https://dev.meta.ai/" target="_blank" class="text-xs px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition">
+                Meta Docs ↗
+            </a>
+        </div>
+    </header>
+
+    <!-- Main App Layout: Sidebar (Left) + Viewport Tabs (Right) -->
+    <div class="flex-1 flex overflow-hidden">
+
+        <!-- Left Sidebar: Controls & Upload -->
+        <aside class="w-96 border-r border-slate-800 bg-slate-900/70 flex flex-col shrink-0 overflow-y-auto">
+            <div class="p-5 space-y-6">
+
+                <!-- 1. Quick Hackathon Demo Action -->
+                <div>
+                    <button id="btn-load-demo" type="button" class="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-medium text-sm shadow-lg shadow-blue-500/20 transition flex items-center justify-center gap-2">
+                        <span>⚡ Load Hackathon Demo Plan</span>
+                    </button>
+                    <p class="text-[11px] text-slate-400 text-center mt-1.5">
+                        Instant 3D rendering with pre-segmented SAM & Muse Spark data.
+                    </p>
+                </div>
+
+                <!-- 2. Image Upload Card -->
+                <div class="bg-slate-800/40 rounded-xl p-4 border border-slate-800 space-y-3">
+                    <label class="text-xs font-semibold uppercase tracking-wider text-slate-400 block">
+                        Upload 2D Floor Plan
+                    </label>
+
+                    <!-- Drop Zone -->
+                    <div id="drop-zone" class="border-2 border-dashed border-slate-700 hover:border-slate-500 rounded-xl p-4 text-center cursor-pointer transition bg-slate-900/40 group">
+                        <input id="file-input" type="file" accept="image/png, image/jpeg, image/webp" class="hidden">
+                        
+                        <!-- Initial Prompt State -->
+                        <div id="drop-zone-prompt" class="space-y-2">
+                            <div class="w-10 h-10 mx-auto rounded-full bg-slate-800 group-hover:bg-slate-700 flex items-center justify-center text-slate-400 group-hover:text-blue-400 transition">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                                </svg>
+                            </div>
+                            <p class="text-xs text-slate-300 font-medium">Click to browse or drag & drop</p>
+                            <p class="text-[10px] text-slate-500">PNG, JPG, or WEBP (up to 10MB)</p>
+                        </div>
+
+                        <!-- Image Preview State -->
+                        <div id="image-preview-container" class="hidden relative">
+                            <img id="image-preview" src="" alt="Floor Plan Preview" class="max-h-40 mx-auto rounded-lg object-contain shadow-md">
+                            <button id="btn-remove-image" type="button" class="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-rose-600 hover:bg-rose-500 text-white text-xs flex items-center justify-center shadow">
+                                ✕
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. Spatial Calibration Sliders -->
+                <div class="bg-slate-800/40 rounded-xl p-4 border border-slate-800 space-y-4">
+                    <div class="flex items-center justify-between">
+                        <label class="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                            Spatial Calibration
+                        </label>
+                        <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-300 font-mono">scene.json</span>
+                    </div>
+
+                    <!-- Meters Per Pixel -->
+                    <div class="space-y-1.5">
+                        <div class="flex justify-between text-xs">
+                            <span class="text-slate-300">Scale (Meters / Pixel)</span>
+                            <span id="label-mpp" class="font-mono text-blue-400">0.020 m/px</span>
+                        </div>
+                        <input id="input-mpp" type="range" min="0.005" max="0.08" step="0.005" value="0.02" class="w-full accent-blue-500 cursor-pointer">
+                        <div class="flex justify-between text-[10px] text-slate-500">
+                            <span>High Res (5mm/px)</span>
+                            <span>Standard (2cm/px)</span>
+                        </div>
+                    </div>
+
+                    <!-- Wall Height -->
+                    <div class="space-y-1.5">
+                        <div class="flex justify-between text-xs">
+                            <span class="text-slate-300">Wall Height</span>
+                            <span id="label-wall-height" class="font-mono text-blue-400">3.0 m</span>
+                        </div>
+                        <input id="input-wall-height" type="range" min="0.8" max="5.0" step="0.1" value="3.0" class="w-full accent-blue-500 cursor-pointer">
+                    </div>
+
+                    <!-- Wall Thickness -->
+                    <div class="space-y-1.5">
+                        <div class="flex justify-between text-xs">
+                            <span class="text-slate-300">Wall Thickness</span>
+                            <span id="label-wall-thickness" class="font-mono text-blue-400">0.20 m</span>
+                        </div>
+                        <input id="input-wall-thickness" type="range" min="0.1" max="0.5" step="0.02" value="0.2" class="w-full accent-blue-500 cursor-pointer">
+                    </div>
+                </div>
+
+                <!-- 4. Generate Button & Progress -->
+                <div>
+                    <button id="btn-generate" type="button" disabled class="w-full py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold text-sm shadow-lg shadow-blue-600/30 transition flex items-center justify-center gap-2">
+                        <span>🚀 Run SAM 3.1 & Muse Spark</span>
+                    </button>
+
+                    <!-- Progress Bar -->
+                    <div id="progress-container" class="hidden mt-3 space-y-1.5">
+                        <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                            <div id="progress-bar" class="bg-gradient-to-r from-blue-500 to-indigo-500 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                        <p id="progress-status" class="text-[11px] text-slate-400 text-center animate-pulse-subtle">
+                            Starting AI pipeline...
+                        </p>
+                    </div>
+                </div>
+
+                <!-- 5. 3D Layers Checklist -->
+                <div class="bg-slate-800/40 rounded-xl p-4 border border-slate-800 space-y-2.5">
+                    <label class="text-xs font-semibold uppercase tracking-wider text-slate-400 block mb-1">
+                        3D Layers Visibility
+                    </label>
+                    <div class="grid grid-cols-2 gap-2 text-xs text-slate-300">
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                            <input id="chk-walls" type="checkbox" checked class="rounded border-slate-700 text-blue-600 focus:ring-blue-500 bg-slate-800">
+                            <span>Walls (3D)</span>
+                        </label>
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                            <input id="chk-floors" type="checkbox" checked class="rounded border-slate-700 text-blue-600 focus:ring-blue-500 bg-slate-800">
+                            <span>Floor Slabs</span>
+                        </label>
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                            <input id="chk-labels" type="checkbox" checked class="rounded border-slate-700 text-blue-600 focus:ring-blue-500 bg-slate-800">
+                            <span>Room Badges</span>
+                        </label>
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                            <input id="chk-openings" type="checkbox" checked class="rounded border-slate-700 text-blue-600 focus:ring-blue-500 bg-slate-800">
+                            <span>Doors & Windows</span>
+                        </label>
+                        <label class="flex items-center space-x-2 cursor-pointer col-span-2">
+                            <input id="chk-grid" type="checkbox" checked class="rounded border-slate-700 text-blue-600 focus:ring-blue-500 bg-slate-800">
+                            <span>1-Meter Architectural Grid</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- 6. Room Inspector Card (Interactive Raycasting) -->
+                <div class="bg-slate-800/40 rounded-xl p-4 border border-slate-800">
+                    <div class="flex items-center justify-between mb-2">
+                        <label class="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                            Room Inspector
+                        </label>
+                        <span class="text-[10px] text-blue-400">Click room in 3D</span>
+                    </div>
+
+                    <div id="room-inspector-empty" class="text-xs text-slate-500 text-center py-4">
+                        Click on any room floor slab in the 3D viewer to inspect its architectural data.
+                    </div>
+
+                    <div id="room-inspector-card" class="hidden space-y-2 text-xs">
+                        <div class="flex items-center justify-between border-b border-slate-700/60 pb-2">
+                            <h3 id="inspector-title" class="font-bold text-white text-sm">Room Name</h3>
+                            <span id="inspector-type" class="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-400 uppercase">CLASSROOM</span>
+                        </div>
+                        <div class="space-y-1.5 pt-1 text-slate-300">
+                            <div class="flex justify-between">
+                                <span class="text-slate-400">Confidence:</span>
+                                <span id="inspector-conf" class="font-mono text-emerald-400">95%</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-slate-400">Calculated Area:</span>
+                                <span id="inspector-area" class="font-mono text-white">48.0 m²</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-slate-400">Boundary:</span>
+                                <span id="inspector-points" class="font-mono text-slate-400">4 Vertices</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-slate-400">Connected Doors:</span>
+                                <span id="inspector-doors" class="font-mono text-amber-400">d1, d2</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </aside>
+
+        <!-- Right Main Content Area: Tabbed Views -->
+        <main class="flex-1 flex flex-col min-w-0 bg-slate-950 relative">
+
+            <!-- Viewport Header Tabs & Camera Controls -->
+            <div class="h-12 border-b border-slate-800 bg-slate-900/60 px-6 flex items-center justify-between shrink-0">
+                <!-- Navigation Tabs -->
+                <div class="flex space-x-1">
+                    <button data-tab="3d" class="nav-tab-btn active px-4 py-2 border-b-2 border-blue-500 text-blue-400 text-xs font-semibold flex items-center gap-1.5 transition">
+                        <span>🌐 3D Navigable Map</span>
+                    </button>
+                    <button data-tab="2d" class="nav-tab-btn px-4 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition">
+                        <span>🖼️ 2D AI Segmentation</span>
+                    </button>
+                    <button data-tab="json" class="nav-tab-btn px-4 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition">
+                        <span>📜 scene.json Contract</span>
+                    </button>
+                </div>
+
+                <!-- Floating 3D Camera Controls -->
+                <div class="flex items-center space-x-1.5 text-xs">
+                    <button id="btn-view-iso" title="Perspective Isometric View" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition">
+                        Isometric 3D
+                    </button>
+                    <button id="btn-view-top" title="Top-Down 2D Architectural View" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition">
+                        Top-Down 2D
+                    </button>
+                    <button id="btn-view-eye" title="Eye-Level Orbit" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition">
+                        Eye Level
+                    </button>
+                    <button id="btn-cutaway" title="Cut walls to 1.1m to view room interiors" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition">
+                        Cutaway View
+                    </button>
+                    <button id="btn-export-glb" title="Download 3D building as .GLB file" class="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium border border-indigo-500 transition shadow-sm flex items-center gap-1">
+                        <span>📦 Export .GLB</span>
+                    </button>
+                    <button id="btn-view-reset" title="Reset Viewport" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-700 transition">
+                        ↺ Reset
+                    </button>
+                </div>
+            </div>
+
+            <!-- Tab Panels Container -->
+            <div class="flex-1 relative overflow-hidden">
+
+                <!-- Tab 1: 3D Interactive Map (Three.js WebGL Canvas) -->
+                <div id="tab-3d" class="tab-panel w-full h-full relative">
+                    <div id="threejs-canvas-container" class="w-full h-full"></div>
+
+                    <!-- Overlay Legend & Controls Guide -->
+                    <div class="absolute bottom-4 left-4 glass-panel p-3 rounded-xl pointer-events-auto text-[11px] space-y-1.5 shadow-xl">
+                        <div class="font-bold text-slate-300 uppercase tracking-wider text-[10px] mb-1">Room Types Legend</div>
+                        <div class="grid grid-cols-2 gap-x-4 gap-y-1">
+                            <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-blue-500"></span>Classroom</div>
+                            <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-purple-500"></span>Lab</div>
+                            <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-slate-500"></span>Corridor</div>
+                            <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-teal-500"></span>Restroom</div>
+                            <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-emerald-500"></span>Entrance</div>
+                            <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-amber-500"></span>Door / Stairs</div>
+                        </div>
+                        <div class="text-[10px] text-slate-400 border-t border-slate-700/60 pt-1.5 mt-1.5 flex items-center justify-between">
+                            <span>Left Click: Orbit</span>
+                            <span>Right Click: Pan</span>
+                            <span>Scroll: Zoom</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab 2: 2D AI Segmentation (Canvas Overlay) -->
+                <div id="tab-2d" class="tab-panel w-full h-full hidden flex flex-col items-center justify-center p-6 bg-slate-900/40 overflow-auto">
+                    <div class="max-w-4xl w-full flex flex-col items-center space-y-3">
+                        <div class="w-full flex items-center justify-between text-xs text-slate-400">
+                            <span>Original 2D Plan with SAM 3.1 Mask Outlines & Muse Spark Labels</span>
+                            <span class="text-blue-400">Scale: 1 px = 0.02 m</span>
+                        </div>
+                        <div class="border border-slate-800 rounded-xl overflow-hidden shadow-2xl bg-white/5">
+                            <canvas id="segmentation-canvas" class="max-w-full max-h-[70vh] block"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab 3: scene.json Contract Viewer -->
+                <div id="tab-json" class="tab-panel w-full h-full hidden p-6 flex flex-col overflow-hidden">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="text-xs text-slate-400">
+                            Output strictly adheres to the hackathon <span class="text-blue-400 font-mono">scene.json</span> contract (Coordinates in meters, origin top-left).
+                        </div>
+                        <div class="flex space-x-2">
+                            <button id="btn-copy-json" class="text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition">
+                                📋 Copy JSON
+                            </button>
+                            <button id="btn-download-json" class="text-xs px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition shadow-md">
+                                💾 Download scene.json
+                            </button>
+                            <button id="btn-download-glb-tab" class="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition shadow-md flex items-center gap-1">
+                                📦 Download .GLB Model
+                            </button>
+                        </div>
+                    </div>
+                    <div class="flex-1 bg-slate-900 rounded-xl p-4 border border-slate-800 overflow-auto">
+                        <pre id="json-output" class="text-xs font-mono text-emerald-400 leading-relaxed select-all">// Load the Demo or Upload an image to view scene.json</pre>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+    </div>
+
+    <!-- Application Controller JS -->
+    <script src="/static/js/viewer.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
