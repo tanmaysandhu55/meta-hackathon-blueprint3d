@@ -6,24 +6,24 @@ An AI-powered 3D indoor map generator built for hackathons.
 
 ---
 
-## Architecture & Data Flow
+## Architecture & Partner Cloud Endpoints
 
 ```mermaid
 flowchart LR
     A[User 2D Image] --> B[Flask Backend /api/process]
-    B --> C[Meta SAM 3.1 Responses API]
-    C -->|stream: 'room', 'wall', 'door', 'window'| D[meta-sam-parser]
-    D -->|Binary Rasters| E[OpenCV & Shapely]
-    E -->|Metric Polygons in Meters| F[Meta Muse Spark]
-    F -->|Classified Labels & Types| G[scene.json Contract]
-    G --> H[Three.js r128 3D Viewer]
+    B -->|BASETEN_API_KEY| C[Baseten API: Meta SAM 3.1]
+    C -->|Binary Masks & Boxes| D[OpenCV & Shapely]
+    D -->|Metric Polygons in Meters| E[Modal / Fireworks API]
+    E -->|MODAL_API_KEY: Muse Spark| F[Meta Muse Spark]
+    E -->|FIREWORKS_API_KEY: Llama 3| G[Meta Llama 3 NLP]
+    F & G -->|Structured JSON Labels| H[scene.json Contract]
+    H --> I[Three.js r128 3D Viewer]
 ```
 
-1. **Meta SAM 3.1 Segmentation (`sam-3.1`)**:
-   - Uses the OpenAI-compatible Responses API at `https://api.meta.ai/v1`.
-   - Sends **one short noun phrase per query** (`"room"`, `"wall"`, `"door"`, `"window"`).
-   - Zero matches is treated as a normal result (not an error).
-   - Streams tokens and decodes `<|box...|><|mask...|>` payloads into binary rasters using Meta's official `meta-sam-parser` library.
+1. **Meta SAM 3.1 on Baseten (`BASETEN_API_KEY`)**:
+   - Queries Baseten's standard inference URL for SAM (`BASETEN_SAM_URL` / `BASETEN_MODEL_ID`).
+   - Sends image + concept prompt (`"room"`, `"wall"`, `"door"`, `"window"`).
+   - Zero local GPU libraries required; returns segmentation masks via REST API.
 
 2. **OpenCV & Shapely Metric Geometry Engine**:
    - Morphological filtering (closing & opening) removes noise and bridges micro-gaps.
@@ -32,19 +32,18 @@ flowchart LR
    - Scales pixels to real-world meters (`metersPerPixel`, default `0.02 m/px`).
    - Computes door-to-room spatial adjacency to populate `"connects": ["r1", "c1"]`.
 
-3. **Meta Muse Spark Classification (`muse-spark-1.3`)**:
-   - Uses standard-tier multimodal Muse Spark with JSON structured outputs.
-   - Reads printed floor plan room numbers and OCR labels (e.g. *"Room 101"*, *"Computer Lab"*, *"Restroom"*).
-   - Restricts classifications to the contract's allowed room types:
-     `room`, `classroom`, `lab`, `corridor`, `stairs`, `elevator`, `restroom`, `entrance`, `other`.
+3. **Meta Muse Spark on Modal Serverless (`MODAL_API_KEY`)**:
+   - Calls the Modal serverless endpoint (`MODAL_MUSE_SPARK_URL`).
+   - Classifies room regions into allowed types: `room`, `classroom`, `lab`, `corridor`, `stairs`, `elevator`, `restroom`, `entrance`, `other`.
 
-4. **Three.js r128 3D Viewer**:
-   - Pinned CDN dependencies (no build step, pure browser-native).
+4. **Meta Llama 3 on Fireworks API (`FIREWORKS_API_KEY`)**:
+   - Calls Fireworks inference endpoint (`accounts/fireworks/models/llama-v3p1-70b-instruct`).
+   - Handles text/NLP generation, architectural reasoning, and label validation.
+
+5. **Three.js r128 3D Viewer**:
    - Extrudes 3D walls (`THREE.ExtrudeGeometry`) with hole cutouts.
-   - Maps 2D floor plan coordinates $(x, y)$ in meters to 3D world space centered at $(0, 0, 0)$ for smooth OrbitControls.
-   - Dynamic real-time wall height slider & cutaway mode.
-   - Floating 3D canvas text badges for room names, types, and confidence scores.
-   - Interactive Raycasting: click any room to inspect floor area ($m^2$, $sq\ ft$), boundary vertices, and connected doors.
+   - Real-time wall height slider & cutaway mode.
+   - Direct download of both `scene.json` and `.glb` binary 3D model.
 
 ---
 

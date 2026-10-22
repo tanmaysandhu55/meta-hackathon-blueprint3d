@@ -270,9 +270,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const steps = [
             { pct: 15, text: "Uploading 2D floor plan..." },
-            { pct: 35, text: "Meta SAM 3.1: Segmenting rooms, walls, doors, windows..." },
+            { pct: 35, text: "Baseten API: Meta SAM 3.1 segmenting rooms, walls, doors, windows..." },
             { pct: 65, text: "OpenCV & Shapely: Snapping polygons to meters..." },
-            { pct: 85, text: "Meta Muse Spark: Classifying room types and labels..." },
+            { pct: 85, text: "Modal & Fireworks: Muse Spark & Meta Llama 3 classifying regions..." },
             { pct: 95, text: "Three.js: Constructing 3D geometry..." },
         ];
 

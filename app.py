@@ -1,9 +1,9 @@
 """
 FloorPlan3D - Flask Application
-Serves the 3D Viewer frontend and provides REST API endpoints for:
-1. Health check & configuration status
-2. Loading sample hackathon demo floor plan & scene.json
-3. Processing user-uploaded 2D floor plans via Meta SAM 3.1 & Muse Spark
+Serves the 3D Viewer frontend and provides REST API endpoints using partner cloud endpoints:
+- Baseten API for SAM 3.1
+- Fireworks API for Meta Llama 3
+- Modal Serverless Endpoint for Meta Muse Spark
 """
 
 import os
@@ -16,7 +16,8 @@ from dotenv import load_dotenv
 from PIL import Image
 
 # Local FloorPlan3D modules
-from sam_service import get_meta_client, image_to_base64_data_url, query_sam_concept, label_rooms_with_muse_spark
+from sam_service import query_sam_concept, label_rooms
+from cloud_services import get_baseten_config, get_fireworks_client, get_modal_config
 from geometry_processor import mask_to_polygons_with_holes, extract_doors, extract_windows, build_walls_from_rooms
 from demo_data import generate_sample_floorplan_image, get_sample_scene_json, get_sample_mask_overlays
 
@@ -34,29 +35,49 @@ if not os.path.exists(SAMPLE_IMG_PATH):
 
 @app.route("/")
 def index():
-    """Serves the main FloorPlan3D user interface."""
-    api_key_configured = bool(os.environ.get("MODEL_API_KEY", "").strip())
-    sam_model = os.environ.get("SAM_MODEL", "sam-3.1")
-    muse_model = os.environ.get("MUSE_MODEL", "muse-spark-1.3")
+    """Serves the main FloorPlan3D user interface with endpoint indicators."""
+    baseten_cfg = get_baseten_config()
+    fireworks_client = get_fireworks_client()
+    modal_cfg = get_modal_config()
+    meta_key = bool(os.environ.get("MODEL_API_KEY", "").strip())
+
+    any_api_ready = baseten_cfg["is_configured"] or bool(fireworks_client) or modal_cfg["is_configured"] or meta_key
+
     return render_template(
         "index.html",
-        api_key_configured=api_key_configured,
-        sam_model=sam_model,
-        muse_model=muse_model
+        api_key_configured=any_api_ready,
+        baseten_ready=baseten_cfg["is_configured"],
+        fireworks_ready=bool(fireworks_client),
+        modal_ready=modal_cfg["is_configured"],
+        sam_model="Baseten SAM 3.1",
+        muse_model="Modal Muse Spark / Fireworks Llama 3"
     )
 
 
 @app.route("/api/health", methods=["GET"])
 def health():
-    """Returns the API status and configuration check."""
-    api_key = os.environ.get("MODEL_API_KEY", "").strip()
+    """Returns endpoint connectivity status for all partner cloud endpoints."""
+    baseten_cfg = get_baseten_config()
+    fireworks_client = get_fireworks_client()
+    modal_cfg = get_modal_config()
+
     return jsonify({
         "status": "online",
         "service": "FloorPlan3D",
-        "api_key_configured": bool(api_key),
-        "base_url": os.environ.get("MODEL_BASE_URL", "https://api.meta.ai/v1"),
-        "sam_model": os.environ.get("SAM_MODEL", "sam-3.1"),
-        "muse_model": os.environ.get("MUSE_MODEL", "muse-spark-1.3")
+        "partner_endpoints": {
+            "baseten_sam": {
+                "configured": baseten_cfg["is_configured"],
+                "url": baseten_cfg["endpoint_url"] or "Not configured"
+            },
+            "fireworks_llama": {
+                "configured": bool(fireworks_client),
+                "model": os.environ.get("FIREWORKS_LLAMA_MODEL", "accounts/fireworks/models/llama-v3p1-70b-instruct")
+            },
+            "modal_muse_spark": {
+                "configured": modal_cfg["is_configured"],
+                "url": modal_cfg["endpoint_url"] or "Not configured"
+            }
+        }
     })
 
 
@@ -64,13 +85,12 @@ def health():
 def sample_data():
     """
     Returns the precomputed sample floor plan and scene.json.
-    Allows testing and presenting the 3D viewer immediately without a live API key.
+    Allows instant testing without live cloud API keys.
     """
     try:
         scene = get_sample_scene_json()
         overlays = get_sample_mask_overlays()
         
-        # Read the sample image as base64 for immediate rendering
         with open(SAMPLE_IMG_PATH, "rb") as f:
             img_bytes = f.read()
             b64_image = base64.b64encode(img_bytes).decode("utf-8")
@@ -88,7 +108,7 @@ def sample_data():
 
 @app.route("/api/sample_image", methods=["GET"])
 def sample_image():
-    """Serves the raw sample floor plan PNG image."""
+    """Serves the sample floor plan PNG image."""
     return send_file(SAMPLE_IMG_PATH, mimetype="image/png")
 
 
@@ -96,20 +116,24 @@ def sample_image():
 def process_floorplan():
     """
     Main AI pipeline endpoint:
-    1. Receives uploaded 2D floor plan image.
-    2. Runs Meta SAM 3.1 to segment 'room', 'wall', 'door', 'window'.
-    3. Turns masks into clean polygons in meters using OpenCV & Shapely.
-    4. Runs Meta Muse Spark to classify and label each room.
-    5. Returns scene.json adhering to the contract.
+    1. Sends image to Baseten SAM 3.1 for 'room', 'wall', 'door', 'window'.
+    2. Runs OpenCV & Shapely to transform masks to metric polygons.
+    3. Sends candidate regions to Modal Muse Spark (or Fireworks Meta Llama 3) for labeling.
+    4. Outputs strictly validated scene.json.
     """
-    api_key = os.environ.get("MODEL_API_KEY", "").strip()
-    if not api_key:
+    baseten_cfg = get_baseten_config()
+    meta_key = os.environ.get("MODEL_API_KEY", "").strip()
+
+    if not baseten_cfg["is_configured"] and not meta_key:
         return jsonify({
             "success": False,
-            "error": "MODEL_API_KEY is not configured in .env. Please set your key from https://dev.meta.ai/ or click 'Load Demo Plan' to test the 3D viewer."
+            "error": (
+                "Baseten SAM 3.1 endpoint is not configured in .env. "
+                "Please set BASETEN_API_KEY and BASETEN_SAM_URL (or BASETEN_MODEL_ID), "
+                "or click 'Load Demo Plan' to test the 3D viewer immediately."
+            )
         }), 400
 
-    # Parse uploaded file
     if "file" not in request.files:
         return jsonify({"success": False, "error": "No image file provided in request."}), 400
 
@@ -118,37 +142,33 @@ def process_floorplan():
         return jsonify({"success": False, "error": "Empty filename."}), 400
 
     try:
-        # Read parameters
         mpp = float(request.form.get("metersPerPixel", 0.02))
         wall_height = float(request.form.get("wallHeight", 3.0))
         wall_thickness = float(request.form.get("wallThickness", 0.2))
 
-        # Open image with PIL to validate format and read dimensions
+        # Validate image format and dimensions with PIL
         image_bytes = file.read()
         pil_img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         img_w, img_h = pil_img.size
 
-        # Convert to Base64 Data URL for Meta Model API
-        b64_url = image_to_base64_data_url(image_bytes)
+        # Convert to Base64 Data URL
+        b64_str = base64.b64encode(image_bytes).decode("utf-8")
+        b64_url = f"data:image/png;base64,{b64_str}"
 
-        # Initialize OpenAI client with Meta API base_url
-        client = get_meta_client()
+        # 1. Query SAM 3.1 via Baseten for each concept
+        print("Querying SAM 3.1 on Baseten for 'room'...")
+        room_masks = query_sam_concept(b64_url, "room", (img_w, img_h))
 
-        # Step 1: Query SAM 3.1 for each concept
-        # Rules: ONE short noun phrase per request. Zero matches is normal.
-        print("SAM 3.1: Segmenting 'room'...")
-        room_masks = query_sam_concept(client, "room", b64_url, (img_w, img_h))
+        print("Querying SAM 3.1 on Baseten for 'wall'...")
+        wall_masks = query_sam_concept(b64_url, "wall", (img_w, img_h))
 
-        print("SAM 3.1: Segmenting 'wall'...")
-        wall_masks = query_sam_concept(client, "wall", b64_url, (img_w, img_h))
+        print("Querying SAM 3.1 on Baseten for 'door'...")
+        door_masks = query_sam_concept(b64_url, "door", (img_w, img_h))
 
-        print("SAM 3.1: Segmenting 'door'...")
-        door_masks = query_sam_concept(client, "door", b64_url, (img_w, img_h))
+        print("Querying SAM 3.1 on Baseten for 'window'...")
+        window_masks = query_sam_concept(b64_url, "window", (img_w, img_h))
 
-        print("SAM 3.1: Segmenting 'window'...")
-        window_masks = query_sam_concept(client, "window", b64_url, (img_w, img_h))
-
-        # Step 2: Convert masks to polygons in meters
+        # 2. Convert masks to metric polygons in meters
         rooms_data = []
         room_id_counter = 1
         for mask in room_masks:
@@ -156,7 +176,7 @@ def process_floorplan():
             for p in polys:
                 rooms_data.append({
                     "id": f"r{room_id_counter}",
-                    "type": "room", # temporary default before Muse Spark classification
+                    "type": "room",
                     "label": f"Room {room_id_counter}",
                     "confidence": 0.85,
                     "polygon": p["polygon"],
@@ -165,29 +185,29 @@ def process_floorplan():
                 })
                 room_id_counter += 1
 
-        # Step 3: Muse Spark classification
+        # 3. Label rooms via Modal serverless endpoint (or Fireworks Llama 3)
         if rooms_data:
-            print(f"Muse Spark: Classifying {len(rooms_data)} rooms...")
-            muse_labels = label_rooms_with_muse_spark(client, b64_url, rooms_data)
+            print(f"Labeling {len(rooms_data)} rooms via Modal Muse Spark / Fireworks Llama 3...")
+            labels = label_rooms(b64_url, rooms_data)
             for r in rooms_data:
                 rid = r["id"]
-                if rid in muse_labels:
-                    r["type"] = muse_labels[rid]["type"]
-                    r["label"] = muse_labels[rid]["label"]
-                    r["confidence"] = muse_labels[rid]["confidence"]
+                if rid in labels:
+                    r["type"] = labels[rid]["type"]
+                    r["label"] = labels[rid]["label"]
+                    r["confidence"] = labels[rid]["confidence"]
 
-        # Clean room objects to strictly match scene.json contract
-        cleaned_rooms = []
-        for r in rooms_data:
-            cleaned_rooms.append({
+        cleaned_rooms = [
+            {
                 "id": r["id"],
                 "type": r["type"],
                 "label": r["label"],
                 "confidence": r["confidence"],
                 "polygon": r["polygon"]
-            })
+            }
+            for r in rooms_data
+        ]
 
-        # Process walls
+        # 4. Extract walls
         walls_data = []
         wall_id_counter = 1
         for mask in wall_masks:
@@ -200,18 +220,15 @@ def process_floorplan():
                 })
                 wall_id_counter += 1
 
-        # Fallback if SAM detected rooms but zero walls:
+        # Fallback: if SAM found rooms but zero walls, synthesize from room perimeters
         if not walls_data and cleaned_rooms:
-            print("Note: Synthesizing walls from room perimeters.")
             walls_data = build_walls_from_rooms(cleaned_rooms, mpp, (img_w, img_h), wall_thickness)
 
-        # Process doors
+        # 5. Extract doors and windows
         doors_data = extract_doors(door_masks, cleaned_rooms, meters_per_pixel=mpp)
-
-        # Process windows
         windows_data = extract_windows(window_masks, meters_per_pixel=mpp)
 
-        # Construct final scene.json strictly following contract
+        # 6. Assemble scene.json contract
         scene_json = {
             "meta": {
                 "source": file.filename,
@@ -226,7 +243,6 @@ def process_floorplan():
             "windows": windows_data
         }
 
-        # Build mask overlay summary for frontend 2D inspection tab
         overlays = {
             "room": [{"id": r["id"], "label": r["label"], "polygon": r["polygon"]} for r in cleaned_rooms],
             "wall": [{"id": w["id"], "polygon": w["polygon"]} for w in walls_data],
@@ -245,7 +261,7 @@ def process_floorplan():
         print(f"Error processing floor plan: {e}")
         return jsonify({
             "success": False,
-            "error": f"Failed to process floor plan: {str(e)}"
+            "error": f"Cloud inference pipeline error: {str(e)}"
         }), 500
 
 

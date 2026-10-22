@@ -47,25 +47,30 @@
             <div>
                 <h1 class="text-lg font-bold tracking-tight text-white flex items-center gap-2">
                     FloorPlan3D
-                    <span class="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-400 font-medium">Meta SAM 3.1 + Muse Spark</span>
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-400 font-medium">Baseten • Fireworks • Modal</span>
                 </h1>
             </div>
         </div>
 
         <!-- System & API Status Indicator -->
-        <div class="flex items-center space-x-4">
-            <div class="flex items-center space-x-2 text-xs">
-                {% if api_key_configured %}
-                    <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                    <span class="text-emerald-400 font-medium">Meta API Ready (SAM 3.1 & Muse Spark)</span>
-                {% else %}
-                    <span class="inline-block w-2.5 h-2.5 rounded-full bg-amber-500"></span>
-                    <span class="text-amber-400 font-medium">Demo Mode (Set MODEL_API_KEY in .env for live API)</span>
-                {% endif %}
+        <div class="flex items-center space-x-3 text-xs">
+            <!-- Baseten SAM 3.1 Status -->
+            <div class="flex items-center space-x-1.5 px-2 py-1 rounded bg-slate-800 border border-slate-700/60">
+                <span class="w-2 h-2 rounded-full {% if baseten_ready %}bg-emerald-500 animate-pulse{% else %}bg-slate-500{% endif %}"></span>
+                <span class="{% if baseten_ready %}text-emerald-400{% else %}text-slate-400{% endif %} font-medium">Baseten SAM 3.1</span>
             </div>
-            <a href="https://dev.meta.ai/" target="_blank" class="text-xs px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition">
-                Meta Docs ↗
-            </a>
+
+            <!-- Fireworks Llama 3 Status -->
+            <div class="flex items-center space-x-1.5 px-2 py-1 rounded bg-slate-800 border border-slate-700/60">
+                <span class="w-2 h-2 rounded-full {% if fireworks_ready %}bg-purple-500 animate-pulse{% else %}bg-slate-500{% endif %}"></span>
+                <span class="{% if fireworks_ready %}text-purple-400{% else %}text-slate-400{% endif %} font-medium">Fireworks Llama 3</span>
+            </div>
+
+            <!-- Modal Muse Spark Status -->
+            <div class="flex items-center space-x-1.5 px-2 py-1 rounded bg-slate-800 border border-slate-700/60">
+                <span class="w-2 h-2 rounded-full {% if modal_ready %}bg-blue-500 animate-pulse{% else %}bg-slate-500{% endif %}"></span>
+                <span class="{% if modal_ready %}text-blue-400{% else %}text-slate-400{% endif %} font-medium">Modal Muse Spark</span>
+            </div>
         </div>
     </header>
 
