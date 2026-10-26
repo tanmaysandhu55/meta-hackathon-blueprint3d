@@ -1,272 +1,355 @@
-"""
-FloorPlan3D - Flask Application
-Serves the 3D Viewer frontend and provides REST API endpoints using partner cloud endpoints:
-- Baseten API for SAM 3.1
-- Fireworks API for Meta Llama 3
-- Modal Serverless Endpoint for Meta Muse Spark
-"""
+"""FloorPlan3D Flask app and asynchronous image-processing API."""
 
-import os
-import io
-import json
 import base64
-from flask import Flask, request, jsonify, render_template, send_from_directory, send_file
-from flask_cors import CORS
+import io
+import math
+import os
+import threading
+import uuid
+from datetime import datetime, timezone
+
 from dotenv import load_dotenv
-from PIL import Image
+from flask import Flask, jsonify, render_template, request, send_file
+from flask_cors import CORS
+from PIL import Image, UnidentifiedImageError
+from werkzeug.utils import secure_filename
 
-# Local FloorPlan3D modules
-from sam_service import query_sam_concept, label_rooms
-from cloud_services import get_baseten_config, get_fireworks_client, get_modal_config
-from geometry_processor import mask_to_polygons_with_holes, extract_doors, extract_windows, build_walls_from_rooms
-from demo_data import generate_sample_floorplan_image, get_sample_scene_json, get_sample_mask_overlays
+from cloud_services import get_baseten_config
+from demo_data import generate_sample_floorplan_image, get_sample_mask_overlays, get_sample_scene_json, get_two_story_sample_scene_json
+from geometry_processor import (
+    build_walls_from_rooms,
+    estimate_meters_per_pixel_from_doors,
+    extract_doors,
+    extract_windows,
+    mask_to_polygons_with_holes,
+)
+from sam_service import label_rooms, query_sam_concept
 
-# Load environment configuration from .env
 load_dotenv()
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = MAX_IMAGE_BYTES + 64 * 1024  # allow multipart form overhead
 CORS(app)
 
-# Ensure sample image exists on startup
 SAMPLE_IMG_PATH = os.path.join(app.root_path, "samples", "sample_floorplan.png")
 if not os.path.exists(SAMPLE_IMG_PATH):
     generate_sample_floorplan_image(SAMPLE_IMG_PATH)
 
+JOBS = {}
+JOBS_LOCK = threading.Lock()
+ALLOWED_IMAGE_FORMATS = {"PNG", "JPEG", "WEBP"}
+
+
+def _live_sam_ready():
+    return get_baseten_config()["is_configured"]
+
+
+def _number_field(name, default, minimum, maximum):
+    try:
+        value = float(request.form.get(name, default))
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} must be a number.")
+    if not math.isfinite(value) or not minimum <= value <= maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}.")
+    return value
+
+
+def _validate_image(file_storage):
+    raw = file_storage.read(MAX_IMAGE_BYTES + 1)
+    if not raw:
+        raise ValueError("The selected image is empty.")
+    if len(raw) > MAX_IMAGE_BYTES:
+        raise ValueError("The image must be 10 MB or smaller.")
+
+    try:
+        with Image.open(io.BytesIO(raw)) as check_image:
+            image_format = (check_image.format or "").upper()
+            if image_format not in ALLOWED_IMAGE_FORMATS:
+                raise ValueError("Choose a PNG, JPG, or WebP floor plan.")
+            width, height = check_image.size
+            if width < 16 or height < 16 or width * height > 20_000_000:
+                raise ValueError("The image dimensions must be at least 16×16 and no more than 20 megapixels.")
+            check_image.verify()
+        with Image.open(io.BytesIO(raw)) as source:
+            normalized = source.convert("RGB")
+            output = io.BytesIO()
+            normalized.save(output, format="PNG", optimize=True)
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
+        raise ValueError("This file is not a valid supported image. Try a PNG, JPG, or WebP file.")
+
+    filename = secure_filename(file_storage.filename or "floorplan.png") or "floorplan.png"
+    return output.getvalue(), (width, height), filename
+
+
+def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_height, wall_thickness, calibrate_scale, progress):
+    image_url = "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
+    img_w, img_h = image_size
+
+    progress("Detecting rooms", 15)
+    room_masks = query_sam_concept(image_url, "room", image_size)
+
+    progress("Detecting walls, doors, and windows", 38)
+    wall_masks = query_sam_concept(image_url, "wall", image_size)
+    door_masks = query_sam_concept(image_url, "door", image_size)
+    window_masks = query_sam_concept(image_url, "window", image_size)
+
+    scale_method = "manual"
+    if calibrate_scale:
+        estimated_scale = estimate_meters_per_pixel_from_doors(door_masks)
+        if estimated_scale is not None and 0.001 <= estimated_scale <= 0.1:
+            meters_per_pixel = estimated_scale
+            scale_method = "median detected door width (assumed 0.9 m)"
+        else:
+            scale_method = "manual fallback; no reliable door width detected"
+
+    progress("Cleaning geometry", 62)
+    rooms_data = []
+    for mask in room_masks:
+        for polygon in mask_to_polygons_with_holes(mask, meters_per_pixel=meters_per_pixel, min_area_px=200):
+            room_id = f"r{len(rooms_data) + 1}"
+            rooms_data.append({
+                "id": room_id,
+                "type": "room",
+                "label": f"Room {len(rooms_data) + 1}",
+                "confidence": 0.0,
+                "polygon": polygon["polygon"],
+                "centroid": polygon["centroid"],
+                "area_m2": polygon["area_m2"],
+            })
+
+    if not rooms_data:
+        raise ValueError("No rooms were detected. Try a clearer, higher-contrast floor plan.")
+
+    progress("Classifying rooms", 79)
+    warnings = []
+    try:
+        labels = label_rooms(image_url, rooms_data)
+    except Exception:
+        labels = {}
+        warnings.append("Room labels are unavailable; generic room labels are shown.")
+    for room in rooms_data:
+        label = labels.get(room["id"])
+        if label:
+            room.update(label)
+        else:
+            room["type"] = "room"
+            room["label"] = f"Room {room['id'][1:]}"
+            room["confidence"] = 0.0
+            if not warnings:
+                warnings.append("Some room labels are unavailable; generic room labels are shown.")
+
+    cleaned_rooms = [
+        {key: room[key] for key in ("id", "type", "label", "confidence", "polygon")}
+        for room in rooms_data
+    ]
+
+    walls_data = []
+    for mask in wall_masks:
+        for polygon in mask_to_polygons_with_holes(mask, meters_per_pixel=meters_per_pixel, min_area_px=100):
+            walls_data.append({
+                "id": f"w{len(walls_data) + 1}",
+                "polygon": polygon["polygon"],
+                "holes": polygon["holes"],
+            })
+    if not walls_data:
+        walls_data = build_walls_from_rooms(cleaned_rooms, meters_per_pixel, image_size, wall_thickness)
+        warnings.append("Walls were approximated from detected room outlines.")
+    if calibrate_scale and scale_method.startswith("manual fallback"):
+        warnings.append("Automatic scale calibration could not find reliable doors; the selected scale was used.")
+
+    doors_data = extract_doors(door_masks, cleaned_rooms, meters_per_pixel=meters_per_pixel)
+    windows_data = extract_windows(window_masks, meters_per_pixel=meters_per_pixel)
+    progress("Preparing 3D scene", 94)
+
+    scene = {
+        "meta": {
+            "source": filename,
+            "imageSize": [img_w, img_h],
+            "metersPerPixel": meters_per_pixel,
+            "scaleMethod": scale_method,
+            "wallHeight": wall_height,
+            "wallThickness": wall_thickness,
+            "warnings": warnings,
+        },
+        "rooms": cleaned_rooms,
+        "walls": walls_data,
+        "doors": doors_data,
+        "windows": windows_data,
+    }
+    overlays = {
+        "room": [{"id": room["id"], "label": room["label"], "polygon": room["polygon"]} for room in cleaned_rooms],
+        "wall": [{"id": wall["id"], "polygon": wall["polygon"]} for wall in walls_data],
+        "door": [{"id": door["id"], "center": door["center"], "width": door["width"]} for door in doors_data],
+        "window": [{"id": window["id"], "center": window["center"], "width": window["width"]} for window in windows_data],
+    }
+    return {"scene": scene, "overlays": overlays, "imageUrl": image_url}
+
+
+def _run_job(job_id, image_bytes, image_size, filename, meters_per_pixel, wall_height, wall_thickness, calibrate_scale):
+    def progress(stage, percent):
+        with JOBS_LOCK:
+            if job_id in JOBS:
+                JOBS[job_id].update(stage=stage, progress=percent)
+
+    try:
+        result = _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_height, wall_thickness, calibrate_scale, progress)
+        with JOBS_LOCK:
+            JOBS[job_id].update(status="complete", stage="Complete", progress=100, result=result)
+    except Exception as exc:
+        app.logger.exception("Floor plan job %s failed", job_id)
+        message = str(exc) if isinstance(exc, ValueError) else "The AI processing service failed. Check your API key and provider endpoint settings."
+        with JOBS_LOCK:
+            JOBS[job_id].update(status="failed", stage="Processing failed", error=message)
+
+
+def _prune_old_jobs():
+    """Bound in-memory scene/image retention for a long-running demo session."""
+    cutoff = datetime.now(timezone.utc).timestamp() - 60 * 60
+    with JOBS_LOCK:
+        expired = []
+        for job_id, job in JOBS.items():
+            if job.get("status") == "processing":
+                continue
+            try:
+                created = datetime.fromisoformat(job["created_at"]).timestamp()
+                if created < cutoff:
+                    expired.append(job_id)
+            except (KeyError, ValueError):
+                expired.append(job_id)
+        for job_id in expired:
+            JOBS.pop(job_id, None)
+
+        completed = sorted(
+            ((job.get("created_at", ""), job_id) for job_id, job in JOBS.items() if job.get("status") != "processing"),
+            key=lambda item: item[0],
+        )
+        for _created, job_id in completed[:-16]:
+            JOBS.pop(job_id, None)
+
+
+@app.errorhandler(413)
+def request_too_large(_error):
+    return jsonify({"success": False, "error": "The image must be 10 MB or smaller."}), 413
+
 
 @app.route("/")
 def index():
-    """Serves the main FloorPlan3D user interface with endpoint indicators."""
-    baseten_cfg = get_baseten_config()
-    fireworks_client = get_fireworks_client()
-    modal_cfg = get_modal_config()
-    meta_key = bool(os.environ.get("MODEL_API_KEY", "").strip())
-
-    any_api_ready = baseten_cfg["is_configured"] or bool(fireworks_client) or modal_cfg["is_configured"] or meta_key
-
-    return render_template(
-        "index.html",
-        api_key_configured=any_api_ready,
-        baseten_ready=baseten_cfg["is_configured"],
-        fireworks_ready=bool(fireworks_client),
-        modal_ready=modal_cfg["is_configured"],
-        sam_model="Baseten SAM 3.1",
-        muse_model="Modal Muse Spark / Fireworks Llama 3"
-    )
+    return render_template("index.html", live_ready=_live_sam_ready())
 
 
 @app.route("/api/health", methods=["GET"])
 def health():
-    """Returns endpoint connectivity status for all partner cloud endpoints."""
-    baseten_cfg = get_baseten_config()
-    fireworks_client = get_fireworks_client()
-    modal_cfg = get_modal_config()
-
-    return jsonify({
-        "status": "online",
-        "service": "FloorPlan3D",
-        "partner_endpoints": {
-            "baseten_sam": {
-                "configured": baseten_cfg["is_configured"],
-                "url": baseten_cfg["endpoint_url"] or "Not configured"
-            },
-            "fireworks_llama": {
-                "configured": bool(fireworks_client),
-                "model": os.environ.get("FIREWORKS_LLAMA_MODEL", "accounts/fireworks/models/llama-v3p1-70b-instruct")
-            },
-            "modal_muse_spark": {
-                "configured": modal_cfg["is_configured"],
-                "url": modal_cfg["endpoint_url"] or "Not configured"
-            }
-        }
-    })
+    return jsonify({"status": "online", "service": "FloorPlan3D", "live_processing_ready": _live_sam_ready()})
 
 
 @app.route("/api/sample", methods=["GET"])
 def sample_data():
-    """
-    Returns the precomputed sample floor plan and scene.json.
-    Allows instant testing without live cloud API keys.
-    """
     try:
-        scene = get_sample_scene_json()
-        overlays = get_sample_mask_overlays()
-        
-        with open(SAMPLE_IMG_PATH, "rb") as f:
-            img_bytes = f.read()
-            b64_image = base64.b64encode(img_bytes).decode("utf-8")
-            data_url = f"data:image/png;base64,{b64_image}"
-
+        with open(SAMPLE_IMG_PATH, "rb") as sample_file:
+            data_url = "data:image/png;base64," + base64.b64encode(sample_file.read()).decode("ascii")
         return jsonify({
             "success": True,
-            "scene": scene,
-            "overlays": overlays,
-            "imageUrl": data_url
+            "scene": get_sample_scene_json(),
+            "overlays": get_sample_mask_overlays(),
+            "imageUrl": data_url,
+            "demoMode": True,
         })
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Could not load the built-in demo scene")
+        return jsonify({"success": False, "error": "The built-in demo could not be loaded."}), 500
+
+
+@app.route("/api/sample/two-story", methods=["GET"])
+def two_story_sample_data():
+    try:
+        with open(SAMPLE_IMG_PATH, "rb") as sample_file:
+            data_url = "data:image/png;base64," + base64.b64encode(sample_file.read()).decode("ascii")
+        return jsonify({
+            "success": True,
+            "scene": get_two_story_sample_scene_json(),
+            "overlays": get_sample_mask_overlays(),
+            "imageUrl": data_url,
+            "demoMode": True,
+        })
+    except Exception:
+        app.logger.exception("Could not load the built-in two-story demo scene")
+        return jsonify({"success": False, "error": "The two-story demo could not be loaded."}), 500
 
 
 @app.route("/api/sample_image", methods=["GET"])
 def sample_image():
-    """Serves the sample floor plan PNG image."""
     return send_file(SAMPLE_IMG_PATH, mimetype="image/png")
 
 
-@app.route("/api/process", methods=["POST"])
-def process_floorplan():
-    """
-    Main AI pipeline endpoint:
-    1. Sends image to Baseten SAM 3.1 for 'room', 'wall', 'door', 'window'.
-    2. Runs OpenCV & Shapely to transform masks to metric polygons.
-    3. Sends candidate regions to Modal Muse Spark (or Fireworks Meta Llama 3) for labeling.
-    4. Outputs strictly validated scene.json.
-    """
-    baseten_cfg = get_baseten_config()
-    meta_key = os.environ.get("MODEL_API_KEY", "").strip()
-
-    if not baseten_cfg["is_configured"] and not meta_key:
+@app.route("/api/upload", methods=["POST"])
+def upload_floorplan():
+    if not _live_sam_ready():
         return jsonify({
             "success": False,
-            "error": (
-                "Baseten SAM 3.1 endpoint is not configured in .env. "
-                "Please set BASETEN_API_KEY and BASETEN_SAM_URL (or BASETEN_MODEL_ID), "
-                "or click 'Load Demo Plan' to test the 3D viewer immediately."
-            )
-        }), 400
-
+            "error": "Live AI processing is not configured yet. You can use the built-in demo now; add your SAM API key and endpoint settings to .env when you receive them.",
+        }), 503
     if "file" not in request.files:
-        return jsonify({"success": False, "error": "No image file provided in request."}), 400
-
+        return jsonify({"success": False, "error": "Choose a floor plan image first."}), 400
     file = request.files["file"]
-    if file.filename == "":
-        return jsonify({"success": False, "error": "Empty filename."}), 400
+    if not file.filename:
+        return jsonify({"success": False, "error": "Choose a floor plan image first."}), 400
 
     try:
-        mpp = float(request.form.get("metersPerPixel", 0.02))
-        wall_height = float(request.form.get("wallHeight", 3.0))
-        wall_thickness = float(request.form.get("wallThickness", 0.2))
+        image_bytes, image_size, filename = _validate_image(file)
+        mpp = _number_field("metersPerPixel", 0.02, 0.001, 0.1)
+        wall_height = _number_field("wallHeight", 3.0, 0.5, 10.0)
+        wall_thickness = _number_field("wallThickness", 0.2, 0.05, 1.0)
+        calibrate_scale = request.form.get("calibrateScale", "true").strip().lower() in {"1", "true", "yes", "on"}
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
 
-        # Validate image format and dimensions with PIL
-        image_bytes = file.read()
-        pil_img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        img_w, img_h = pil_img.size
-
-        # Convert to Base64 Data URL
-        b64_str = base64.b64encode(image_bytes).decode("utf-8")
-        b64_url = f"data:image/png;base64,{b64_str}"
-
-        # 1. Query SAM 3.1 via Baseten for each concept
-        print("Querying SAM 3.1 on Baseten for 'room'...")
-        room_masks = query_sam_concept(b64_url, "room", (img_w, img_h))
-
-        print("Querying SAM 3.1 on Baseten for 'wall'...")
-        wall_masks = query_sam_concept(b64_url, "wall", (img_w, img_h))
-
-        print("Querying SAM 3.1 on Baseten for 'door'...")
-        door_masks = query_sam_concept(b64_url, "door", (img_w, img_h))
-
-        print("Querying SAM 3.1 on Baseten for 'window'...")
-        window_masks = query_sam_concept(b64_url, "window", (img_w, img_h))
-
-        # 2. Convert masks to metric polygons in meters
-        rooms_data = []
-        room_id_counter = 1
-        for mask in room_masks:
-            polys = mask_to_polygons_with_holes(mask, meters_per_pixel=mpp, min_area_px=200)
-            for p in polys:
-                rooms_data.append({
-                    "id": f"r{room_id_counter}",
-                    "type": "room",
-                    "label": f"Room {room_id_counter}",
-                    "confidence": 0.85,
-                    "polygon": p["polygon"],
-                    "centroid": p["centroid"],
-                    "area_m2": p["area_m2"]
-                })
-                room_id_counter += 1
-
-        # 3. Label rooms via Modal serverless endpoint (or Fireworks Llama 3)
-        if rooms_data:
-            print(f"Labeling {len(rooms_data)} rooms via Modal Muse Spark / Fireworks Llama 3...")
-            labels = label_rooms(b64_url, rooms_data)
-            for r in rooms_data:
-                rid = r["id"]
-                if rid in labels:
-                    r["type"] = labels[rid]["type"]
-                    r["label"] = labels[rid]["label"]
-                    r["confidence"] = labels[rid]["confidence"]
-
-        cleaned_rooms = [
-            {
-                "id": r["id"],
-                "type": r["type"],
-                "label": r["label"],
-                "confidence": r["confidence"],
-                "polygon": r["polygon"]
-            }
-            for r in rooms_data
-        ]
-
-        # 4. Extract walls
-        walls_data = []
-        wall_id_counter = 1
-        for mask in wall_masks:
-            wall_polys = mask_to_polygons_with_holes(mask, meters_per_pixel=mpp, min_area_px=100)
-            for wp in wall_polys:
-                walls_data.append({
-                    "id": f"w{wall_id_counter}",
-                    "polygon": wp["polygon"],
-                    "holes": wp["holes"]
-                })
-                wall_id_counter += 1
-
-        # Fallback: if SAM found rooms but zero walls, synthesize from room perimeters
-        if not walls_data and cleaned_rooms:
-            walls_data = build_walls_from_rooms(cleaned_rooms, mpp, (img_w, img_h), wall_thickness)
-
-        # 5. Extract doors and windows
-        doors_data = extract_doors(door_masks, cleaned_rooms, meters_per_pixel=mpp)
-        windows_data = extract_windows(window_masks, meters_per_pixel=mpp)
-
-        # 6. Assemble scene.json contract
-        scene_json = {
-            "meta": {
-                "source": file.filename,
-                "imageSize": [img_w, img_h],
-                "metersPerPixel": mpp,
-                "wallHeight": wall_height,
-                "wallThickness": wall_thickness
-            },
-            "rooms": cleaned_rooms,
-            "walls": walls_data,
-            "doors": doors_data,
-            "windows": windows_data
+    _prune_old_jobs()
+    job_id = uuid.uuid4().hex
+    with JOBS_LOCK:
+        JOBS[job_id] = {
+            "status": "processing", "stage": "Queued", "progress": 5,
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
+    worker = threading.Thread(
+        target=_run_job,
+        args=(job_id, image_bytes, image_size, filename, mpp, wall_height, wall_thickness, calibrate_scale),
+        daemon=True,
+    )
+    worker.start()
+    return jsonify({"success": True, "job_id": job_id}), 202
 
-        overlays = {
-            "room": [{"id": r["id"], "label": r["label"], "polygon": r["polygon"]} for r in cleaned_rooms],
-            "wall": [{"id": w["id"], "polygon": w["polygon"]} for w in walls_data],
-            "door": [{"id": d["id"], "center": d["center"], "width": d["width"]} for d in doors_data],
-            "window": [{"id": win["id"], "center": win["center"], "width": win["width"]} for win in windows_data]
-        }
 
-        return jsonify({
-            "success": True,
-            "scene": scene_json,
-            "overlays": overlays,
-            "imageUrl": b64_url
-        })
+@app.route("/api/status/<job_id>", methods=["GET"])
+def job_status(job_id):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            return jsonify({"error": "Processing job not found."}), 404
+        return jsonify({key: job[key] for key in ("status", "stage", "progress", "error") if key in job})
 
-    except Exception as e:
-        print(f"Error processing floor plan: {e}")
-        return jsonify({
-            "success": False,
-            "error": f"Cloud inference pipeline error: {str(e)}"
-        }), 500
+
+@app.route("/api/scene/<job_id>", methods=["GET"])
+def job_scene(job_id):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            return jsonify({"error": "Processing job not found."}), 404
+        if job["status"] != "complete":
+            return jsonify({"error": "The scene is not ready yet."}), 409
+        return jsonify(job["result"])
+
+
+@app.route("/api/process", methods=["POST"])
+def process_floorplan_compat():
+    """Compatibility endpoint for clients that still submit synchronously."""
+    return jsonify({
+        "success": False,
+        "error": "Processing now uses /api/upload followed by /api/status/<job_id>.",
+    }), 410
 
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    debug = bool(int(os.environ.get("FLASK_DEBUG", 1)))
-    print(f"Starting FloorPlan3D server at http://127.0.0.1:{port}")
+    debug = os.environ.get("FLASK_DEBUG", "0").strip().lower() in {"1", "true", "yes"}
     app.run(host="127.0.0.1", port=port, debug=debug)

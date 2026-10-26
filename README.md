@@ -1,162 +1,99 @@
-# FloorPlan3D 🏢➡️🌐
+# FloorPlan3D
 
-An AI-powered 3D indoor map generator built for hackathons.
+FloorPlan3D turns a 2D floor-plan image into a metric `scene.json` and a navigable Three.js view. The project has a prepared example for demos. Live segmentation requires a configured SAM service; the sample works without model API keys or inference calls. The page loads Three.js and Tailwind from CDNs, so the browser still needs network access to those assets.
 
-**FloorPlan3D** takes a standard 2D floor plan image, uses **Meta SAM 3.1** via the Responses API to segment architectural entities (rooms, walls, doors, windows), converts binary masks into metric polygons in meters using **OpenCV** and **Shapely**, classifies and labels room identities with **Meta Muse Spark**, and exports a structured `scene.json`. A **Three.js** web client renders the resulting scene as a navigable 3D digital twin.
+## Current prototype
 
----
+- **Offline demo:** loads the prepared sample plan, scene, segmentation overlay, room inspector, and 3D model without API keys.
+- **Two-story demo:** loads the prepared plan as a stacked two-level building; use the story selector to inspect either floor or both together.
+- **Live processing:** accepts PNG, JPG, and WebP images up to 10 MB, normalizes them to PNG, and runs SAM segmentation in a background job.
+- **Geometry:** cleans masks, converts contours to meter coordinates, estimates scale from the median detected door width when enabled, and approximates walls from room outlines if no wall mask is returned.
+- **Room labels:** uses the configured Modal classifier or Fireworks fallback. If neither returns usable labels, rooms stay generic and `scene.meta.warnings` explains the fallback.
+- **Viewer:** renders floors, extruded walls, doors, windows, labels, shadows, cutaway height, room selection and focus, door-based shortest routes, scene JSON, and GLB export.
 
-## Architecture & Partner Cloud Endpoints
+First-person walkthrough and robust segmentation across varied plans are not implemented yet. Room focus and routing depend on detected geometry and door connections, so they may be unavailable or inaccurate on some plans. Door and window positions are simplified markers; wall fallback geometry is an approximation. The multi-story scene format is supported, but live uploads are still interpreted as a single floor unless the input and processing pipeline provide per-level geometry.
+
+## Architecture
 
 ```mermaid
 flowchart LR
-    A[User 2D Image] --> B[Flask Backend /api/process]
-    B -->|BASETEN_API_KEY| C[Baseten API: Meta SAM 3.1]
-    C -->|Binary Masks & Boxes| D[OpenCV & Shapely]
-    D -->|Metric Polygons in Meters| E[Modal / Fireworks API]
-    E -->|MODAL_API_KEY: Muse Spark| F[Meta Muse Spark]
-    E -->|FIREWORKS_API_KEY: Llama 3| G[Meta Llama 3 NLP]
-    F & G -->|Structured JSON Labels| H[scene.json Contract]
-    H --> I[Three.js r128 3D Viewer]
+    A[Floor plan upload] --> B[Flask upload and validation]
+    B --> C[Background job and status API]
+    C --> D[SAM service: one request per concept]
+    D --> E[OpenCV and Shapely geometry]
+    E --> F[Optional Modal or Fireworks room labels]
+    F --> G[scene.json and overlay data]
+    G --> H[Three.js viewer]
+    I[Prepared sample] --> G
 ```
 
-1. **Meta SAM 3.1 on Baseten (`BASETEN_API_KEY`)**:
-   - Queries Baseten's standard inference URL for SAM (`BASETEN_SAM_URL` / `BASETEN_MODEL_ID`).
-   - Sends image + concept prompt (`"room"`, `"wall"`, `"door"`, `"window"`).
-   - Zero local GPU libraries required; returns segmentation masks via REST API.
+The SAM adapter calls only Baseten using `BASETEN_API_KEY` and either `BASETEN_SAM_URL` or `BASETEN_MODEL_ID`. The model ID builds Baseten's standard production prediction URL (`https://model-<id>.api.baseten.co/production/predict`). The request body sends a base64 data URL in `image` and the segmentation phrase in `prompt`; the deployed SAM endpoint must accept that payload and return masks in the supported `masks`, `predictions`, or `output` response shape. The app does not call `api.meta.ai` and does not run local model inference.
 
-2. **OpenCV & Shapely Metric Geometry Engine**:
-   - Morphological filtering (closing & opening) removes noise and bridges micro-gaps.
-   - `cv2.findContours(..., cv2.RETR_CCOMP)` extracts external room boundaries and interior holes.
-   - Douglas-Peucker polygon approximation snaps zigzag pixel boundaries into crisp, orthogonal architectural walls.
-   - Scales pixels to real-world meters (`metersPerPixel`, default `0.02 m/px`).
-   - Computes door-to-room spatial adjacency to populate `"connects": ["r1", "c1"]`.
+Room labeling sends the plan image and room candidates to Muse Spark through Modal's OpenAI-compatible chat completions endpoint. Set `MODAL_MUSE_SPARK_URL` and `MODAL_MUSE_SPARK_MODEL` to the endpoint URL and model name shown in the Modal dashboard. For Modal proxy authentication, `MODAL_API_KEY` must contain a combined token in the documented `wk-<token-id>.ws-<token-secret>` form. If Modal is unavailable or returns unusable output, Fireworks Llama is used as a text/NLP classification fallback. Fireworks uses its OpenAI-compatible chat completions endpoint, `FIREWORKS_BASE_URL`, model ID, and `FIREWORKS_API_KEY`. When neither classifier is available, the scene uses generic labels and a warning.
 
-3. **Meta Muse Spark on Modal Serverless (`MODAL_API_KEY`)**:
-   - Calls the Modal serverless endpoint (`MODAL_MUSE_SPARK_URL`).
-   - Classifies room regions into allowed types: `room`, `classroom`, `lab`, `corridor`, `stairs`, `elevator`, `restroom`, `entrance`, `other`.
+> Configure only provider endpoints and model IDs you have verified for your account. The code’s Baseten adapter expects a response containing a `masks`, `predictions`, or `output` field; provider response formats can vary.
 
-4. **Meta Llama 3 on Fireworks API (`FIREWORKS_API_KEY`)**:
-   - Calls Fireworks inference endpoint (`accounts/fireworks/models/llama-v3p1-70b-instruct`).
-   - Handles text/NLP generation, architectural reasoning, and label validation.
+## Run the offline demo now
 
-5. **Three.js r128 3D Viewer**:
-   - Extrudes 3D walls (`THREE.ExtrudeGeometry`) with hole cutouts.
-   - Real-time wall height slider & cutaway mode.
-   - Direct download of both `scene.json` and `.glb` binary 3D model.
+1. Install Python 3.11 or newer.
+2. In PowerShell, create a project environment and install the dependencies. If your Python is installed somewhere else, replace the interpreter path with that Python 3.11+ executable:
 
----
+   ```powershell
+   & "$env:LOCALAPPDATA\Programs\Python\Python314\python.exe" -m venv .venv
+   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+   ```
 
-## Project Structure
+3. Start the app with `run.bat`, or run `.\.venv\Scripts\python.exe app.py` in PowerShell.
+4. Open `http://127.0.0.1:5000` and choose **Load Hackathon Demo Plan**.
+5. Try room focus and routing, room selection, the 2D overlay and scene JSON tabs, cutaway view, and GLB export.
 
-```
-floorplan3d/
-├── .env.example              # Template for Meta Model API key
-├── .env                      # Local environment configuration
-├── requirements.txt          # Python dependencies
-├── app.py                    # Flask server & REST API endpoints
-├── sam_service.py            # Meta SAM 3.1 & Muse Spark API integration
-├── geometry_processor.py     # OpenCV + Shapely contour & polygon metric pipeline
-├── demo_data.py              # Precomputed architectural sample & scene.json
-├── samples/
-│   └── sample_floorplan.png  # Synthesized high-resolution demo plan
-├── static/
-│   ├── css/
-│   │   └── custom.css        # Glassmorphism styling and UI tweaks
-│   └── js/
-│       ├── viewer.js         # Three.js 3D floor plan renderer
-│       └── app.js            # Frontend application controller & upload handlers
-└── templates/
-    └── index.html            # Tailwind-styled single page application
-```
+Use the same interpreter for installation and startup. On some Windows setups, `python` can point to a separate distribution that does not have the packages installed.
 
----
+The page shows **Offline demo mode** when no SAM credentials are configured. It disables live processing, but does not disable the prepared demo. Placeholder values in `.env.example` are blank so they cannot accidentally enable live processing.
 
-## `scene.json` Contract (Meters)
+## Configure live processing when your keys arrive
 
-The pipeline outputs `scene.json` adhering to the exact hackathon specification:
-- Coordinate system: **METERS**, origin top-left of plan, $x$ right, $y$ down.
+Copy `.env.example` to `.env`, then fill only the services you will use:
 
-```json
-{
-  "meta": {
-    "source": "floorplan.png",
-    "imageSize": [800, 600],
-    "metersPerPixel": 0.02,
-    "wallHeight": 3.0,
-    "wallThickness": 0.2
-  },
-  "rooms": [
-    {
-      "id": "r1",
-      "type": "classroom",
-      "label": "Classroom 101",
-      "confidence": 0.96,
-      "polygon": [[1.12, 1.12], [7.28, 1.12], [7.28, 5.88], [1.12, 5.88]]
-    }
-  ],
-  "walls": [
-    {
-      "id": "w1",
-      "polygon": [[1.0, 1.0], [15.0, 1.0], [15.0, 11.0], [1.0, 11.0]],
-      "holes": [[[1.12, 1.12], [7.28, 1.12], [7.28, 5.88], [1.12, 5.88]]]
-    }
-  ],
-  "doors": [
-    {
-      "id": "d1",
-      "center": [4.0, 6.0],
-      "width": 0.72,
-      "connects": ["r1", "r3"]
-    }
-  ],
-  "windows": [
-    {
-      "id": "win1",
-      "center": [4.4, 1.0],
-      "width": 1.6
-    }
-  ]
-}
-```
-
----
-
-## Quickstart Guide
-
-### 1. Install Dependencies
-```bash
-pip install -r requirements.txt
-```
-
-### 2. Configure Environment Variables
-Copy `.env.example` to `.env`:
-```bash
-cp .env.example .env
-```
-Edit `.env` and insert your Meta Model API key:
 ```ini
-MODEL_API_KEY=your_meta_api_key_here
-MODEL_BASE_URL=https://api.meta.ai/v1
-SAM_MODEL=sam-3.1
-MUSE_MODEL=muse-spark-1.3
-PORT=5000
+# Baseten SAM custom deployment
+BASETEN_API_KEY=
+# Set one of the following:
+BASETEN_SAM_URL=
+BASETEN_MODEL_ID=
+
+# Modal Muse Spark Endpoint URL/model from the dashboard and proxy token
+MODAL_API_KEY=
+MODAL_MUSE_SPARK_URL=
+MODAL_MUSE_SPARK_MODEL=
+
+# Fireworks Llama 3 text/NLP (also used as classifier fallback)
+FIREWORKS_API_KEY=
 ```
-*(Note: If you don't have an API key yet, the app runs in **Demo Mode**, allowing you to test the 3D viewer instantly with the pre-computed hackathon demo floor plan!)*
 
-### 3. Start the Flask Server
-```bash
-python app.py
+Keep `.env` private and never put keys in source files, screenshots, or commits. Restart Flask after editing `.env`. The page should then show **Live processing configured**. This confirms the Baseten key and endpoint settings are present; it does not confirm that the deployment is reachable or that its request/response schema matches the adapter. If no classifier is configured, processing still produces a scene with generic labels and a warning.
+
+Live uploads use `POST /api/upload`, `GET /api/status/<job_id>`, and `GET /api/scene/<job_id>`. Uploads are limited to 10 MB and 20 megapixels. Supported formats are PNG, JPG, and WebP.
+
+## Scale and geometry notes
+
+Automatic scale estimation is enabled by default and assumes the median detected door width is 0.9 m. If doors cannot be detected reliably, the selected scale is used and the scene includes a warning. Uncheck the option to use the meters-per-pixel slider directly. In either mode, verify dimensions against a known measurement before relying on them.
+
+Coordinates in `scene.json` are meters, with the source plan’s top-left as origin, x increasing right, and y increasing down. The viewer centers the geometry for display; exported JSON keeps the plan coordinates. Multi-story examples declare `meta.levels` and `meta.floorHeight`; each room, wall, door, and window can carry a zero-based `level`.
+
+## Demo rehearsal
+
+See [DEMO.md](DEMO.md) for a two-minute flow and recovery steps. Use the built-in sample if live keys or provider availability are uncertain. Describe the sample as prepared demo data, and live-upload results as model-assisted estimates.
+
+## Project files
+
+```text
+app.py                    Flask UI, validation, background jobs, scene API
+sam_service.py            SAM calls and room-classification adapter
+cloud_services.py         Baseten, Modal, and Fireworks integrations
+geometry_processor.py     Mask cleanup, polygon conversion, scale, doors, walls
+demo_data.py              Prepared sample plan, scene, and overlays
+templates/index.html      Single-page interface
+static/js/app.js          Upload, progress, tabs, inspector, downloads
+static/js/viewer.js       Three.js renderer and GLB export
 ```
-Open [http://127.0.0.1:5000](http://127.0.0.1:5000) in your web browser.
-
----
-
-## Hackathon Features Checklist
-- [x] **Zero-GPU Cloud Vision**: Offloads SAM 3.1 and Muse Spark inference to Meta's hosted API.
-- [x] **meta-sam-parser Integration**: Uses Meta's official library to decode special-token grammar.
-- [x] **Live Metric Calibration**: Interactive meters/pixel slider with 1-meter 3D grid reference.
-- [x] **Cutaway Wall Mode**: Interactively drops walls to 1.1m to view interior furnishings and rooms.
-- [x] **Interactive 3D Raycasting**: Click any room to view area, confidence, and door connectivity.
-- [x] **2D AI Segmentation Inspector**: View original floor plan with color-coded mask overlays.
-- [x] **Direct Export**: One-click download of both the generated `scene.json` and a binary `floorplan3d_model.glb` 3D file.

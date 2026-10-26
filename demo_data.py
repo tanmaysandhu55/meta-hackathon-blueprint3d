@@ -2,14 +2,14 @@
 FloorPlan3D - Demo Data Generator
 Creates a realistic architectural floor plan image and precomputed scene data
 so beginners can test and demo the 3D viewer immediately, even before configuring
-their Meta MODEL_API_KEY.
+their partner-cloud API keys.
 """
 
 import io
 import os
 import base64
-import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+import copy
+import json
 
 
 def generate_sample_floorplan_image(output_path=None):
@@ -22,6 +22,8 @@ def generate_sample_floorplan_image(output_path=None):
       - Window openings on exterior walls
       - Architectural dimension lines and labels
     """
+    from PIL import Image, ImageDraw
+
     width, height = 800, 600
     img = Image.new("RGB", (width, height), color=(250, 250, 250))
     draw = ImageDraw.Draw(img)
@@ -56,6 +58,7 @@ def generate_sample_floorplan_image(output_path=None):
     draw.line([(370, 50), (370, 300)], fill=wall_color, width=wall_thick)   # Classroom vs Lab
     draw.line([(270, 360), (270, 550)], fill=wall_color, width=wall_thick) # Restroom vs Office
     draw.line([(510, 360), (510, 550)], fill=wall_color, width=wall_thick) # Office vs East Wing
+    draw.line([(625, 360), (625, 550)], fill=wall_color, width=wall_thick) # East lobby vs stairwell
 
     # 2. Door Openings (cleared wall sections with swing arcs)
     door_clearances = [
@@ -67,6 +70,8 @@ def generate_sample_floorplan_image(output_path=None):
         {"center": (160, 360), "size": 32, "wall_orient": "H", "swing": (160, 328, 192, 360), "start": 270, "end": 360},
         # Office door to corridor
         {"center": (390, 360), "size": 34, "wall_orient": "H", "swing": (390, 326, 424, 360), "start": 270, "end": 360},
+        # East lobby to stairwell
+        {"center": (625, 420), "size": 44, "wall_orient": "V", "swing": (625, 398, 669, 442), "start": 0, "end": 90},
         # Main entrance on West Wall
         {"center": (50, 330),  "size": 44, "wall_orient": "V", "swing": (50, 308, 94, 352), "start": 0, "end": 90},
     ]
@@ -113,7 +118,8 @@ def generate_sample_floorplan_image(output_path=None):
         {"text": "MAIN CORRIDOR", "sub": "Access & Exit", "pos": (350, 322)},
         {"text": "RESTROOM",      "sub": "M / F Facilities", "pos": (110, 440)},
         {"text": "FACULTY OFFICE","sub": "Room 103", "pos": (350, 440)},
-        {"text": "EAST LOBBY",    "sub": "Entrance", "pos": (580, 440)},
+        {"text": "EAST LOBBY",    "sub": "Entrance", "pos": (525, 440)},
+        {"text": "STAIRWELL",     "sub": "Vertical access", "pos": (650, 440)},
     ]
 
     for ann in room_annotations:
@@ -131,189 +137,51 @@ def generate_sample_floorplan_image(output_path=None):
 
 def get_sample_scene_json():
     """
-    Returns a complete, validated scene.json dictionary meeting the hackathon contract.
-    Coordinates are in METERS (origin top-left of plan, x right, y down).
-    Meters per pixel: 0.02 (1 px = 0.02m; 50px = 1m).
-    800x600 px image -> 16.0m x 12.0m floor plan.
+    Load the offline demo scene contract from samples/sample_scene.json.
+    Coordinates are in meters with the origin at the plan's top-left.
     """
-    mpp = 0.02 # 0.02 meters per pixel
+    scene_path = os.path.join(os.path.dirname(__file__), "samples", "sample_scene.json")
+    with open(scene_path, "r", encoding="utf-8") as scene_file:
+        return json.load(scene_file)
 
-    # Helper function to convert pixel rect [x1, y1, x2, y2] to polygon in meters
-    def rect_to_poly_m(px1, py1, px2, py2):
-        return [
-            [round(px1 * mpp, 3), round(py1 * mpp, 3)],
-            [round(px2 * mpp, 3), round(py1 * mpp, 3)],
-            [round(px2 * mpp, 3), round(py2 * mpp, 3)],
-            [round(px1 * mpp, 3), round(py2 * mpp, 3)],
-        ]
 
-    scene_data = {
-        "meta": {
-            "source": "sample_floorplan.png",
-            "imageSize": [800, 600],
-            "metersPerPixel": mpp,
-            "wallHeight": 3.0,
-            "wallThickness": 0.24,
-        },
-        "rooms": [
-            {
-                "id": "r1",
-                "type": "classroom",
-                "label": "Classroom 101",
-                "confidence": 0.96,
-                "polygon": rect_to_poly_m(56, 56, 364, 294), # 6.16m x 4.76m
-            },
-            {
-                "id": "r2",
-                "type": "lab",
-                "label": "Computer Lab",
-                "confidence": 0.94,
-                "polygon": rect_to_poly_m(376, 56, 744, 294), # 7.36m x 4.76m
-            },
-            {
-                "id": "r3",
-                "type": "corridor",
-                "label": "Main Corridor",
-                "confidence": 0.98,
-                "polygon": [
-                    [1.12, 6.0], [14.88, 6.0], [14.88, 7.2],
-                    [10.2, 7.2], [10.2, 10.88], [14.88, 10.88],
-                    [14.88, 11.0], [10.0, 11.0], [10.0, 7.2],
-                    [1.12, 7.2]
-                ],
-            },
-            {
-                "id": "r4",
-                "type": "restroom",
-                "label": "Restroom",
-                "confidence": 0.91,
-                "polygon": rect_to_poly_m(56, 366, 264, 544), # 4.16m x 3.56m
-            },
-            {
-                "id": "r5",
-                "type": "room",
-                "label": "Faculty Office",
-                "confidence": 0.89,
-                "polygon": rect_to_poly_m(276, 366, 504, 544), # 4.56m x 3.56m
-            },
-            {
-                "id": "r6",
-                "type": "entrance",
-                "label": "East Lobby",
-                "confidence": 0.93,
-                "polygon": rect_to_poly_m(516, 366, 744, 544), # 4.56m x 3.56m
-            },
+def get_two_story_sample_scene_json():
+    """Return the prepared sample plan duplicated as a stacked two-story building."""
+    scene = copy.deepcopy(get_sample_scene_json())
+    scene["meta"].update({
+        "source": "two_story_sample_floorplan.png",
+        "levelCount": 2,
+        "floorHeight": 3.2,
+        "levels": [
+            {"level": 0, "name": "Ground Floor", "elevation": 0.0},
+            {"level": 1, "name": "Second Floor", "elevation": 3.2},
         ],
-        "walls": [
-            {
-                "id": "w1",
-                "polygon": [
-                    [1.0, 1.0], [15.0, 1.0], [15.0, 11.0], [1.0, 11.0]
-                ],
-                "holes": [
-                    # Inner courtyard / room openings cut out of outer boundary
-                    rect_to_poly_m(56, 56, 744, 294),
-                    rect_to_poly_m(56, 300, 744, 544)
-                ],
-            },
-            {
-                "id": "w2",
-                "polygon": [
-                    [7.3, 1.0], [7.5, 1.0], [7.5, 6.0], [7.3, 6.0]
-                ],
-                "holes": [],
-            },
-            {
-                "id": "w3",
-                "polygon": [
-                    [1.0, 5.9], [15.0, 5.9], [15.0, 6.1], [1.0, 6.1]
-                ],
-                "holes": [],
-            },
-            {
-                "id": "w4",
-                "polygon": [
-                    [1.0, 7.1], [15.0, 7.1], [15.0, 7.3], [1.0, 7.3]
-                ],
-                "holes": [],
-            },
-            {
-                "id": "w5",
-                "polygon": [
-                    [5.3, 7.2], [5.5, 7.2], [5.5, 11.0], [5.3, 11.0]
-                ],
-                "holes": [],
-            },
-            {
-                "id": "w6",
-                "polygon": [
-                    [10.1, 7.2], [10.3, 7.2], [10.3, 11.0], [10.1, 11.0]
-                ],
-                "holes": [],
-            },
-        ],
-        "doors": [
-            {
-                "id": "d1",
-                "center": [round(200 * mpp, 3), round(300 * mpp, 3)], # [4.0, 6.0]
-                "width": round(36 * mpp, 3), # 0.72m
-                "connects": ["r1", "r3"],
-            },
-            {
-                "id": "d2",
-                "center": [round(550 * mpp, 3), round(300 * mpp, 3)], # [11.0, 6.0]
-                "width": round(36 * mpp, 3), # 0.72m
-                "connects": ["r2", "r3"],
-            },
-            {
-                "id": "d3",
-                "center": [round(160 * mpp, 3), round(360 * mpp, 3)], # [3.2, 7.2]
-                "width": round(32 * mpp, 3), # 0.64m
-                "connects": ["r4", "r3"],
-            },
-            {
-                "id": "d4",
-                "center": [round(390 * mpp, 3), round(360 * mpp, 3)], # [7.8, 7.2]
-                "width": round(34 * mpp, 3), # 0.68m
-                "connects": ["r5", "r3"],
-            },
-            {
-                "id": "d5",
-                "center": [round(50 * mpp, 3), round(330 * mpp, 3)],  # [1.0, 6.6]
-                "width": round(44 * mpp, 3), # 0.88m
-                "connects": ["r3", "outside"],
-            },
-        ],
-        "windows": [
-            {
-                "id": "win1",
-                "center": [round(220 * mpp, 3), round(50 * mpp, 3)], # [4.4, 1.0]
-                "width": round(80 * mpp, 3), # 1.6m
-            },
-            {
-                "id": "win2",
-                "center": [round(570 * mpp, 3), round(50 * mpp, 3)], # [11.4, 1.0]
-                "width": round(100 * mpp, 3), # 2.0m
-            },
-            {
-                "id": "win3",
-                "center": [round(750 * mpp, 3), round(190 * mpp, 3)], # [15.0, 3.8]
-                "width": round(80 * mpp, 3), # 1.6m
-            },
-            {
-                "id": "win4",
-                "center": [round(160 * mpp, 3), round(550 * mpp, 3)], # [3.2, 11.0]
-                "width": round(60 * mpp, 3), # 1.2m
-            },
-            {
-                "id": "win5",
-                "center": [round(400 * mpp, 3), round(550 * mpp, 3)], # [8.0, 11.0]
-                "width": round(80 * mpp, 3), # 1.6m
-            },
-        ],
+    })
+
+    upper_room_labels = {
+        "r1": ("classroom", "Design Studio"),
+        "r2": ("lab", "Robotics Lab"),
+        "r3": ("corridor", "Upper Hallway"),
+        "r4": ("restroom", "Second Floor Restroom"),
+        "r5": ("room", "Faculty Lounge"),
+        "r6": ("entrance", "North Lobby"),
+        "r7": ("stairs", "Second Floor Stairs"),
     }
 
-    return scene_data
+    for collection in ("rooms", "walls", "doors", "windows"):
+        for item in list(scene.get(collection, [])):
+            item["level"] = 0
+            upper = copy.deepcopy(item)
+            upper["id"] = f"{item['id']}_l2"
+            upper["level"] = 1
+            if collection == "rooms":
+                upper["type"], upper["label"] = upper_room_labels[item["id"]]
+            elif collection == "doors":
+                upper["connects"] = [f"{room_id}_l2" if room_id != "outside" else room_id
+                                     for room_id in item.get("connects", [])]
+            scene[collection].append(upper)
+
+    return scene
 
 
 def get_sample_mask_overlays(image_size=(800, 600)):
@@ -331,11 +199,13 @@ def get_sample_mask_overlays(image_size=(800, 600)):
             {"id": "r3", "label": "Main Corridor", "box": [56, 300, 744, 360], "color": "rgba(156, 163, 175, 0.4)"},
             {"id": "r4", "label": "Restroom", "box": [56, 366, 264, 544], "color": "rgba(45, 212, 191, 0.4)"},
             {"id": "r5", "label": "Faculty Office", "box": [276, 366, 504, 544], "color": "rgba(148, 163, 184, 0.4)"},
-            {"id": "r6", "label": "East Lobby", "box": [516, 366, 744, 544], "color": "rgba(52, 211, 153, 0.4)"},
+            {"id": "r6", "label": "East Lobby", "box": [516, 366, 619, 544], "color": "rgba(52, 211, 153, 0.4)"},
+            {"id": "r7", "label": "Stairwell", "box": [631, 366, 744, 544], "color": "rgba(245, 158, 11, 0.4)"},
         ],
         "wall": [
             {"id": "w_outer", "box": [50, 50, 750, 550], "color": "rgba(239, 68, 68, 0.45)"},
             {"id": "w_inner1", "box": [50, 300, 750, 360], "color": "rgba(239, 68, 68, 0.45)"},
+            {"id": "w_stairs", "box": [620, 360, 630, 550], "color": "rgba(239, 68, 68, 0.45)"},
         ],
         "door": [
             {"id": "d1", "box": [182, 290, 218, 310], "color": "rgba(245, 158, 11, 0.7)"},
@@ -343,6 +213,8 @@ def get_sample_mask_overlays(image_size=(800, 600)):
             {"id": "d3", "box": [144, 350, 176, 370], "color": "rgba(245, 158, 11, 0.7)"},
             {"id": "d4", "box": [373, 350, 407, 370], "color": "rgba(245, 158, 11, 0.7)"},
             {"id": "d5", "box": [40, 308, 60, 352], "color": "rgba(245, 158, 11, 0.7)"},
+            {"id": "d6", "box": [615, 398, 635, 442], "color": "rgba(245, 158, 11, 0.7)"},
+            {"id": "d7", "box": [545, 350, 590, 370], "color": "rgba(245, 158, 11, 0.7)"},
         ],
         "window": [
             {"id": "win1", "box": [180, 44, 260, 56], "color": "rgba(56, 189, 248, 0.7)"},

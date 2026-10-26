@@ -1,0 +1,59 @@
+{
+  "meta": {
+    "source": "sample_floorplan.png",
+    "imageSize": [800, 600],
+    "metersPerPixel": 0.02,
+    "wallHeight": 3.0,
+    "wallThickness": 0.2
+  },
+  "rooms": [
+    { "id": "r1", "type": "classroom", "label": "Classroom 101", "confidence": 0.96, "polygon": [[1.12, 1.12], [7.28, 1.12], [7.28, 5.88], [1.12, 5.88]] },
+    { "id": "r2", "type": "lab", "label": "Computer Lab", "confidence": 0.94, "polygon": [[7.52, 1.12], [14.88, 1.12], [14.88, 5.88], [7.52, 5.88]] },
+    { "id": "r3", "type": "corridor", "label": "Main Corridor", "confidence": 0.98, "polygon": [[1.12, 6.0], [14.88, 6.0], [14.88, 7.2], [10.2, 7.2], [10.2, 10.88], [14.88, 10.88], [14.88, 11.0], [10.0, 11.0], [10.0, 7.2], [1.12, 7.2]] },
+    { "id": "r4", "type": "restroom", "label": "Restroom", "confidence": 0.91, "polygon": [[1.12, 7.32], [5.28, 7.32], [5.28, 10.88], [1.12, 10.88]] },
+    { "id": "r5", "type": "room", "label": "Faculty Office", "confidence": 0.89, "polygon": [[5.52, 7.32], [9.98, 7.32], [9.98, 10.88], [5.52, 10.88]] },
+    { "id": "r6", "type": "entrance", "label": "East Lobby", "confidence": 0.93, "polygon": [[10.32, 7.32], [12.38, 7.32], [12.38, 10.88], [10.32, 10.88]] },
+    { "id": "r7", "type": "stairs", "label": "Stairwell", "confidence": 0.96, "polygon": [[12.62, 7.32], [14.78, 7.32], [14.78, 10.88], [12.62, 10.88]] }
+  ],
+  "walls": [
+    { "id": "north_west", "polygon": [[1.0, 1.0], [3.6, 1.0], [3.6, 1.2], [1.0, 1.2]] },
+    { "id": "north_center", "polygon": [[5.2, 1.0], [10.4, 1.0], [10.4, 1.2], [5.2, 1.2]] },
+    { "id": "north_east", "polygon": [[12.4, 1.0], [15.0, 1.0], [15.0, 1.2], [12.4, 1.2]] },
+    { "id": "east_north", "polygon": [[14.8, 1.0], [15.0, 1.0], [15.0, 3.0], [14.8, 3.0]] },
+    { "id": "east_south", "polygon": [[14.8, 4.6], [15.0, 4.6], [15.0, 11.0], [14.8, 11.0]] },
+    { "id": "south_west", "polygon": [[1.0, 10.8], [2.6, 10.8], [2.6, 11.0], [1.0, 11.0]] },
+    { "id": "south_center_west", "polygon": [[3.8, 10.8], [7.2, 10.8], [7.2, 11.0], [3.8, 11.0]] },
+    { "id": "south_center_east", "polygon": [[8.8, 10.8], [15.0, 10.8], [15.0, 11.0], [8.8, 11.0]] },
+    { "id": "west_north", "polygon": [[1.0, 1.0], [1.2, 1.0], [1.2, 5.72], [1.0, 5.72]] },
+    { "id": "west_south", "polygon": [[1.0, 6.6], [1.2, 6.6], [1.2, 11.0], [1.0, 11.0]] },
+    { "id": "class_lab_divider", "polygon": [[7.3, 1.0], [7.5, 1.0], [7.5, 6.0], [7.3, 6.0]] },
+    { "id": "upper_corridor_west", "polygon": [[1.0, 5.9], [3.64, 5.9], [3.64, 6.1], [1.0, 6.1]] },
+    { "id": "upper_corridor_middle", "polygon": [[4.36, 5.9], [10.64, 5.9], [10.64, 6.1], [4.36, 6.1]] },
+    { "id": "upper_corridor_east", "polygon": [[11.36, 5.9], [15.0, 5.9], [15.0, 6.1], [11.36, 6.1]] },
+    { "id": "lower_corridor_west", "polygon": [[1.0, 7.1], [2.88, 7.1], [2.88, 7.3], [1.0, 7.3]] },
+    { "id": "lower_corridor_middle", "polygon": [[3.52, 7.1], [7.48, 7.1], [7.48, 7.3], [3.52, 7.3]] },
+    { "id": "lower_corridor_east", "polygon": [[8.12, 7.1], [10.1, 7.1], [10.1, 7.3], [8.12, 7.3]] },
+    { "id": "lobby_entry_west", "polygon": [[10.3, 7.1], [10.9, 7.1], [10.9, 7.3], [10.3, 7.3]] },
+    { "id": "lobby_entry_east", "polygon": [[11.8, 7.1], [12.4, 7.1], [12.4, 7.3], [11.8, 7.3]] },
+    { "id": "restroom_office_divider", "polygon": [[5.3, 7.2], [5.5, 7.2], [5.5, 11.0], [5.3, 11.0]] },
+    { "id": "office_lobby_divider", "polygon": [[10.1, 7.2], [10.3, 7.2], [10.3, 11.0], [10.1, 11.0]] },
+    { "id": "lobby_stairs_divider_north", "polygon": [[12.4, 7.2], [12.6, 7.2], [12.6, 7.95], [12.4, 7.95]] },
+    { "id": "lobby_stairs_divider_south", "polygon": [[12.4, 8.85], [12.6, 8.85], [12.6, 11.0], [12.4, 11.0]] }
+  ],
+  "doors": [
+    { "id": "d1", "center": [4.0, 6.0], "width": 0.72, "connects": ["r1", "r3"] },
+    { "id": "d2", "center": [11.0, 6.0], "width": 0.72, "connects": ["r2", "r3"] },
+    { "id": "d3", "center": [3.2, 7.2], "width": 0.64, "connects": ["r4", "r3"] },
+    { "id": "d4", "center": [7.8, 7.2], "width": 0.68, "connects": ["r5", "r3"] },
+    { "id": "d5", "center": [1.0, 6.6], "width": 0.88, "connects": ["r3", "outside"] },
+    { "id": "d6", "center": [12.5, 8.4], "width": 0.9, "connects": ["r6", "r7"] },
+    { "id": "d7", "center": [11.35, 7.2], "width": 0.9, "connects": ["r3", "r6"] }
+  ],
+  "windows": [
+    { "id": "win1", "center": [4.4, 1.0], "width": 1.6 },
+    { "id": "win2", "center": [11.4, 1.0], "width": 2.0 },
+    { "id": "win3", "center": [15.0, 3.8], "width": 1.6 },
+    { "id": "win4", "center": [3.2, 11.0], "width": 1.2 },
+    { "id": "win5", "center": [8.0, 11.0], "width": 1.6 }
+  ]
+}

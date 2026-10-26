@@ -24,6 +24,31 @@ def clean_mask(mask_uint8, kernel_size=5):
     return opened
 
 
+def estimate_meters_per_pixel_from_doors(door_masks, target_width_m=0.9, min_area_px=40):
+    """Estimate plan scale from the median pixel width of detected doors.
+
+    Returns None when there are too few usable door masks; callers should then
+    keep their manually selected/default scale and explain that fallback.
+    """
+    widths_px = []
+    for mask in door_masks or []:
+        cleaned = clean_mask(mask, kernel_size=3)
+        contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for contour in contours:
+            if cv2.contourArea(contour) < min_area_px:
+                continue
+            (_center_x, _center_y), (width, height), _angle = cv2.minAreaRect(contour)
+            pixel_width = max(width, height)
+            if pixel_width > 0:
+                widths_px.append(pixel_width)
+    if not widths_px:
+        return None
+    median_width_px = float(np.median(widths_px))
+    if median_width_px <= 0:
+        return None
+    return target_width_m / median_width_px
+
+
 def mask_to_polygons_with_holes(mask_uint8, meters_per_pixel, min_area_px=150, simplify_meters=0.04):
     """
     Converts a binary mask into clean polygons with outer boundaries and holes.
@@ -193,14 +218,16 @@ def extract_doors(door_masks, rooms_list, meters_per_pixel, min_area_px=40):
             elif width_m > 2.0:
                 width_m = 1.0 # clamp realistic single door width
 
-            # Find connected rooms: buffer the door center by 0.8 meters
+            # Find nearby room polygons using a bounded margin around this door.
             door_pt = shapely.geometry.Point(cx_m, cy_m)
-            door_buf = door_pt.buffer(0.8)
-
+            connection_radius = min(0.75, max(0.35, width_m / 2.0 + 0.2))
             connected = []
             for room_id, r_poly in room_geoms:
-                if r_poly.intersects(door_buf):
-                    connected.append(room_id)
+                distance = r_poly.distance(door_pt)
+                if distance <= connection_radius:
+                    connected.append((distance, room_id))
+            connected.sort(key=lambda candidate: candidate[0])
+            connected = [room_id for _distance, room_id in connected[:2]]
 
             if len(connected) == 0:
                 connected = ["outside"]

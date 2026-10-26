@@ -5,7 +5,7 @@ Implements external REST API integrations for Meta models without any local GPU 
 1. Meta SAM 3.1 (Image Segmentation):
    - Provider: Baseten API Endpoint
    - Auth: BASETEN_API_KEY (.env)
-   - Route: Baseten sync inference endpoint
+   - Route: standard production prediction endpoint (/production/predict)
 
 2. Meta Llama 3 (Text/NLP Generation):
    - Provider: Fireworks API Endpoint
@@ -15,12 +15,11 @@ Implements external REST API integrations for Meta models without any local GPU 
 3. Meta Muse Spark (Region Labeling & Multimodal Classification):
    - Provider: Modal Serverless Endpoint
    - Auth: MODAL_API_KEY (.env)
-   - Route: Modal serverless web endpoint
+   - Route: Modal OpenAI-compatible chat completions endpoint
 """
 
 import os
 import json
-import base64
 import urllib.request
 import urllib.error
 import cv2
@@ -30,6 +29,12 @@ from openai import OpenAI
 
 # Load configuration from .env
 load_dotenv()
+
+
+def is_configured_value(value):
+    """Treat documentation placeholders as missing configuration."""
+    normalized = (value or "").strip()
+    return bool(normalized and "<" not in normalized and "your_" not in normalized.lower() and "your-" not in normalized.lower())
 
 
 # =====================================================================
@@ -43,21 +48,23 @@ def get_baseten_config():
     api_key = os.environ.get("BASETEN_API_KEY", "").strip()
     model_id = os.environ.get("BASETEN_MODEL_ID", "").strip()
     
-    # Standard Baseten model inference URL
-    default_url = f"https://model-{model_id}.api.baseten.co/environments/production/sync/v1" if model_id else ""
-    endpoint_url = os.environ.get("BASETEN_SAM_URL", default_url).strip()
+    # Baseten's standard custom-model synchronous prediction URL.
+    default_url = f"https://model-{model_id}.api.baseten.co/production/predict" if model_id else ""
+    # An explicitly present but blank .env value should still fall back to the
+    # standard production URL derived from BASETEN_MODEL_ID.
+    endpoint_url = os.environ.get("BASETEN_SAM_URL", "").strip() or default_url
     
     return {
         "api_key": api_key,
         "endpoint_url": endpoint_url,
-        "is_configured": bool(api_key and endpoint_url)
+        "is_configured": is_configured_value(api_key) and is_configured_value(endpoint_url)
     }
 
 
 def query_baseten_sam(b64_data_url, concept, image_size):
     """
     Sends the floor plan image and a concept noun phrase (e.g. 'room', 'wall', 'door', 'window')
-    to Baseten's standard inference URL for SAM 3.1.
+    to the configured Baseten production prediction URL for SAM 3.1.
     
     Returns:
       List of 2D binary numpy arrays (uint8, values 0 or 255) for each detected instance.
@@ -88,7 +95,6 @@ def query_baseten_sam(b64_data_url, concept, image_size):
         headers={
             "Content-Type": "application/json",
             "Authorization": f"Api-Key {config['api_key']}",
-            "Api-Key": config["api_key"]
         },
         method="POST"
     )
@@ -146,7 +152,7 @@ def get_fireworks_client():
     Reads FIREWORKS_API_KEY from .env.
     """
     api_key = os.environ.get("FIREWORKS_API_KEY", "").strip()
-    if not api_key:
+    if not is_configured_value(api_key):
         return None
 
     base_url = os.environ.get("FIREWORKS_BASE_URL", "https://api.fireworks.ai/inference/v1").strip()
@@ -192,21 +198,29 @@ def generate_with_fireworks_llama(prompt, system_prompt=None, response_format=No
 
 def get_modal_config():
     """
-    Reads Modal serverless endpoint configuration from .env.
+    Reads the Modal OpenAI-compatible endpoint configuration from .env.
     """
     api_key = os.environ.get("MODAL_API_KEY", "").strip()
     endpoint_url = os.environ.get("MODAL_MUSE_SPARK_URL", "").strip()
+    model_name = os.environ.get("MODAL_MUSE_SPARK_MODEL", "").strip()
+    token_parts = api_key.split(".", 1)
+    has_proxy_token = (
+        len(token_parts) == 2
+        and token_parts[0].startswith("wk-")
+        and token_parts[1].startswith("ws-")
+    )
     return {
         "api_key": api_key,
         "endpoint_url": endpoint_url,
-        "is_configured": bool(endpoint_url)
+        "model_name": model_name,
+        "is_configured": is_configured_value(endpoint_url) and is_configured_value(model_name) and has_proxy_token,
     }
 
 
 def label_rooms_with_modal_muse_spark(b64_data_url, room_candidates):
     """
-    Calls the Modal serverless endpoint for Meta Muse Spark to classify and label room regions.
-    Fallback: Uses Fireworks Meta Llama 3 if Modal endpoint is not deployed.
+    Calls the configured Modal classifier, then Fireworks if Modal is unavailable.
+    Returns only validated model results; the pipeline owns the explicit generic fallback.
     
     Allowed room types:
       room, classroom, lab, corridor, stairs, elevator, restroom, entrance, other
@@ -219,52 +233,86 @@ def label_rooms_with_modal_muse_spark(b64_data_url, room_candidates):
         "elevator", "restroom", "entrance", "other"
     }
 
+    expected_ids = {room["id"] for room in room_candidates}
+
+    def validated_labels(raw_rooms):
+        labels = {}
+        for item in raw_rooms if isinstance(raw_rooms, list) else []:
+            if not isinstance(item, dict):
+                continue
+            rid = item.get("id")
+            if rid not in expected_ids:
+                continue
+            rtype = str(item.get("type", "room")).lower().strip()
+            if rtype not in allowed_types:
+                rtype = "room"
+            label = item.get("label")
+            if not isinstance(label, str) or not label.strip():
+                label = f"Room {rid[1:]}"
+            try:
+                confidence = float(item.get("confidence", 0.0))
+            except (TypeError, ValueError):
+                confidence = 0.0
+            if not np.isfinite(confidence):
+                confidence = 0.0
+            labels[rid] = {
+                "type": rtype,
+                "label": label.strip()[:100],
+                "confidence": round(min(1.0, max(0.0, confidence)), 2),
+            }
+        return labels
+
     modal_cfg = get_modal_config()
 
-    # If Modal endpoint is configured, send HTTP POST to the serverless function
+    # Modal Shared/Dedicated Endpoints expose OpenAI-compatible chat completions.
     if modal_cfg["is_configured"]:
-        payload = {
-            "image": b64_data_url,
-            "room_candidates": [
-                {
-                    "id": r["id"],
-                    "centroid": r.get("centroid", [0, 0]),
-                    "area_m2": r.get("area_m2", 0.0),
-                    "bounds": r.get("bounds", [])
-                }
-                for r in room_candidates
-            ],
-            "allowed_types": list(allowed_types)
-        }
-
-        req_data = json.dumps(payload).encode("utf-8")
-        headers = {"Content-Type": "application/json"}
-        if modal_cfg["api_key"]:
-            headers["Authorization"] = f"Bearer {modal_cfg['api_key']}"
-            headers["X-Modal-Key"] = modal_cfg["api_key"]
-
-        req = urllib.request.Request(
-            modal_cfg["endpoint_url"],
-            data=req_data,
-            headers=headers,
-            method="POST"
-        )
-
         try:
-            with urllib.request.urlopen(req, timeout=45) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                labeled_rooms = {}
-                for item in data.get("rooms", []):
-                    rid = item.get("id")
-                    rtype = item.get("type", "room").lower().strip()
-                    if rtype not in allowed_types:
-                        rtype = "room"
-                    labeled_rooms[rid] = {
-                        "type": rtype,
-                        "label": item.get("label", f"Room {rid}"),
-                        "confidence": round(float(item.get("confidence", 0.9)), 2)
-                    }
-                return labeled_rooms
+            base_url = modal_cfg["endpoint_url"].rstrip("/")
+            for suffix in ("/v1/chat/completions", "/chat/completions"):
+                if base_url.endswith(suffix):
+                    base_url = base_url[:-len(suffix)]
+                    break
+            if not base_url.endswith("/v1"):
+                base_url += "/v1"
+            client = OpenAI(base_url=base_url, api_key=modal_cfg["api_key"], timeout=60)
+            candidate_json = json.dumps([
+                {
+                    "id": room["id"],
+                    "centroid": room.get("centroid", [0, 0]),
+                    "area_m2": room.get("area_m2", 0.0),
+                    "bounds": room.get("bounds", []),
+                }
+                for room in room_candidates
+            ], indent=2)
+            prompt = (
+                "Inspect this floor-plan image and classify only the listed room candidates. "
+                f"Allowed types: {json.dumps(sorted(allowed_types))}. "
+                "Return one JSON object with a rooms array. Each item must contain id, type, label, "
+                "and confidence from 0 to 1. Do not add or omit candidate IDs.\n"
+                f"Candidates:\n{candidate_json}\n"
+                'Required shape: {"rooms":[{"id":"r1","type":"classroom","label":"Classroom 101","confidence":0.95}]}'
+            )
+            response = client.chat.completions.create(
+                model=modal_cfg["model_name"],
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": b64_data_url}},
+                    ],
+                }],
+                temperature=0.1,
+                max_tokens=1200,
+            )
+            raw_text = response.choices[0].message.content or ""
+            try:
+                data = json.loads(raw_text)
+            except json.JSONDecodeError:
+                start, end = raw_text.find("{"), raw_text.rfind("}")
+                if start < 0 or end <= start:
+                    raise ValueError("Modal Muse Spark returned no JSON object.")
+                data = json.loads(raw_text[start:end + 1])
+            return validated_labels(data.get("rooms", []))
         except Exception as modal_err:
             print(f"Warning: Modal endpoint returned error ({modal_err}). Falling back to Fireworks Llama 3.")
 
@@ -288,30 +336,10 @@ def label_rooms_with_modal_muse_spark(b64_data_url, room_candidates):
                 response_format={"type": "json_object"}
             )
             data = json.loads(raw_json)
-            labeled_rooms = {}
-            for item in data.get("rooms", []):
-                rid = item.get("id")
-                rtype = item.get("type", "room").lower().strip()
-                if rtype not in allowed_types:
-                    rtype = "room"
-                labeled_rooms[rid] = {
-                    "type": rtype,
-                    "label": item.get("label", f"Room {rid}"),
-                    "confidence": round(float(item.get("confidence", 0.9)), 2)
-                }
-            return labeled_rooms
+            return validated_labels(data.get("rooms", []))
         except Exception as fw_err:
             print(f"Warning: Fireworks Llama 3 classification error: {fw_err}")
 
-    # Sensible geometric fallback if no external endpoint returned
-    fallbacks = {}
-    for r in room_candidates:
-        rid = r["id"]
-        area = r.get("area_m2", 0)
-        if area > 45:
-            fallbacks[rid] = {"type": "corridor", "label": f"Corridor {rid}", "confidence": 0.88}
-        elif area < 12:
-            fallbacks[rid] = {"type": "restroom", "label": f"Restroom {rid}", "confidence": 0.85}
-        else:
-            fallbacks[rid] = {"type": "classroom", "label": f"Room {rid}", "confidence": 0.90}
-    return fallbacks
+    # The caller adds explicit generic labels and a scene warning. Do not infer
+    # room types from area alone: that would make a fallback look like a model result.
+    return {}

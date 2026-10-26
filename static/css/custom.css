@@ -1,41 +1,360 @@
-/* FloorPlan3D - Custom Styling */
-
-/* Custom scrollbars for sidebars and JSON viewer */
-::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-}
-::-webkit-scrollbar-track {
-    background: #0f172a;
-}
-::-webkit-scrollbar-thumb {
-    background: #334155;
-    border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-    background: #475569;
+/* FloorPlan3D Bauhaus system: color, geometry and hard-edged functional hierarchy. */
+:root {
+    color-scheme: light;
+    --bauhaus-paper: #f0f0f0;
+    --bauhaus-white: #ffffff;
+    --bauhaus-ink: #121212;
+    --bauhaus-red: #d02020;
+    --bauhaus-blue: #1040c0;
+    --bauhaus-yellow: #f0c020;
+    --bauhaus-muted: #e0e0e0;
+    --bauhaus-border: 2px solid var(--bauhaus-ink);
+    --bauhaus-shadow-sm: 4px 4px 0 var(--bauhaus-ink);
+    --bauhaus-shadow-lg: 8px 8px 0 var(--bauhaus-ink);
 }
 
-/* Glassmorphism panel cards */
-.glass-panel {
-    background: rgba(15, 23, 42, 0.85);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgba(51, 65, 85, 0.6);
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
 }
 
-/* Drag and drop active border glow */
-.drag-active {
-    border-color: #3b82f6 !important;
-    background-color: rgba(59, 130, 246, 0.08) !important;
-    transform: scale(1.01);
-}
-
-/* Three.js canvas container */
-#threejs-canvas-container {
+html,
+body {
     width: 100%;
     height: 100%;
+    margin: 0;
+    background: var(--bauhaus-paper);
+    font-family: "Outfit", system-ui, sans-serif;
+}
+
+body {
+    color: var(--bauhaus-ink);
+    overscroll-behavior: none;
+}
+
+/* Keep common Tailwind shadows hard and offset, never blurred. */
+[class~="shadow-sm"],
+[class~="shadow-md"],
+[class~="shadow-lg"],
+[class~="shadow-xl"],
+[class~="shadow-2xl"] {
+    box-shadow: var(--bauhaus-shadow-sm);
+}
+
+/* Keep the shell fixed while the controls rail scrolls independently. */
+body > header.bauhaus-header {
+    min-height: 4rem;
+    border-color: var(--bauhaus-ink);
+    background: var(--bauhaus-paper);
+    color: var(--bauhaus-ink);
+}
+
+.bauhaus-header h1 {
+    color: var(--bauhaus-ink) !important;
+    font-weight: 900;
+    letter-spacing: -0.04em;
+}
+
+.provider-tag {
+    box-shadow: 3px 3px 0 var(--bauhaus-ink);
+}
+
+.status-badge {
+    box-shadow: var(--bauhaus-shadow-sm);
+}
+
+.status-badge.is-live {
+    background: var(--bauhaus-blue);
+    color: var(--bauhaus-white);
+}
+
+.status-badge.is-offline {
+    background: var(--bauhaus-yellow);
+    color: var(--bauhaus-ink);
+}
+
+.bauhaus-mark {
     position: relative;
+    display: flex;
+    width: 2.5rem;
+    height: 2.5rem;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    border: var(--bauhaus-border);
+    background: var(--bauhaus-white);
+    box-shadow: var(--bauhaus-shadow-sm);
+}
+
+.mark-circle,
+.mark-square {
+    display: block;
+    width: 8px;
+    height: 8px;
+    border: 1px solid var(--bauhaus-ink);
+}
+
+.mark-circle {
+    border-radius: 50%;
+    background: var(--bauhaus-red);
+}
+
+.mark-square {
+    background: var(--bauhaus-blue);
+}
+
+.mark-triangle {
+    display: block;
+    width: 0;
+    height: 0;
+    border-right: 5px solid transparent;
+    border-bottom: 9px solid var(--bauhaus-yellow);
+    border-left: 5px solid transparent;
+}
+
+aside[aria-label="Floor plan controls"] {
+    border-color: var(--bauhaus-ink);
+    background: var(--bauhaus-paper);
+    scrollbar-width: thin;
+    scrollbar-color: var(--bauhaus-ink) var(--bauhaus-muted);
+}
+
+aside[aria-label="Floor plan controls"] label:not([class*="flex"]) {
+    color: var(--bauhaus-ink);
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+aside[aria-label="Floor plan controls"]::-webkit-scrollbar {
+    width: 9px;
+}
+
+aside[aria-label="Floor plan controls"]::-webkit-scrollbar-track {
+    background: var(--bauhaus-muted);
+    border-left: 1px solid var(--bauhaus-ink);
+}
+
+aside[aria-label="Floor plan controls"]::-webkit-scrollbar-thumb {
+    border: 1px solid var(--bauhaus-ink);
+    border-radius: 0;
+    background: var(--bauhaus-blue);
+}
+
+.bauhaus-card {
+    position: relative;
+    border: var(--bauhaus-border) !important;
+    border-radius: 0 !important;
+    background: var(--bauhaus-white) !important;
+    box-shadow: var(--bauhaus-shadow-sm);
+    transition: transform 180ms ease-out, box-shadow 180ms ease-out;
+}
+
+.bauhaus-card:hover {
+    transform: translateY(-2px);
+}
+
+.bauhaus-card::after {
+    position: absolute;
+    top: 9px;
+    right: 9px;
+    width: 10px;
+    height: 10px;
+    content: "";
+    pointer-events: none;
+}
+
+.geo-red::after {
+    background: var(--bauhaus-red);
+}
+
+.geo-blue::after {
+    border-radius: 50%;
+    background: var(--bauhaus-blue);
+}
+
+.geo-yellow::after {
+    width: 0;
+    height: 0;
+    border-right: 7px solid transparent;
+    border-bottom: 12px solid var(--bauhaus-yellow);
+    border-left: 7px solid transparent;
+}
+
+/* Geometric controls retain the existing IDs consumed by app.js. */
+button[id] {
+    min-height: 2.25rem;
+    border: var(--bauhaus-border);
+    border-radius: 0;
+    background: var(--bauhaus-white);
+    color: var(--bauhaus-ink);
+    box-shadow: var(--bauhaus-shadow-sm);
+    font-family: inherit;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.045em;
+    text-transform: uppercase;
+    transition: transform 150ms ease-out, box-shadow 150ms ease-out, opacity 150ms ease-out;
+}
+
+button[id]:hover:not(:disabled) {
+    opacity: 0.9;
+}
+
+button[id]:active:not(:disabled) {
+    transform: translate(2px, 2px);
+    box-shadow: none;
+}
+
+button[id]:disabled {
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+#btn-load-demo,
+#btn-generate {
+    border-color: var(--bauhaus-ink);
+    background: var(--bauhaus-red);
+    color: var(--bauhaus-white);
+    font-size: 0.875rem;
+}
+
+#btn-load-two-story-demo,
+#btn-show-route {
+    border-color: var(--bauhaus-ink);
+    background: var(--bauhaus-blue);
+    color: var(--bauhaus-white);
+}
+
+#btn-export-glb,
+#btn-download-json,
+#btn-download-glb-tab {
+    border-color: var(--bauhaus-ink);
+    background: var(--bauhaus-yellow);
+    color: var(--bauhaus-ink);
+}
+
+#btn-remove-image {
+    width: 1.75rem;
+    min-height: 1.75rem;
+    border-radius: 50%;
+    background: var(--bauhaus-red);
+    color: var(--bauhaus-white);
+}
+
+#btn-focus-room,
+#btn-copy-json,
+#btn-view-reset,
+.floor-info-close {
+    background: var(--bauhaus-white);
+    color: var(--bauhaus-ink);
+}
+
+#btn-cutaway.bg-amber-600 {
+    border-color: var(--bauhaus-ink);
+    background: var(--bauhaus-yellow) !important;
+    color: var(--bauhaus-ink) !important;
+}
+
+.bauhaus-toolbar {
+    border-color: var(--bauhaus-ink);
+    background: var(--bauhaus-blue) !important;
+}
+
+.nav-tab-btn {
+    min-height: 3rem;
+    border-radius: 0 !important;
+    color: var(--bauhaus-white) !important;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.nav-tab-btn.active {
+    border-bottom: 4px solid var(--bauhaus-ink) !important;
+    background: var(--bauhaus-yellow);
+    color: var(--bauhaus-ink) !important;
+}
+
+.viewport-control,
+.glass-control {
+    border: var(--bauhaus-border) !important;
+    border-radius: 0 !important;
+    background: var(--bauhaus-white) !important;
+    color: var(--bauhaus-ink) !important;
+    box-shadow: 3px 3px 0 var(--bauhaus-ink);
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.viewport-control:hover,
+.glass-control:hover {
+    background: var(--bauhaus-yellow) !important;
+    color: var(--bauhaus-ink) !important;
+}
+
+.viewport-control:active {
+    transform: translate(2px, 2px);
+    box-shadow: none;
+}
+
+select,
+input[type="range"],
+input[type="checkbox"] {
+    accent-color: var(--bauhaus-red);
+}
+
+select {
+    border: var(--bauhaus-border) !important;
+    border-radius: 0 !important;
+    background-color: var(--bauhaus-white) !important;
+    color: var(--bauhaus-ink) !important;
+}
+
+input[type="checkbox"] {
+    width: 1rem;
+    height: 1rem;
+}
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible {
+    outline: 3px solid var(--bauhaus-red);
+    outline-offset: 3px;
+}
+
+#drop-zone {
+    border: 2px dashed var(--bauhaus-ink) !important;
+    border-radius: 0 !important;
+    background: var(--bauhaus-muted) !important;
+}
+
+#drop-zone:hover,
+.drag-active {
+    border-color: var(--bauhaus-red) !important;
+    background: var(--bauhaus-yellow) !important;
+}
+
+.glass-panel,
+.bauhaus-overlay {
+    border: 2px solid var(--bauhaus-ink) !important;
+    border-radius: 0 !important;
+    background: var(--bauhaus-white) !important;
+    color: var(--bauhaus-ink) !important;
+    box-shadow: var(--bauhaus-shadow-lg) !important;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+}
+
+.bauhaus-overlay > div:first-child {
+    color: var(--bauhaus-ink) !important;
+}
+
+#threejs-canvas-container {
+    position: relative;
+    width: 100%;
+    height: 100%;
     overflow: hidden;
 }
 
@@ -46,17 +365,226 @@
     outline: none;
 }
 
-/* Smooth transitions */
-.transition-all-fast {
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+#tab-2d {
+    min-height: 0;
+    background: var(--bauhaus-muted) !important;
 }
 
-/* Pulse animation for active AI processing steps */
+#segmentation-canvas {
+    border: 2px solid var(--bauhaus-ink);
+}
+
+#tab-json {
+    min-height: 0;
+}
+
+#tab-json pre {
+    max-width: 100%;
+    overflow: auto;
+    overscroll-behavior: contain;
+    border: 2px solid var(--bauhaus-ink) !important;
+    border-radius: 0 !important;
+    background: var(--bauhaus-white) !important;
+    color: var(--bauhaus-ink) !important;
+    box-shadow: var(--bauhaus-shadow-sm);
+}
+
+#tab-json code {
+    display: block;
+    min-width: max-content;
+    color: var(--bauhaus-ink) !important;
+}
+
+#app-message:not(.hidden),
+.bauhaus-warning {
+    border: 2px solid var(--bauhaus-ink) !important;
+    border-radius: 0 !important;
+    background: var(--bauhaus-yellow) !important;
+    color: var(--bauhaus-ink) !important;
+    box-shadow: var(--bauhaus-shadow-sm);
+}
+
+#progress-bar {
+    height: 0.75rem;
+    border: 1px solid var(--bauhaus-ink);
+    border-radius: 0 !important;
+    background: var(--bauhaus-red) !important;
+}
+
+/* The floor detail panel is created by viewer.js and follows the same poster-like card rules. */
+.floor-info-panel {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    z-index: 20;
+    width: min(19rem, calc(100% - 2rem));
+    padding: 1rem;
+    border: 4px solid var(--bauhaus-ink);
+    border-radius: 0;
+    color: var(--bauhaus-ink);
+    background: var(--bauhaus-white);
+    box-shadow: var(--bauhaus-shadow-lg);
+    opacity: 0;
+    transform: translateY(-0.5rem);
+    transition: opacity 150ms ease-out, transform 150ms ease-out;
+    pointer-events: auto;
+}
+
+.floor-info-panel.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.floor-info-panel[hidden] {
+    display: none;
+}
+
+.floor-info-title {
+    margin: 0 0 0.75rem;
+    color: var(--bauhaus-ink);
+    font-size: 1rem;
+    font-weight: 900;
+    text-transform: uppercase;
+}
+
+.floor-info-details p {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    margin: 0.5rem 0;
+    color: var(--bauhaus-ink);
+    font-size: 0.875rem;
+}
+
+.floor-info-details strong {
+    color: var(--bauhaus-blue);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-weight: 700;
+}
+
+.floor-info-close {
+    margin-top: 0.8rem;
+    padding: 0.4rem 0.75rem;
+    border: 2px solid var(--bauhaus-ink);
+    border-radius: 0;
+    box-shadow: var(--bauhaus-shadow-sm);
+    cursor: pointer;
+}
+
+.floor-info-close:hover {
+    background: var(--bauhaus-yellow);
+}
+
+/* Compact screens keep the toolbar horizontally navigable and the sidebar usable. */
+@media (max-width: 900px) {
+    aside[aria-label="Floor plan controls"] {
+        width: min(19rem, 43vw);
+    }
+
+    .bauhaus-card {
+        border-width: 2px !important;
+        box-shadow: var(--bauhaus-shadow-sm);
+    }
+
+    #tab-3d .glass-panel {
+        bottom: 0.75rem;
+        left: 0.75rem;
+        max-width: calc(100% - 1.5rem);
+    }
+
+    .bauhaus-overlay > div:last-child {
+        flex-wrap: wrap;
+        justify-content: flex-start;
+    }
+}
+
+@media (max-width: 640px) {
+    body.h-screen {
+        height: auto;
+        min-height: 100vh;
+        overflow: auto;
+    }
+
+    body > div.flex {
+        flex-direction: column;
+        overflow: visible;
+    }
+
+    aside[aria-label="Floor plan controls"] {
+        width: 100%;
+        max-width: none;
+        height: auto;
+        border-right: 0;
+        border-bottom: 4px solid var(--bauhaus-ink);
+    }
+
+    main[class] {
+        width: 100%;
+        min-height: 70vh;
+    }
+
+    body > header.bauhaus-header {
+        height: auto;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        padding-top: 0.5rem;
+        padding-bottom: 0.5rem;
+    }
+
+    .bauhaus-toolbar {
+        justify-content: flex-start;
+        overflow-x: auto;
+    }
+
+    #tab-json > div:first-child {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    #tab-json > div:first-child > div:last-child {
+        flex-wrap: wrap;
+    }
+}
+
+@media (min-width: 1024px) {
+    .bauhaus-card {
+        border-width: 4px !important;
+        box-shadow: var(--bauhaus-shadow-lg);
+    }
+
+    #btn-load-demo,
+    #btn-load-two-story-demo,
+    #btn-generate,
+    #btn-show-route,
+    #btn-focus-room,
+    #btn-export-glb,
+    #btn-download-json,
+    #btn-download-glb-tab,
+    #btn-copy-json,
+    #btn-view-reset,
+    .viewport-control,
+    .glass-control {
+        border-width: 2px !important;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+    }
+}
+
 @keyframes pulse-subtle {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.8; transform: scale(1.02); }
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.65; }
 }
 
 .animate-pulse-subtle {
-    animation: pulse-subtle 2s infinite ease-in-out;
+    animation: pulse-subtle 1.5s infinite ease-out;
 }
