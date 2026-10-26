@@ -21,6 +21,7 @@ def generate_sample_floorplan_image(output_path=None):
       - Door openings with door swing arcs
       - Window openings on exterior walls
       - Architectural dimension lines and labels
+      Only samples
     """
     from PIL import Image, ImageDraw
 
