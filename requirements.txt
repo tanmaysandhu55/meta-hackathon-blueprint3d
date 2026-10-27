@@ -1,7 +1,6 @@
 # FloorPlan3D - Python Dependencies
 # Python 3.11+
 flask>=3.0.0
-flask-cors>=4.0.0
 openai>=1.0.0
 opencv-python>=4.8.0
 shapely>=2.0.0

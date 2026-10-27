@@ -18,6 +18,7 @@ Implements external REST API integrations for Meta models without any local GPU 
    - Route: Modal OpenAI-compatible chat completions endpoint
 """
 
+import logging
 import os
 import json
 import urllib.request
@@ -29,6 +30,7 @@ from openai import OpenAI
 
 # Load configuration from .env
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 
 def is_configured_value(value):
@@ -109,15 +111,31 @@ def query_baseten_sam(b64_data_url, concept, image_size):
     except Exception as e:
         raise RuntimeError(f"Failed to query Baseten SAM 3.1: {str(e)}")
 
-    # Parse masks from Baseten response
+    # Parse either a named response field or a raw list of masks. Some
+    # deployments return one 2D mask directly instead of wrapping it in a list.
     masks_list = []
+    if isinstance(data, list):
+        raw_masks = data
+    elif isinstance(data, dict):
+        raw_masks = data.get("masks") or data.get("predictions") or data.get("output") or []
+    else:
+        raise RuntimeError("Baseten SAM returned an unsupported response format.")
 
-    # Format 1: Direct list of masks (2D arrays or binary grids)
-    raw_masks = data.get("masks", []) or data.get("predictions", []) or data.get("output", [])
+    if isinstance(raw_masks, list) and raw_masks:
+        try:
+            numeric_masks = np.asarray(raw_masks, dtype=np.uint8)
+            if numeric_masks.ndim == 2:
+                raw_masks = [numeric_masks]
+            elif numeric_masks.ndim == 3:
+                raw_masks = list(numeric_masks)
+        except (TypeError, ValueError):
+            # Leave polygon/bounding-box response entries for the parser below.
+            pass
+
     if isinstance(raw_masks, list):
         for item in raw_masks:
             try:
-                if isinstance(item, list):
+                if isinstance(item, (list, np.ndarray)):
                     # 2D array of 0s and 1s
                     arr = np.array(item, dtype=np.uint8)
                     if arr.ndim == 2:
@@ -204,7 +222,7 @@ def get_modal_config():
     endpoint_url = os.environ.get("MODAL_MUSE_SPARK_URL", "").strip()
     model_name = os.environ.get("MODAL_MUSE_SPARK_MODEL", "").strip()
     token_parts = api_key.split(".", 1)
-    has_proxy_token = (
+    has_proxy_token = is_configured_value(api_key) and (
         len(token_parts) == 2
         and token_parts[0].startswith("wk-")
         and token_parts[1].startswith("ws-")
@@ -217,7 +235,7 @@ def get_modal_config():
     }
 
 
-def label_rooms_with_modal_muse_spark(b64_data_url, room_candidates):
+def label_rooms_with_modal_muse_spark(b64_data_url, room_candidates, warnings=None):
     """
     Calls the configured Modal classifier, then Fireworks if Modal is unavailable.
     Returns only validated model results; the pipeline owns the explicit generic fallback.
@@ -263,6 +281,8 @@ def label_rooms_with_modal_muse_spark(b64_data_url, room_candidates):
         return labels
 
     modal_cfg = get_modal_config()
+    modal_labels = {}
+    modal_failure_reason = None
 
     # Modal Shared/Dedicated Endpoints expose OpenAI-compatible chat completions.
     if modal_cfg["is_configured"]:
@@ -312,9 +332,16 @@ def label_rooms_with_modal_muse_spark(b64_data_url, room_candidates):
                 if start < 0 or end <= start:
                     raise ValueError("Modal Muse Spark returned no JSON object.")
                 data = json.loads(raw_text[start:end + 1])
-            return validated_labels(data.get("rooms", []))
+            modal_labels = validated_labels(data.get("rooms", []))
+            if len(modal_labels) == len(expected_ids):
+                return modal_labels
+            modal_failure_reason = "Muse Spark returned incomplete or unusable room labels."
+            logger.warning("%s Trying Fireworks fallback.", modal_failure_reason)
         except Exception as modal_err:
-            print(f"Warning: Modal endpoint returned error ({modal_err}). Falling back to Fireworks Llama 3.")
+            modal_failure_reason = "Muse Spark (Modal) could not be reached or returned an invalid response."
+            logger.warning("%s Trying Fireworks fallback: %s", modal_failure_reason, modal_err)
+    elif is_configured_value(os.environ.get("FIREWORKS_API_KEY", "")):
+        modal_failure_reason = "Muse Spark (Modal) is not configured."
 
     # Fireworks Meta Llama 3 NLP fallback for room labeling
     fw_client = get_fireworks_client()
@@ -336,9 +363,13 @@ def label_rooms_with_modal_muse_spark(b64_data_url, room_candidates):
                 response_format={"type": "json_object"}
             )
             data = json.loads(raw_json)
-            return validated_labels(data.get("rooms", []))
+            fireworks_labels = validated_labels(data.get("rooms", []))
+            merged_labels = {**fireworks_labels, **modal_labels}
+            if modal_failure_reason and warnings is not None:
+                warnings.append(f"{modal_failure_reason} Fireworks filled any missing room labels.")
+            return merged_labels
         except Exception as fw_err:
-            print(f"Warning: Fireworks Llama 3 classification error: {fw_err}")
+            logger.warning("Fireworks Llama 3 classification failed: %s", fw_err)
 
     # The caller adds explicit generic labels and a scene warning. Do not infer
     # room types from area alone: that would make a fallback look like a model result.

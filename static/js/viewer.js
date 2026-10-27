@@ -166,10 +166,14 @@ class FloorPlanViewer {
         }
 
         this.currentSceneData = sceneData;
-        this.wallHeight = sceneData.meta.wallHeight || 3.0;
+        this.wallHeight = Number(sceneData.meta.wallHeight) || 3.0;
+        this.floorHeight = Number(sceneData.meta.floorHeight) || this.wallHeight;
         this.levelCount = Math.max(1, Number(sceneData.meta.levelCount) || (sceneData.meta.levels || []).length || 1);
-        this.floorHeight = this.wallHeight;
-        this.sceneHeight = this.levelCount * this.wallHeight;
+        const declaredElevations = (sceneData.meta.levels || []).map(level => Number(level.elevation)).filter(Number.isFinite);
+        const highestFloor = declaredElevations.length
+            ? Math.max(...declaredElevations)
+            : (this.levelCount - 1) * this.floorHeight;
+        this.sceneHeight = highestFloor + this.wallHeight;
         this.visibleLevel = null;
         this.currentIsolatedFloor = null;
         this.pendingFloorIsolation = null;
@@ -248,6 +252,25 @@ class FloorPlanViewer {
         this.loadingLaser = null;
     }
 
+    disposeObjectResources(root) {
+        const geometries = new Set();
+        const materials = new Set();
+        const textures = new Set();
+        root.traverse(object => {
+            if (object.geometry) geometries.add(object.geometry);
+            const objectMaterials = Array.isArray(object.material) ? object.material : [object.material];
+            objectMaterials.filter(Boolean).forEach(material => {
+                materials.add(material);
+                Object.values(material).forEach(value => {
+                    if (value?.isTexture) textures.add(value);
+                });
+            });
+        });
+        geometries.forEach(geometry => geometry.dispose());
+        materials.forEach(material => material.dispose());
+        textures.forEach(texture => texture.dispose());
+    }
+
     configureShadowCamera() {
         if (!this.keyLight || !this.bounds) return;
 
@@ -273,22 +296,12 @@ class FloorPlanViewer {
         Object.values(this.groups).forEach(g => {
             while (g.children.length > 0) {
                 const obj = g.children[0];
-                if (obj.geometry) obj.geometry.dispose();
-                if (obj.material) {
-                    if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
-                    else obj.material.dispose();
-                }
+                this.disposeObjectResources(obj);
                 g.remove(obj);
             }
         });
         this.floorGroups.forEach(floorGroup => {
-            floorGroup.traverse(object => {
-                if (object.geometry) object.geometry.dispose();
-                if (object.material) {
-                    if (Array.isArray(object.material)) object.material.forEach(material => material.dispose());
-                    else object.material.dispose();
-                }
-            });
+            this.disposeObjectResources(floorGroup);
             if (floorGroup.parent) floorGroup.parent.remove(floorGroup);
         });
         this.floorGroups.clear();
@@ -310,7 +323,7 @@ class FloorPlanViewer {
             floorGroup.name = `floorGroup_${floorIndex}`;
             floorGroup.floorIndex = floorIndex;
             floorGroup.userData = { floorIndex, currentIsolationOpacity: 1 };
-            floorGroup.position.y = floorIndex * this.wallHeight;
+            floorGroup.position.y = this.getLevelElevation(floorIndex);
             this.floorLayerNames.forEach(layerName => {
                 const layer = new THREE.Group();
                 layer.name = layerName;
@@ -484,7 +497,11 @@ class FloorPlanViewer {
 
     getLevelElevation(level) {
         const numericLevel = Math.max(0, Number(level) || 0);
-        return numericLevel * this.wallHeight;
+        const levelInfo = (this.currentSceneData?.meta?.levels || []).find(item =>
+            Number(item.floorIndex ?? item.level) === numericLevel
+        );
+        const declaredElevation = Number(levelInfo?.elevation);
+        return Number.isFinite(declaredElevation) ? declaredElevation : numericLevel * this.floorHeight;
     }
 
     updateVisibleLevels() {
@@ -639,7 +656,7 @@ class FloorPlanViewer {
         const eased = 1 - Math.pow(1 - t, 3);
 
         this.floorGroups.forEach((group, floorIndex) => {
-            const baseY = floorIndex * this.wallHeight;
+            const baseY = this.getLevelElevation(floorIndex);
             const start = tween.starts.get(floorIndex) || { y: baseY, opacity: 1 };
             const targetY = tween.targetFloorIndex === floorIndex
                 ? baseY + this.wallHeight * 3
@@ -651,7 +668,7 @@ class FloorPlanViewer {
 
         if (t < 1) return;
         this.floorGroups.forEach((group, floorIndex) => {
-            const baseY = floorIndex * this.wallHeight;
+            const baseY = this.getLevelElevation(floorIndex);
             group.position.y = tween.targetFloorIndex === floorIndex ? baseY + this.wallHeight * 3 : baseY;
             if (tween.targetFloorIndex === null) this.restoreFloorMaterials(group);
             else this.setFloorOpacity(group, floorIndex === tween.targetFloorIndex ? 1 : 0.05);
@@ -769,14 +786,9 @@ class FloorPlanViewer {
             const p0 = this.toWorldCoords(poly[0][0], poly[0][1]);
             shape.moveTo(p0.x, -p0.z);
 
-            let sumX = p0.x;
-            let sumZ = p0.z;
-
             for (let i = 1; i < poly.length; i++) {
                 const pt = this.toWorldCoords(poly[i][0], poly[i][1]);
                 shape.lineTo(pt.x, -pt.z);
-                sumX += pt.x;
-                sumZ += pt.z;
             }
             shape.closePath();
 
@@ -815,12 +827,12 @@ class FloorPlanViewer {
             this.animatingMeshes.push(roomMesh);
 
             // Calculate centroid for floating label badge
-            const centroidX = sumX / poly.length;
-            const centroidZ = sumZ / poly.length;
+            const [centroidPlanX, centroidPlanY] = this.getPolygonCentroid(poly);
+            const centroid = this.toWorldCoords(centroidPlanX, centroidPlanY);
 
             // Create floating 3D text badge
             const badgeSprite = this.createRoomBadgeSprite(room);
-            badgeSprite.position.set(centroidX, 1.4, centroidZ);
+            badgeSprite.position.set(centroid.x, 1.4, centroid.z);
             badgeSprite.userData.level = level;
             badgeSprite.userData.floorIndex = level;
             badgeSprite.userData.confidence = Number(room.confidence) || 0;
@@ -831,6 +843,24 @@ class FloorPlanViewer {
             roomMesh.userData.buildRevealLabel = badgeSprite;
             this.getFloorLayer(level, "labels")?.add(badgeSprite);
         });
+    }
+
+    getPolygonCentroid(polygon) {
+        let twiceArea = 0;
+        let xSum = 0;
+        let ySum = 0;
+        polygon.forEach((point, index) => {
+            const next = polygon[(index + 1) % polygon.length];
+            const cross = point[0] * next[1] - next[0] * point[1];
+            twiceArea += cross;
+            xSum += (point[0] + next[0]) * cross;
+            ySum += (point[1] + next[1]) * cross;
+        });
+        if (Math.abs(twiceArea) > 1e-8) return [xSum / (3 * twiceArea), ySum / (3 * twiceArea)];
+        return polygon.reduce((sum, point) => [
+            sum[0] + point[0] / polygon.length,
+            sum[1] + point[1] / polygon.length
+        ], [0, 0]);
     }
 
     /**
@@ -1057,9 +1087,13 @@ class FloorPlanViewer {
     setWallHeight(heightMeters) {
         if (!this.currentSceneData) return;
         this.wallHeight = Math.max(0.2, parseFloat(heightMeters) || 3.0);
-        this.sceneHeight = (this.levelCount - 1) * this.wallHeight + this.wallHeight;
+        const floorIndices = Array.from(this.floorGroups.keys());
+        const highestFloor = floorIndices.length
+            ? Math.max(...floorIndices.map(index => this.getLevelElevation(index)))
+            : 0;
+        this.sceneHeight = highestFloor + this.wallHeight;
         this.floorGroups.forEach((group, floorIndex) => {
-            group.position.y = floorIndex * this.wallHeight;
+            group.position.y = this.getLevelElevation(floorIndex);
         });
         
         // Rebuild only the walls layer
@@ -1076,6 +1110,7 @@ class FloorPlanViewer {
         this.clearOpeningLayer("windows");
         this.buildDoors(this.currentSceneData.doors || []);
         this.buildWindows(this.currentSceneData.windows || []);
+        this.configureShadowCamera();
         this.updateVisibleLevels();
         this.refreshSelectableMeshes();
     }
@@ -1466,7 +1501,7 @@ class FloorPlanViewer {
                     document.body.appendChild(link);
                     link.click();
                     document.body.removeChild(link);
-                    URL.revokeObjectURL(link.href);
+                    window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
                 } else {
                     console.error("Export produced non-binary output:", arrayBuffer);
                 }
@@ -1479,6 +1514,7 @@ class FloorPlanViewer {
         if (!this.container || !this.renderer || !this.camera) return;
         const width = this.container.clientWidth;
         const height = this.container.clientHeight;
+        if (width <= 0 || height <= 0) return;
         this.camera.aspect = width / height;
         this.camera.updateProjectionMatrix();
         this.renderer.setSize(width, height);

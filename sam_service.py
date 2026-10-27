@@ -28,10 +28,10 @@ def query_sam_concept(b64_data_url, concept, image_size):
     return query_baseten_sam(b64_data_url, concept, image_size)
 
 
-def label_rooms(b64_data_url, room_candidates):
+def label_rooms(b64_data_url, room_candidates, warnings=None):
     """
     Labels each detected room candidate.
     Uses Modal serverless endpoint for Muse Spark,
     and Fireworks API for Meta Llama 3.
     """
-    return label_rooms_with_modal_muse_spark(b64_data_url, room_candidates)
+    return label_rooms_with_modal_muse_spark(b64_data_url, room_candidates, warnings=warnings)

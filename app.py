@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request, send_file
-from flask_cors import CORS
 from PIL import Image, UnidentifiedImageError
 from werkzeug.utils import secure_filename
 
@@ -30,7 +29,6 @@ load_dotenv()
 app = Flask(__name__, template_folder="templates", static_folder="static")
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 app.config["MAX_CONTENT_LENGTH"] = MAX_IMAGE_BYTES + 64 * 1024  # allow multipart form overhead
-CORS(app)
 
 SAMPLE_IMG_PATH = os.path.join(app.root_path, "samples", "sample_floorplan.png")
 if not os.path.exists(SAMPLE_IMG_PATH):
@@ -124,7 +122,7 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
     progress("Classifying rooms", 79)
     warnings = []
     try:
-        labels = label_rooms(image_url, rooms_data)
+        labels = label_rooms(image_url, rooms_data, warnings=warnings)
     except Exception:
         labels = {}
         warnings.append("Room labels are unavailable; generic room labels are shown.")

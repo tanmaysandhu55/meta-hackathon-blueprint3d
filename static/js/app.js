@@ -163,7 +163,7 @@ document.addEventListener("DOMContentLoaded", () => {
             nodeCoordinates.set(id, coordinates);
         };
         const roomNode = id => `room:${id}`;
-        const roomLevel = room => Number(room.floorIndex ?? room.level) || 0;
+        const roomLevel = room => Number(room?.floorIndex ?? room?.level) || 0;
         const floorElevation = floorIndex => {
             const info = (scene.meta.levels || []).find(item => Number(item.floorIndex ?? item.level) === floorIndex);
             return Number.isFinite(Number(info?.elevation))
@@ -180,7 +180,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const allConnected = (door.connects || []).filter(id => rooms.has(id));
             const explicitDoorFloor = door.floorIndex ?? door.level;
             const doorFloor = explicitDoorFloor === undefined || explicitDoorFloor === null
-                ? roomLevel(rooms.get(allConnected[0]))
+                ? (allConnected.length ? roomLevel(rooms.get(allConnected[0])) : roomLevel(door))
                 : Number(explicitDoorFloor) || 0;
             const connected = allConnected.filter(id => roomLevel(rooms.get(id)) === doorFloor);
             if (connected.length < 2) return;
@@ -201,7 +201,7 @@ document.addEventListener("DOMContentLoaded", () => {
         rooms.forEach(room => {
             const type = String(room.type || "").toLowerCase();
             if (!(["stairs", "stair", "elevator"].includes(type))) return;
-            const connectorKey = type;
+            const connectorKey = type === "stair" ? "stairs" : type;
             if (!verticalConnectors.has(connectorKey)) verticalConnectors.set(connectorKey, []);
             verticalConnectors.get(connectorKey).push(room);
         });
@@ -664,10 +664,12 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!currentSceneData) return;
 
         const mpp = currentSceneData.meta.metersPerPixel || 0.02;
-        const selectedLevel = levelFilter.value === "all" ? 0 : Number(levelFilter.value);
+        const selectedLevel = levelFilter.value === "all" ? null : Number(levelFilter.value);
+        const belongsToSelectedLevel = item => selectedLevel === null
+            || (Number(item.level ?? item.floorIndex) || 0) === selectedLevel;
 
         // Draw Room Polygons
-        (currentSceneData.rooms || []).filter(room => (Number(room.level) || 0) === selectedLevel).forEach(room => {
+        (currentSceneData.rooms || []).filter(belongsToSelectedLevel).forEach(room => {
             const poly = room.polygon || [];
             if (poly.length < 3) return;
 
@@ -686,8 +688,9 @@ document.addEventListener("DOMContentLoaded", () => {
             segCtx.stroke();
 
             // Draw a square paper label with an ink outline.
-            const cx = poly.reduce((acc, p) => acc + p[0], 0) / poly.length / mpp;
-            const cy = poly.reduce((acc, p) => acc + p[1], 0) / poly.length / mpp;
+            const [centroidX, centroidY] = roomCentroid(room);
+            const cx = centroidX / mpp;
+            const cy = centroidY / mpp;
 
             segCtx.fillStyle = "#F0F0F0";
             segCtx.fillRect(cx - 50, cy - 14, 100, 24);
@@ -701,7 +704,7 @@ document.addEventListener("DOMContentLoaded", () => {
         });
 
         // Draw Doors
-        (currentSceneData.doors || []).filter(door => (Number(door.level) || 0) === selectedLevel).forEach(door => {
+        (currentSceneData.doors || []).filter(belongsToSelectedLevel).forEach(door => {
             const cx = (door.center ? door.center[0] : 0) / mpp;
             const cy = (door.center ? door.center[1] : 0) / mpp;
             const w = (door.width || 0.9) / mpp;
@@ -714,7 +717,7 @@ document.addEventListener("DOMContentLoaded", () => {
         });
 
         // Draw Windows
-        (currentSceneData.windows || []).filter(win => (Number(win.level) || 0) === selectedLevel).forEach(win => {
+        (currentSceneData.windows || []).filter(belongsToSelectedLevel).forEach(win => {
             const cx = (win.center ? win.center[0] : 0) / mpp;
             const cy = (win.center ? win.center[1] : 0) / mpp;
             const w = (win.width || 1.2) / mpp;
@@ -810,7 +813,7 @@ document.addEventListener("DOMContentLoaded", () => {
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     });
 
     // -------------------------------------------------------------
