@@ -374,6 +374,11 @@ input:focus-visible {
     border: 2px solid var(--bauhaus-ink);
 }
 
+#segmentation-canvas.polygon-edit-active {
+    cursor: crosshair;
+    touch-action: none;
+}
+
 #tab-json {
     min-height: 0;
 }

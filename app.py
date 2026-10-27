@@ -22,6 +22,8 @@ from werkzeug.utils import secure_filename
 
 from cloud_services import (
     ProviderError,
+    ask_modal_muse_spark_about_scene,
+    get_modal_config,
     get_baseten_config,
     is_mock_sam_enabled,
     is_sam_replay_enabled,
@@ -92,6 +94,56 @@ def _rate_limit_upload(ip_address):
             return retry_after
         requests_for_ip.append(now)
         return 0
+
+
+def _build_scene_facts(scene):
+    rooms = []
+    for room in scene.get("rooms", [])[:120]:
+        polygon = room.get("polygon", [])
+        area = 0.0
+        if len(polygon) >= 3:
+            twice_area = sum(
+                point[0] * polygon[(index + 1) % len(polygon)][1]
+                - polygon[(index + 1) % len(polygon)][0] * point[1]
+                for index, point in enumerate(polygon)
+            )
+            area = abs(twice_area) / 2
+        rooms.append({
+            "id": str(room.get("id", ""))[:80],
+            "label": str(room.get("label", ""))[:100],
+            "type": str(room.get("type", "room"))[:40],
+            "floor": int(room.get("floorIndex", room.get("level", 0)) or 0),
+            "area_m2": round(area, 2),
+        })
+    doors = [
+        {"id": str(door.get("id", ""))[:80], "connects": [str(room_id)[:80] for room_id in door.get("connects", [])[:8]]}
+        for door in scene.get("doors", [])[:180]
+    ]
+    levels = [
+        {"level": int(item.get("floorIndex", item.get("level", 0)) or 0), "name": str(item.get("name", ""))[:80]}
+        for item in scene.get("meta", {}).get("levels", [])[:12]
+    ]
+    return {"levels": levels, "rooms": rooms, "doors": doors}
+
+
+def _offline_scene_answer(question, facts):
+    normalized = " ".join(question.lower().split())
+    rooms = facts["rooms"]
+    matches = [room for room in rooms if room["label"].lower() in normalized or room["id"].lower() in normalized]
+    if matches:
+        room = matches[0]
+        return (
+            f"{room['label'] or room['id']} ({room['id']}) is on Level {room['floor'] + 1}; "
+            f"the map estimates its area at {room['area_m2']:.1f} m²."
+        )
+    if any(term in normalized for term in ("how many room", "room count", "number of room")):
+        return f"This map contains {len(rooms)} rooms across {len(facts['levels']) or 1} listed floor(s)."
+    if "total area" in normalized or "area of building" in normalized:
+        total = sum(room["area_m2"] for room in rooms)
+        return f"The mapped rooms total approximately {total:.1f} m². This is an estimate from detected polygons."
+    if "door" in normalized and ("how many" in normalized or "count" in normalized):
+        return f"The scene contains {len(facts['doors'])} detected doors."
+    return "Offline scene lookup can answer room, floor, area, and door-count questions. Configure Modal Muse Spark for open-ended questions."
 
 
 def _downscale_for_provider(image_bytes):
@@ -420,6 +472,35 @@ def health():
         "pipeline_ready": _live_sam_ready(),
         "live_processing_ready": mode == "LIVE",
         "processing_mode": mode,
+    })
+
+
+@app.route("/api/scene/ask", methods=["POST"])
+def ask_about_scene():
+    payload = request.get_json(silent=True) or {}
+    question = payload.get("question")
+    scene = payload.get("scene")
+    if not isinstance(question, str) or not question.strip() or len(question) > 500:
+        return jsonify({"success": False, "error": "Enter a question of 1 to 500 characters."}), 400
+    if not isinstance(scene, dict):
+        return jsonify({"success": False, "error": "Load a floor-plan scene before asking a question."}), 400
+    try:
+        validate_scene_contract(scene)
+    except RuntimeError:
+        return jsonify({"success": False, "error": "The current map is not valid enough to query."}), 400
+
+    facts = _build_scene_facts(scene)
+    if get_modal_config()["is_configured"]:
+        try:
+            answer = ask_modal_muse_spark_about_scene(question.strip(), facts)
+            return jsonify({"success": True, "answer": answer, "provider": "Muse Spark via Modal"})
+        except Exception:
+            app.logger.exception("Muse Spark map question failed")
+    answer = _offline_scene_answer(question.strip(), facts)
+    return jsonify({
+        "success": True,
+        "answer": answer,
+        "provider": "Offline scene lookup (no model call)",
     })
 
 

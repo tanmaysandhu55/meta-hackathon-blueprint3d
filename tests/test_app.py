@@ -100,6 +100,26 @@ def test_mock_health_is_ready_but_never_claims_live_processing(client, monkeypat
     assert "Live processing configured" not in page
 
 
+def test_scene_question_uses_explicit_offline_lookup_without_modal(client, monkeypatch):
+    monkeypatch.setattr(app_module, "get_modal_config", lambda: {"is_configured": False})
+    scene = app_module.get_sample_scene_json()
+    response = client.post("/api/scene/ask", json={"question": "Where is the Computer Lab?", "scene": scene})
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["provider"] == "Offline scene lookup (no model call)"
+    assert "Computer Lab" in payload["answer"]
+    assert "m²" in payload["answer"]
+
+
+def test_scene_question_rejects_missing_or_invalid_inputs(client):
+    empty = client.post("/api/scene/ask", json={"question": "", "scene": {}})
+    assert empty.status_code == 400
+
+    no_scene = client.post("/api/scene/ask", json={"question": "How many rooms?"})
+    assert no_scene.status_code == 400
+
+
 def test_upload_returns_429_when_concurrency_cap_is_reached(client, monkeypatch):
     monkeypatch.setenv("MOCK_SAM", "1")
     app_module.JOBS["already-running-1"] = {"status": "processing"}

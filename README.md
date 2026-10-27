@@ -6,12 +6,13 @@ FloorPlan3D turns a 2D floor-plan image into a metric `scene.json` and a navigab
 
 - **Offline demo:** loads the prepared sample plan, scene, segmentation overlay, room inspector, and 3D model without API keys.
 - **Two-story demo:** loads the prepared plan as a stacked two-level building; use the story selector to inspect either floor or both together.
+- **Multi-floor upload:** select up to eight plan images in ground-to-top order and process them as a building. Stories are aligned by the detected stair/elevator room when available, otherwise by a plan-center fallback; verify alignment before relying on cross-floor routes or measurements.
 - **Live processing:** accepts PNG, JPG, and WebP images up to 10 MB, normalizes them to PNG, and runs SAM segmentation in a background job.
 - **Geometry:** cleans masks, converts contours to meter coordinates, estimates scale from the median detected door width when enabled, and approximates walls from room outlines if no wall mask is returned.
 - **Room labels:** uses the configured Modal classifier or Fireworks fallback. If neither returns usable labels, rooms stay generic and `scene.meta.warnings` explains the fallback.
 - **Viewer:** renders floors, extruded walls, doors, windows, labels, shadows, cutaway height, room selection and focus, door-based shortest routes, scene JSON, and GLB export.
 
-The viewer includes WASD first-person walkthrough with mouse look and approximate collision against detected wall polygons, 3D point-to-point measurement, two-point scale calibration, room/total area summaries, editable room labels/types, JSON/GLB export, and optional primitive furniture. Segmentation, geometry, and collision quality still depend on the uploaded drawing; the prepared multi-story demo is illustrative rather than an AI-generated multi-floor reconstruction.
+The viewer includes WASD first-person walkthrough with mouse look and approximate collision against detected wall polygons, 3D point-to-point measurement, two-point scale calibration, room/total area summaries, editable room labels/types and draggable room-outline vertices with undo, JSON/GLB export, and optional primitive furniture. The map assistant uses scene-grounded Muse Spark through Modal when configured, with a clearly identified deterministic offline lookup for common questions. Map checks report polygon completeness, connector counts, and any confidence values returned by the pipeline; they are not an accuracy score. Segmentation, geometry, connector alignment, and collision quality still depend on the uploaded drawing; review outputs before relying on them.
 
 ## Architecture
 
@@ -46,6 +47,9 @@ Room labeling sends the plan image and room candidates to Muse Spark through Mod
 3. Start the app with `run.bat`, or run `.\.venv\Scripts\python.exe app.py` in PowerShell.
 4. Open `http://127.0.0.1:5000` and choose **Load Hackathon Demo Plan**.
 5. Try room focus and routing, room selection, the 2D overlay and scene JSON tabs, cutaway view, and GLB export.
+6. To process a real multi-floor building, select plan images together in ground-to-top order and choose **Process selected plans as stories**. Check each story against its source plan and verify stair/elevator alignment before showing cross-floor routes.
+7. Select a room and choose **Edit room outline** to drag the cyan vertices in the 2D tab. Undo is available; finish editing, then export the corrected scene or GLB.
+8. Ask the map assistant a question such as “Where is the Computer Lab?” It labels whether the response came from Muse Spark or offline lookup.
 
 Use the same interpreter for installation and startup. On some Windows setups, `python` can point to a separate distribution that does not have the packages installed. Dependencies are pinned in `requirements.txt`; run tests with `python -m pytest -q`.
 

@@ -93,6 +93,7 @@
                 <section id="area-summary-panel" class="bauhaus-card geo-blue space-y-2 rounded-none border-2 border-bauhaus-ink bg-white p-4" aria-labelledby="area-summary-title">
                     <h2 id="area-summary-title" class="text-xs font-semibold uppercase tracking-wider">Area Summary</h2>
                     <p id="area-summary-total" class="font-mono text-sm">Load a plan to calculate areas.</p>
+                    <div id="map-quality-report" class="rounded-none border border-bauhaus-muted bg-bauhaus-muted p-2 text-[11px] leading-relaxed" role="status" aria-live="polite">Map checks appear after loading a scene. These checks are not an accuracy score.</div>
                     <details>
                         <summary class="cursor-pointer text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Per-room areas</summary>
                         <ul id="area-summary-rooms" class="mt-2 max-h-48 space-y-1 overflow-y-auto text-xs"></ul>
@@ -116,7 +117,7 @@
 
                     <!-- Drop Zone -->
                     <div id="drop-zone" class="group cursor-pointer rounded-none border border-dashed border-bauhaus-ink bg-bauhaus-muted p-4 text-center transition-colors duration-150 ease-in-out hover:border-bauhaus-red">
-                        <input id="file-input" type="file" accept="image/png, image/jpeg, image/webp" class="hidden">
+                        <input id="file-input" type="file" accept="image/png, image/jpeg, image/webp" multiple class="hidden">
                         
                         <!-- Initial Prompt State -->
                         <div id="drop-zone-prompt" class="space-y-2">
@@ -126,7 +127,7 @@
                                 </svg>
                             </div>
                             <p class="text-xs text-bauhaus-ink font-medium">Click to browse or drag & drop</p>
-                            <p class="text-[10px] text-bauhaus-ink">PNG, JPG, or WEBP (up to 10MB)</p>
+                            <p class="text-[10px] text-bauhaus-ink">PNG, JPG, or WEBP (up to 10MB). Select multiple plans in ground-to-top order for a building.</p>
                         </div>
 
                         <!-- Image Preview State -->
@@ -137,6 +138,8 @@
                             </button>
                         </div>
                     </div>
+                    <button id="btn-process-building" type="button" disabled class="mt-2 hidden w-full rounded-none border border-bauhaus-ink bg-bauhaus-blue px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">Process selected plans as stories</button>
+                    <p id="building-upload-status" class="hidden text-[10px] leading-relaxed" aria-live="polite"></p>
                 </div>
 
                 <!-- 3. Spatial Calibration Sliders -->
@@ -204,6 +207,18 @@
                     <button id="btn-show-route" type="button" class="w-full rounded-none bg-bauhaus-red px-3 py-2 text-xs font-semibold text-white transition-colors duration-150 ease-in-out hover:bg-bauhaus-red active:scale-95">Show door-based route</button>
                     <p id="route-status" role="status" class="text-[11px] text-bauhaus-ink">Load a scene to search rooms and route through detected doors.</p>
                 </div>
+
+                <section class="bauhaus-card geo-blue space-y-3 rounded-none border-2 border-bauhaus-ink bg-white p-4" aria-labelledby="map-assistant-title">
+                    <h2 id="map-assistant-title" class="text-xs font-semibold uppercase tracking-wider">Ask this map</h2>
+                    <p class="text-[11px] text-bauhaus-ink">Ask about room names, levels, areas, and detected connections. Answers use the current scene.</p>
+                    <form id="map-assistant-form" class="space-y-2">
+                        <label for="map-assistant-question" class="sr-only">Question about this floor plan</label>
+                        <input id="map-assistant-question" type="text" maxlength="500" placeholder="Where is the computer lab?" class="w-full rounded-none border border-bauhaus-ink bg-white px-2 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-bauhaus-red" required>
+                        <button id="map-assistant-submit" type="submit" class="w-full rounded-none bg-bauhaus-blue px-3 py-2 text-xs font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Ask map assistant</button>
+                    </form>
+                    <p id="map-assistant-provider" class="text-[10px] font-mono text-bauhaus-ink" aria-live="polite">Muse Spark when configured; offline lookup otherwise.</p>
+                    <p id="map-assistant-answer" class="hidden rounded-none border border-bauhaus-muted bg-bauhaus-muted p-2 text-xs leading-relaxed" role="status" aria-live="polite"></p>
+                </section>
 
                 <!-- 4. Generate Button & Progress -->
                 <div>
@@ -299,6 +314,14 @@
                             <div class="flex gap-2 pt-1">
                                 <button id="btn-save-room-edit" type="button" class="flex-1 rounded-none border border-bauhaus-ink bg-bauhaus-blue px-2 py-1.5 text-xs font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red" disabled>Save edit</button>
                                 <button id="btn-delete-room" type="button" class="rounded-none border border-bauhaus-ink bg-bauhaus-red px-2 py-1.5 text-xs font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red" disabled>Delete room</button>
+                            </div>
+                            <button id="btn-edit-boundary" type="button" class="w-full rounded-none border border-bauhaus-ink bg-bauhaus-yellow px-2 py-1.5 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red" disabled>Edit room outline</button>
+                            <div id="boundary-edit-controls" class="hidden space-y-1.5">
+                                <p id="boundary-edit-status" class="text-[11px]" aria-live="polite">Drag a highlighted point in the 2D Segmentation tab.</p>
+                                <div class="flex gap-2">
+                                    <button id="btn-boundary-undo" type="button" class="flex-1 rounded-none border border-bauhaus-ink px-2 py-1 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red" disabled>Undo</button>
+                                    <button id="btn-boundary-done" type="button" class="flex-1 rounded-none bg-bauhaus-blue px-2 py-1 text-xs font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Finish outline</button>
+                                </div>
                             </div>
                         </div>
                     </div>

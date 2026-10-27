@@ -223,8 +223,9 @@ class FloorPlanViewer {
         if (this.measurementActive) this.toggleMeasurementMode(false);
         this.currentSceneData = sceneData;
         this.wallHeight = Number(sceneData.meta.wallHeight) || 3.0;
-        this.floorHeight = Number(sceneData.meta.floorHeight) || this.wallHeight;
+        this.floorHeight = this.wallHeight;
         this.levelCount = Math.max(1, Number(sceneData.meta.levelCount) || (sceneData.meta.levels || []).length || 1);
+        this.syncFloorSpacing();
         const declaredElevations = (sceneData.meta.levels || []).map(level => Number(level.elevation)).filter(Number.isFinite);
         const highestFloor = declaredElevations.length
             ? Math.max(...declaredElevations)
@@ -565,6 +566,18 @@ class FloorPlanViewer {
         );
         const declaredElevation = Number(levelInfo?.elevation);
         return Number.isFinite(declaredElevation) ? declaredElevation : numericLevel * this.floorHeight;
+    }
+
+    syncFloorSpacing() {
+        if (!this.currentSceneData?.meta) return;
+        // The wall-height control also defines story-to-story spacing. Keeping both
+        // values in sync prevents a visible vertical gap when the height is changed.
+        this.floorHeight = this.wallHeight;
+        this.currentSceneData.meta.floorHeight = this.floorHeight;
+        (this.currentSceneData.meta.levels || []).forEach(level => {
+            const index = Math.max(0, Number(level.floorIndex ?? level.level) || 0);
+            level.elevation = index * this.floorHeight;
+        });
     }
 
     updateVisibleLevels() {
@@ -1458,6 +1471,8 @@ class FloorPlanViewer {
     setWallHeight(heightMeters) {
         if (!this.currentSceneData) return;
         this.wallHeight = Math.max(0.2, parseFloat(heightMeters) || 3.0);
+        this.currentSceneData.meta.wallHeight = this.wallHeight;
+        this.syncFloorSpacing();
         const floorIndices = Array.from(this.floorGroups.keys());
         const highestFloor = floorIndices.length
             ? Math.max(...floorIndices.map(index => this.getLevelElevation(index)))

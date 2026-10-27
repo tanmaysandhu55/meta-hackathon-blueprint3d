@@ -20,6 +20,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const btnGenerate = document.getElementById("btn-generate");
     const btnLoadDemo = document.getElementById("btn-load-demo");
     const btnLoadTwoStoryDemo = document.getElementById("btn-load-two-story-demo");
+    const btnProcessBuilding = document.getElementById("btn-process-building");
+    const buildingUploadStatus = document.getElementById("building-upload-status");
     const levelFilter = document.getElementById("level-filter");
     const appMessage = document.getElementById("app-message");
     const processingReady = document.body.dataset.processingReady === "true";
@@ -79,6 +81,11 @@ document.addEventListener("DOMContentLoaded", () => {
     const routeTo = document.getElementById("route-to");
     const btnShowRoute = document.getElementById("btn-show-route");
     const routeStatus = document.getElementById("route-status");
+    const mapAssistantForm = document.getElementById("map-assistant-form");
+    const mapAssistantQuestion = document.getElementById("map-assistant-question");
+    const mapAssistantSubmit = document.getElementById("map-assistant-submit");
+    const mapAssistantProvider = document.getElementById("map-assistant-provider");
+    const mapAssistantAnswer = document.getElementById("map-assistant-answer");
 
     // Room Inspector Drawer
     const inspectorCard = document.getElementById("room-inspector-card");
@@ -91,10 +98,16 @@ document.addEventListener("DOMContentLoaded", () => {
     const inspectorDoors = document.getElementById("inspector-doors");
     const areaSummaryTotal = document.getElementById("area-summary-total");
     const areaSummaryRooms = document.getElementById("area-summary-rooms");
+    const mapQualityReport = document.getElementById("map-quality-report");
     const editRoomName = document.getElementById("edit-room-name");
     const editRoomType = document.getElementById("edit-room-type");
     const btnSaveRoomEdit = document.getElementById("btn-save-room-edit");
     const btnDeleteRoom = document.getElementById("btn-delete-room");
+    const btnEditBoundary = document.getElementById("btn-edit-boundary");
+    const boundaryEditControls = document.getElementById("boundary-edit-controls");
+    const boundaryEditStatus = document.getElementById("boundary-edit-status");
+    const btnBoundaryUndo = document.getElementById("btn-boundary-undo");
+    const btnBoundaryDone = document.getElementById("btn-boundary-done");
     const btnCalibrateScale = document.getElementById("btn-calibrate-scale");
     const btnApplyScale = document.getElementById("btn-apply-scale");
     const btnCancelScale = document.getElementById("btn-cancel-scale");
@@ -103,11 +116,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Application State
     let selectedFile = null;
+    let selectedFiles = [];
     let currentSceneData = null;
     let currentOverlays = null;
     let loadedImageElement = null;
+    let floorPlanImages = [];
     let isCutawayActive = false;
     let selectedRoomId = null;
+    let polygonEditActive = false;
+    let polygonEditDragIndex = null;
+    let polygonEditUndoStack = [];
     let scaleCalibrationActive = false;
     let scaleCalibrationPoints = [];
 
@@ -206,10 +224,29 @@ document.addEventListener("DOMContentLoaded", () => {
         return Math.abs(twiceArea) / 2;
     }
 
+    function polygonHasSelfIntersection(polygon) {
+        const orient = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+        const crosses = (a, b, c, d) => {
+            const abC = orient(a, b, c), abD = orient(a, b, d);
+            const cdA = orient(c, d, a), cdB = orient(c, d, b);
+            return abC * abD < -1e-10 && cdA * cdB < -1e-10;
+        };
+        for (let i = 0; i < polygon.length; i++) {
+            const iNext = (i + 1) % polygon.length;
+            for (let j = i + 1; j < polygon.length; j++) {
+                const jNext = (j + 1) % polygon.length;
+                if (i === j || iNext === j || jNext === i) continue;
+                if (crosses(polygon[i], polygon[iNext], polygon[j], polygon[jNext])) return true;
+            }
+        }
+        return false;
+    }
+
     function updateAreaSummary() {
         if (!currentSceneData) {
             areaSummaryTotal.textContent = "Load a plan to calculate areas.";
             areaSummaryRooms.replaceChildren();
+            mapQualityReport.textContent = "Map checks appear after loading a scene. These checks are not an accuracy score.";
             return;
         }
         const rooms = currentSceneData.rooms || [];
@@ -227,6 +264,18 @@ document.addEventListener("DOMContentLoaded", () => {
             row.append(name, area);
             areaSummaryRooms.appendChild(row);
         });
+        const validRoomCount = rooms.filter(room => (room.polygon || []).length >= 3 && polygonArea(room.polygon) > 0).length;
+        const confidenceValues = rooms.map(room => Number(room.confidence)).filter(value => Number.isFinite(value) && value > 0);
+        const averageConfidence = confidenceValues.length
+            ? `${Math.round(confidenceValues.reduce((sum, value) => sum + value, 0) / confidenceValues.length * 100)}% reported mean`
+            : "no confidence values";
+        const floorCount = Math.max(1, (currentSceneData.meta.levels || []).length || (currentSceneData.meta.levelCount || 1));
+        const connectorCount = rooms.filter(room => ["stairs", "stair", "elevator"].includes(String(room.type || "").toLowerCase())).length;
+        const warnings = currentSceneData.meta.warnings || [];
+        const checks = [`${validRoomCount}/${rooms.length} valid room polygons`, `${floorCount} floor(s)`, `${averageConfidence}`];
+        if (floorCount > 1) checks.push(`${connectorCount} stair/elevator room(s)`);
+        const note = warnings.length ? `Review ${warnings.length} scene warning(s).` : "No pipeline warnings recorded.";
+        mapQualityReport.textContent = `Map checks · ${checks.join(" · ")}. ${note} Not a ground-truth accuracy score.`;
     }
 
     function refreshEditedScene() {
@@ -240,6 +289,22 @@ document.addEventListener("DOMContentLoaded", () => {
         inspectorEmpty.classList.remove("hidden");
         selectedRoomId = null;
         [editRoomName, editRoomType, btnSaveRoomEdit, btnDeleteRoom].forEach(control => { control.disabled = true; });
+        btnEditBoundary.disabled = true;
+    }
+
+    function refreshBoundaryScene() {
+        if (!currentSceneData) return;
+        currentSceneData.rooms.forEach(room => {
+            room.area_m2 = polygonArea(room.polygon || []);
+            room.centroid = roomCentroid(room);
+        });
+        viewer.loadScene(currentSceneData);
+        jsonOutput.textContent = JSON.stringify(currentSceneData, null, 2);
+        updateAreaSummary();
+        populateRoomControls(currentSceneData);
+        if (loadedImageElement) render2DSegmentationCanvas();
+        const room = currentSceneData.rooms.find(item => item.id === selectedRoomId);
+        if (room) window.onFloorPlanRoomSelected(room);
     }
 
     function showRoomRoute(scene, startId, endId) {
@@ -394,6 +459,36 @@ document.addEventListener("DOMContentLoaded", () => {
         showRoomRoute(currentSceneData, routeFrom.value, routeTo.value);
     });
 
+    mapAssistantForm.addEventListener("submit", async event => {
+        event.preventDefault();
+        if (!currentSceneData) {
+            mapAssistantAnswer.textContent = "Load or process a floor plan before asking about it.";
+            mapAssistantAnswer.classList.remove("hidden");
+            return;
+        }
+        mapAssistantSubmit.disabled = true;
+        mapAssistantSubmit.textContent = "Checking the map…";
+        mapAssistantProvider.textContent = "Checking…";
+        try {
+            const response = await fetch("/api/scene/ask", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ question: mapAssistantQuestion.value.trim(), scene: currentSceneData }),
+            });
+            const result = await response.json();
+            if (!response.ok || !result.success) throw new Error(result.error || "Could not query this map.");
+            mapAssistantAnswer.textContent = result.answer;
+            mapAssistantProvider.textContent = result.provider;
+        } catch (error) {
+            mapAssistantAnswer.textContent = error.message || "Could not query this map.";
+            mapAssistantProvider.textContent = "Question unavailable";
+        } finally {
+            mapAssistantAnswer.classList.remove("hidden");
+            mapAssistantSubmit.disabled = false;
+            mapAssistantSubmit.textContent = "Ask map assistant";
+        }
+    });
+
     // -------------------------------------------------------------
     // Slider Events
     // -------------------------------------------------------------
@@ -424,9 +519,7 @@ document.addEventListener("DOMContentLoaded", () => {
     dropZone.addEventListener("click", () => fileInput.click());
 
     fileInput.addEventListener("change", (e) => {
-        if (e.target.files && e.target.files[0]) {
-            handleFileSelected(e.target.files[0]);
-        }
+        if (e.target.files && e.target.files.length) handleFileSelection(Array.from(e.target.files));
     });
 
     dropZone.addEventListener("dragover", (e) => {
@@ -441,39 +534,45 @@ document.addEventListener("DOMContentLoaded", () => {
     dropZone.addEventListener("drop", (e) => {
         e.preventDefault();
         dropZone.classList.remove("drag-active");
-        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-            handleFileSelected(e.dataTransfer.files[0]);
-        }
+        if (e.dataTransfer.files && e.dataTransfer.files.length) handleFileSelection(Array.from(e.dataTransfer.files));
     });
 
     btnRemoveImage.addEventListener("click", (e) => {
         e.stopPropagation();
         selectedFile = null;
+        selectedFiles = [];
         fileInput.value = "";
         imagePreviewContainer.classList.add("hidden");
         dropZonePrompt.classList.remove("hidden");
         btnGenerate.disabled = true;
+        btnProcessBuilding.classList.add("hidden");
+        buildingUploadStatus.classList.add("hidden");
         clearMessage();
     });
 
-    function handleFileSelected(file) {
-        if (!["image/png", "image/jpeg", "image/webp"].includes(file.type.toLowerCase())) {
-            showMessage("Choose a PNG, JPG, or WebP floor plan.", "error");
+    function handleFileSelection(files) {
+        const valid = files.filter(file => ["image/png", "image/jpeg", "image/webp"].includes(file.type.toLowerCase()) && file.size <= 10 * 1024 * 1024);
+        if (!valid.length) {
+            showMessage("Choose PNG, JPG, or WebP floor plans, each 10 MB or smaller.", "error");
             return;
         }
-        if (file.size > 10 * 1024 * 1024) {
-            showMessage("The image must be 10 MB or smaller.", "error");
-            return;
-        }
-
         clearMessage();
-        selectedFile = file;
+        selectedFiles = valid.slice(0, 8);
+        selectedFile = selectedFiles[0];
+        const multiple = selectedFiles.length > 1;
+        btnProcessBuilding.classList.toggle("hidden", !multiple);
+        btnProcessBuilding.disabled = !processingReady || !multiple;
+        buildingUploadStatus.classList.toggle("hidden", !multiple);
+        buildingUploadStatus.textContent = multiple
+            ? `${selectedFiles.length} plans selected. Order them ground-to-top; detected stair/elevator regions help align the stories.`
+            : "";
+        if (valid.length !== files.length || valid.length > 8) showMessage("Only the first eight valid PNG, JPG, or WebP plans (up to 10 MB each) are used.", "warning");
         const reader = new FileReader();
         reader.onload = (event) => {
             imagePreview.src = event.target.result;
             imagePreviewContainer.classList.remove("hidden");
             dropZonePrompt.classList.add("hidden");
-            btnGenerate.disabled = !processingReady;
+            btnGenerate.disabled = !processingReady || !selectedFile;
 
             // Pre-load image for 2D canvas
             const img = new Image();
@@ -483,7 +582,7 @@ document.addEventListener("DOMContentLoaded", () => {
             };
             img.src = event.target.result;
         };
-        reader.readAsDataURL(file);
+        reader.readAsDataURL(selectedFile);
     }
 
     // -------------------------------------------------------------
@@ -505,6 +604,10 @@ document.addEventListener("DOMContentLoaded", () => {
     btnViewReset.addEventListener("click", () => viewer.resetCameraView());
     levelFilter.addEventListener("change", () => {
         viewer.setVisibleLevel(levelFilter.value === "all" ? null : levelFilter.value);
+        if (floorPlanImages.length > 1) {
+            const imageIndex = levelFilter.value === "all" ? 0 : Number(levelFilter.value);
+            loadedImageElement = floorPlanImages[imageIndex] || floorPlanImages[0];
+        }
         if (loadedImageElement) render2DSegmentationCanvas();
     });
 
@@ -598,6 +701,99 @@ document.addEventListener("DOMContentLoaded", () => {
         render2DSegmentationCanvas();
     });
 
+    btnEditBoundary.addEventListener("click", () => {
+        const room = (currentSceneData?.rooms || []).find(item => item.id === selectedRoomId);
+        if (!room || !loadedImageElement || (room.polygon || []).length < 3) {
+            boundaryEditStatus.textContent = "Select a room with a valid outline and its plan image first.";
+            return;
+        }
+        polygonEditActive = true;
+        segmentationCanvas.classList.add("polygon-edit-active");
+        polygonEditUndoStack = [];
+        polygonEditDragIndex = null;
+        boundaryEditControls.classList.remove("hidden");
+        boundaryEditStatus.textContent = "Open 2D Segmentation, then drag a cyan vertex to adjust the outline.";
+        document.querySelector('[data-tab="2d"]').click();
+        render2DSegmentationCanvas();
+    });
+
+    btnBoundaryUndo.addEventListener("click", () => {
+        const room = (currentSceneData?.rooms || []).find(item => item.id === selectedRoomId);
+        const previous = polygonEditUndoStack.pop();
+        if (!room || !previous) return;
+        room.polygon = previous;
+        btnBoundaryUndo.disabled = polygonEditUndoStack.length === 0;
+        boundaryEditStatus.textContent = "Previous outline restored.";
+        refreshBoundaryScene();
+    });
+
+    btnBoundaryDone.addEventListener("click", () => {
+        polygonEditActive = false;
+        segmentationCanvas.classList.remove("polygon-edit-active");
+        polygonEditDragIndex = null;
+        boundaryEditControls.classList.add("hidden");
+        boundaryEditStatus.textContent = "Outline saved in the current scene. Export scene.json or GLB to keep it.";
+        render2DSegmentationCanvas();
+    });
+
+    segmentationCanvas.addEventListener("pointerdown", event => {
+        if (!polygonEditActive || scaleCalibrationActive || !selectedRoomId) return;
+        const room = (currentSceneData?.rooms || []).find(item => item.id === selectedRoomId);
+        if (!room || (room.polygon || []).length < 3) return;
+        const rect = segmentationCanvas.getBoundingClientRect();
+        const x = (event.clientX - rect.left) * segmentationCanvas.width / rect.width;
+        const y = (event.clientY - rect.top) * segmentationCanvas.height / rect.height;
+        const mpp = Number(currentSceneData.meta.metersPerPixel) || 0.02;
+        const hitRadius = Math.max(12, Math.min(28, segmentationCanvas.width * 0.025));
+        let bestIndex = -1;
+        let bestDistance = hitRadius;
+        room.polygon.forEach((point, index) => {
+            const distance = Math.hypot(point[0] / mpp - x, point[1] / mpp - y);
+            if (distance < bestDistance) { bestIndex = index; bestDistance = distance; }
+        });
+        if (bestIndex < 0) {
+            boundaryEditStatus.textContent = "Drag a cyan vertex handle; new vertices are not added in this editor.";
+            return;
+        }
+        polygonEditUndoStack.push(room.polygon.map(point => [...point]));
+        btnBoundaryUndo.disabled = false;
+        polygonEditDragIndex = bestIndex;
+        segmentationCanvas.setPointerCapture(event.pointerId);
+        event.preventDefault();
+    });
+
+    segmentationCanvas.addEventListener("pointermove", event => {
+        if (polygonEditDragIndex === null || !polygonEditActive) return;
+        const room = (currentSceneData?.rooms || []).find(item => item.id === selectedRoomId);
+        if (!room) return;
+        const rect = segmentationCanvas.getBoundingClientRect();
+        const mpp = Number(currentSceneData.meta.metersPerPixel) || 0.02;
+        const candidate = room.polygon.map(point => [...point]);
+        candidate[polygonEditDragIndex] = [
+            Math.max(0, (event.clientX - rect.left) * segmentationCanvas.width / rect.width) * mpp,
+            Math.max(0, (event.clientY - rect.top) * segmentationCanvas.height / rect.height) * mpp,
+        ];
+        if (polygonArea(candidate) < 0.05 || polygonHasSelfIntersection(candidate)) {
+            boundaryEditStatus.textContent = "That move would make the room outline invalid. Try another position.";
+            return;
+        }
+        room.polygon = candidate;
+        boundaryEditStatus.textContent = `Moving vertex ${polygonEditDragIndex + 1} of ${room.polygon.length}.`;
+        render2DSegmentationCanvas();
+    });
+
+    const finishBoundaryDrag = () => {
+        if (polygonEditDragIndex === null) return;
+        polygonEditDragIndex = null;
+        const room = (currentSceneData?.rooms || []).find(item => item.id === selectedRoomId);
+        if (room) {
+            boundaryEditStatus.textContent = "Outline updated. Use Undo or finish editing.";
+            refreshBoundaryScene();
+        }
+    };
+    segmentationCanvas.addEventListener("pointerup", finishBoundaryDrag);
+    segmentationCanvas.addEventListener("pointercancel", finishBoundaryDrag);
+
     btnCancelScale.addEventListener("click", () => {
         scaleCalibrationActive = false;
         scaleCalibrationPoints = [];
@@ -622,6 +818,81 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
         const newScale = knownMeters / pixelDistance;
+        if (floorPlanImages.length > 1) {
+            const levelIndex = levelFilter.value === "all" ? 0 : Number(levelFilter.value);
+            const levelInfo = (currentSceneData.meta.levels || []).find(level => Number(level.level ?? level.floorIndex) === levelIndex);
+            if (!levelInfo) {
+                scaleCalibrationStatus.textContent = "Choose a story before calibrating its scale.";
+                return;
+            }
+            const previousScale = Number(levelInfo.metersPerPixel) || Number(currentSceneData.meta.metersPerPixel) || 0.02;
+            const factor = newScale / previousScale;
+            const oldAnchor = levelInfo.planAnchor || [0, 0];
+            const oldOffset = levelInfo.planOffset || [0, 0];
+            const rootLevel = currentSceneData.meta.levels.find(level => Number(level.level ?? level.floorIndex) === 0) || levelInfo;
+            const rootAnchor = [
+                (Number(rootLevel.planAnchor?.[0]) || 0) + (Number(rootLevel.planOffset?.[0]) || 0),
+                (Number(rootLevel.planAnchor?.[1]) || 0) + (Number(rootLevel.planOffset?.[1]) || 0),
+            ];
+            const previousTarget = [oldAnchor[0] + oldOffset[0], oldAnchor[1] + oldOffset[1]];
+            const targetAnchor = levelIndex === 0
+                ? [previousTarget[0] * factor, previousTarget[1] * factor]
+                : rootAnchor;
+            const transformPoint = point => [
+                targetAnchor[0] + (point[0] - oldOffset[0] - oldAnchor[0]) * factor,
+                targetAnchor[1] + (point[1] - oldOffset[1] - oldAnchor[1]) * factor,
+            ];
+            const belongs = item => Number(item.level ?? item.floorIndex) === levelIndex;
+            currentSceneData.rooms.filter(belongs).forEach(room => {
+                room.polygon = (room.polygon || []).map(transformPoint);
+                if (room.centroid) room.centroid = transformPoint(room.centroid);
+                if (Number.isFinite(Number(room.area_m2))) room.area_m2 *= factor * factor;
+            });
+            currentSceneData.walls.filter(belongs).forEach(wall => {
+                wall.polygon = (wall.polygon || []).map(transformPoint);
+                wall.holes = (wall.holes || []).map(polygon => polygon.map(transformPoint));
+            });
+            ["doors", "windows"].forEach(collection => (currentSceneData[collection] || []).filter(belongs).forEach(item => {
+                if (item.center) item.center = transformPoint(item.center);
+                item.width *= factor;
+            }));
+            levelInfo.planAnchor = [oldAnchor[0] * factor, oldAnchor[1] * factor];
+            levelInfo.planOffset = [targetAnchor[0] - levelInfo.planAnchor[0], targetAnchor[1] - levelInfo.planAnchor[1]];
+            levelInfo.metersPerPixel = newScale;
+            if (levelIndex === 0) {
+                const shift = [targetAnchor[0] - previousTarget[0], targetAnchor[1] - previousTarget[1]];
+                const shiftPoint = point => [point[0] + shift[0], point[1] + shift[1]];
+                currentSceneData.meta.levels.filter(level => Number(level.level ?? level.floorIndex) !== 0).forEach(level => {
+                    const otherIndex = Number(level.level ?? level.floorIndex);
+                    const isOtherFloor = item => Number(item.level ?? item.floorIndex) === otherIndex;
+                    currentSceneData.rooms.filter(isOtherFloor).forEach(room => {
+                        room.polygon = (room.polygon || []).map(shiftPoint);
+                        if (room.centroid) room.centroid = shiftPoint(room.centroid);
+                    });
+                    currentSceneData.walls.filter(isOtherFloor).forEach(wall => {
+                        wall.polygon = (wall.polygon || []).map(shiftPoint);
+                        wall.holes = (wall.holes || []).map(polygon => polygon.map(shiftPoint));
+                    });
+                    ["doors", "windows"].forEach(collection => (currentSceneData[collection] || []).filter(isOtherFloor).forEach(item => {
+                        if (item.center) item.center = shiftPoint(item.center);
+                    }));
+                    level.planOffset = [level.planOffset[0] + shift[0], level.planOffset[1] + shift[1]];
+                });
+                currentSceneData.meta.metersPerPixel = newScale;
+            }
+            currentSceneData.meta.scaleMethod = `interactive two-point calibration on story ${levelIndex + 1}`;
+            currentSceneData.meta.warnings = [...new Set([...(currentSceneData.meta.warnings || []), `Story ${levelIndex + 1} scale was recalibrated from two user-selected points and a known length.`])];
+            labelMpp.textContent = `${newScale.toFixed(4)} m/px`;
+            overlayScale.textContent = `Scale: ${newScale.toFixed(4)} m/px`;
+            inputMpp.min = String(Math.min(0.005, newScale));
+            inputMpp.max = String(Math.max(0.08, newScale));
+            inputMpp.value = String(newScale);
+            scaleCalibrationPoints = [];
+            btnApplyScale.disabled = true;
+            scaleCalibrationStatus.textContent = `Story ${levelIndex + 1} scale updated to ${newScale.toFixed(5)} m/px.`;
+            refreshEditedScene();
+            return;
+        }
         const previousScale = Number(currentSceneData.meta.metersPerPixel) || 0.02;
         const factor = newScale / previousScale;
         const scalePoints = points => (points || []).map(([x, y]) => [x * factor, y * factor]);
@@ -823,8 +1094,162 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
+    async function processUploadedPlan(file, reportProgress) {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("metersPerPixel", inputMpp.value);
+        formData.append("calibrateScale", chkAutoScale.checked ? "true" : "false");
+        formData.append("wallHeight", inputWallHeight.value);
+        formData.append("wallThickness", inputWallThickness.value);
+        const response = await fetch("/api/upload", { method: "POST", body: formData });
+        const started = await response.json();
+        if (!response.ok || !started.success) throw new Error(started.error || "Could not start plan processing.");
+        const deadline = Date.now() + 7 * 60 * 1000;
+        while (Date.now() < deadline) {
+            await new Promise(resolve => setTimeout(resolve, 800));
+            const statusResponse = await fetch(`/api/status/${encodeURIComponent(started.job_id)}`);
+            const status = await statusResponse.json();
+            if (!statusResponse.ok) throw new Error(status.error || "Could not read plan status.");
+            reportProgress(status.stage || "Processing floor plan…", status.progress || 5);
+            if (status.status === "failed") throw new Error(status.error || "Plan processing failed.");
+            if (status.status === "complete") {
+                const resultResponse = await fetch(`/api/scene/${encodeURIComponent(started.job_id)}`);
+                const result = await resultResponse.json();
+                if (!resultResponse.ok) throw new Error(result.error || "The processed scene could not be loaded.");
+                return result.scene;
+            }
+        }
+        throw new Error("Processing exceeded the seven-minute time limit.");
+    }
+
+    function planAnchor(scene) {
+        const rooms = scene.rooms || [];
+        const stair = rooms.find(room => ["stairs", "stair", "elevator"].includes(String(room.type || "").toLowerCase()));
+        const connectorPoints = stair?.polygon || [];
+        if (connectorPoints.length) return connectorPoints.reduce((sum, point) => [sum[0] + point[0] / connectorPoints.length, sum[1] + point[1] / connectorPoints.length], [0, 0]);
+        const points = rooms.flatMap(room => room.polygon || []);
+        if (!points.length) return [0, 0];
+        const xs = points.map(point => point[0]), ys = points.map(point => point[1]);
+        return [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2];
+    }
+
+    function combineFloorScenes(scenes) {
+        const baseAnchor = planAnchor(scenes[0]);
+        const floorHeight = Math.max(2.5, Number(scenes[0].meta?.wallHeight) || Number(inputWallHeight.value) || 3.0);
+        const merged = {
+            meta: {
+                ...scenes[0].meta,
+                source: "multi_floor_upload",
+                levelCount: scenes.length,
+                floorHeight,
+                levels: scenes.map((scene, level) => ({
+                    level,
+                    name: level === 0 ? "Ground Floor" : `Floor ${level + 1}`,
+                    elevation: level * floorHeight,
+                    metersPerPixel: Number(scene.meta?.metersPerPixel) || 0.02,
+                    imageSize: scene.meta?.imageSize || [1, 1],
+                    planOffset: [baseAnchor[0] - planAnchor(scene)[0], baseAnchor[1] - planAnchor(scene)[1]],
+                    planAnchor: planAnchor(scene),
+                })),
+                warnings: [...new Set(scenes.flatMap(scene => scene.meta?.warnings || []))],
+            },
+            rooms: [], walls: [], doors: [], windows: [],
+        };
+        const collections = ["rooms", "walls", "doors", "windows"];
+        scenes.forEach((scene, level) => {
+            const anchor = planAnchor(scene);
+            const delta = [baseAnchor[0] - anchor[0], baseAnchor[1] - anchor[1]];
+            const idMap = new Map();
+            (scene.rooms || []).forEach(item => idMap.set(item.id, `${item.id}_floor${level + 1}`));
+            collections.forEach(collection => {
+                (scene[collection] || []).forEach(original => {
+                    const item = JSON.parse(JSON.stringify(original));
+                    item.id = `${original.id}_floor${level + 1}`;
+                    item.level = level;
+                    item.floorIndex = level;
+                    if (Array.isArray(item.polygon)) item.polygon = item.polygon.map(point => [point[0] + delta[0], point[1] + delta[1]]);
+                    if (Array.isArray(item.holes)) item.holes = item.holes.map(polygon => polygon.map(point => [point[0] + delta[0], point[1] + delta[1]]));
+                    if (Array.isArray(item.center)) item.center = [item.center[0] + delta[0], item.center[1] + delta[1]];
+                    if (Array.isArray(item.centroid)) item.centroid = [item.centroid[0] + delta[0], item.centroid[1] + delta[1]];
+                    if (Array.isArray(item.connects)) item.connects = item.connects.map(id => idMap.get(id) || id);
+                    merged[collection].push(item);
+                });
+            });
+        });
+        merged.meta.warnings.push("Stories were translated so detected stair/elevator regions overlap; verify alignment against the building drawings before relying on cross-floor measurements or routes.");
+        const modes = scenes.map(scene => String(scene.meta?.processingMode || "OFFLINE").toUpperCase());
+        merged.meta.processingMode = modes.every(mode => mode === "LIVE") ? "LIVE"
+            : modes.includes("MOCK") ? "MOCK" : modes.includes("REPLAY") ? "REPLAY" : "DEMO";
+        return merged;
+    }
+
+    function readAsDataUrl(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(new Error(`Could not read ${file.name}.`));
+            reader.readAsDataURL(file);
+        });
+    }
+
+    async function loadImageElement(source) {
+        return new Promise((resolve, reject) => {
+            const image = new Image();
+            image.onload = () => resolve(image);
+            image.onerror = () => reject(new Error("Could not display one of the selected floor plan images."));
+            image.src = source;
+        });
+    }
+
+    btnProcessBuilding.addEventListener("click", async () => {
+        if (selectedFiles.length < 2) return;
+        btnProcessBuilding.disabled = true;
+        btnGenerate.disabled = true;
+        progressContainer.classList.remove("hidden");
+        viewer.showLoadingState();
+        try {
+            const scenes = [];
+            for (let index = 0; index < selectedFiles.length; index++) {
+                progressStatus.textContent = `Floor ${index + 1} of ${selectedFiles.length}: uploading…`;
+                buildingUploadStatus.textContent = `Processing ${index + 1}/${selectedFiles.length}: ${selectedFiles[index].name}`;
+                const scene = await processUploadedPlan(selectedFiles[index], (stage, percent) => {
+                    progressStatus.textContent = `Floor ${index + 1}/${selectedFiles.length}: ${stage}`;
+                    progressBar.style.width = `${Math.round(((index + percent / 100) / selectedFiles.length) * 100)}%`;
+                });
+                scenes.push(scene);
+            }
+            const floorImagesData = await Promise.all(selectedFiles.map(readAsDataUrl));
+            const floorImages = await Promise.all(floorImagesData.map(loadImageElement));
+            const scene = combineFloorScenes(scenes);
+            handleProcessSuccess({ scene, imageUrl: floorImagesData[0], floorImages });
+            levelFilter.value = "0";
+            viewer.setVisibleLevel("0");
+            loadedImageElement = floorImages[0];
+            render2DSegmentationCanvas();
+            progressBar.style.width = "100%";
+            progressStatus.textContent = "Multi-floor building ready";
+            const mode = scene.meta.processingMode;
+            showMessage(mode === "LIVE"
+                ? "Live model-assisted scenes combined. Floor alignment is estimated from stair/elevator regions; verify it before using measurements."
+                : `${mode} mode: at least one floor is not a live AI result. The multi-floor map is approximate; verify connector alignment.`, "warning");
+            buildingUploadStatus.textContent = "Stories aligned. Check each floor in the selector and verify stair/elevator alignment.";
+        } catch (error) {
+            viewer.hideLoadingState();
+            showMessage(error.message || "Could not process the selected building plans.", "error");
+            buildingUploadStatus.textContent = error.message || "Could not process the selected plans.";
+        } finally {
+            btnProcessBuilding.disabled = !processingReady || selectedFiles.length < 2;
+            btnGenerate.disabled = !processingReady || !selectedFile;
+            window.setTimeout(() => {
+                progressContainer.classList.add("hidden");
+                progressBar.style.width = "0%";
+            }, 1200);
+        }
+    });
+
     function handleProcessSuccess(data) {
         currentSceneData = data.scene;
+        floorPlanImages = Array.isArray(data.floorImages) ? data.floorImages : [];
         setProcessingBadge(currentSceneData.meta?.processingMode || "");
         currentOverlays = data.overlays;
         const levels = currentSceneData.meta.levels || [];
@@ -844,12 +1269,17 @@ document.addEventListener("DOMContentLoaded", () => {
             imagePreview.src = data.imageUrl;
             imagePreviewContainer.classList.remove("hidden");
             dropZonePrompt.classList.add("hidden");
-            const img = new Image();
-            img.onload = () => {
-                loadedImageElement = img;
+            if (floorPlanImages.length) {
+                loadedImageElement = floorPlanImages[0];
                 render2DSegmentationCanvas();
-            };
-            img.src = data.imageUrl;
+            } else {
+                const img = new Image();
+                img.onload = () => {
+                    loadedImageElement = img;
+                    render2DSegmentationCanvas();
+                };
+                img.src = data.imageUrl;
+            }
         } else if (loadedImageElement) {
             render2DSegmentationCanvas();
         }
@@ -882,10 +1312,18 @@ document.addEventListener("DOMContentLoaded", () => {
         // 2. If overlays exist, draw color-coded masks
         if (!currentSceneData) return;
 
-        const mpp = currentSceneData.meta.metersPerPixel || 0.02;
         const selectedLevel = levelFilter.value === "all" ? null : Number(levelFilter.value);
+        const overlayLevel = selectedLevel ?? (floorPlanImages.length > 1 ? 0 : null);
+        const levelInfo = (currentSceneData.meta.levels || []).find(level => Number(level.level ?? level.floorIndex) === (overlayLevel ?? 0));
+        const mpp = Number(levelInfo?.metersPerPixel) || Number(currentSceneData.meta.metersPerPixel) || 0.02;
         const belongsToSelectedLevel = item => selectedLevel === null
-            || (Number(item.level ?? item.floorIndex) || 0) === selectedLevel;
+            ? (overlayLevel === null || (Number(item.level ?? item.floorIndex) || 0) === overlayLevel)
+            : (Number(item.level ?? item.floorIndex) || 0) === selectedLevel;
+        const sourcePoint = (item, point) => {
+            const level = (currentSceneData.meta.levels || []).find(entry => Number(entry.level ?? entry.floorIndex) === (Number(item.level ?? item.floorIndex) || 0));
+            const offset = level?.planOffset || [0, 0];
+            return [point[0] - (Number(offset[0]) || 0), point[1] - (Number(offset[1]) || 0)];
+        };
 
         // Draw Room Polygons
         (currentSceneData.rooms || []).filter(belongsToSelectedLevel).forEach(room => {
@@ -893,9 +1331,11 @@ document.addEventListener("DOMContentLoaded", () => {
             if (poly.length < 3) return;
 
             segCtx.beginPath();
-            segCtx.moveTo(poly[0][0] / mpp, poly[0][1] / mpp);
+            const firstPoint = sourcePoint(room, poly[0]);
+            segCtx.moveTo(firstPoint[0] / mpp, firstPoint[1] / mpp);
             for (let i = 1; i < poly.length; i++) {
-                segCtx.lineTo(poly[i][0] / mpp, poly[i][1] / mpp);
+                const point = sourcePoint(room, poly[i]);
+                segCtx.lineTo(point[0] / mpp, point[1] / mpp);
             }
             segCtx.closePath();
 
@@ -907,7 +1347,7 @@ document.addEventListener("DOMContentLoaded", () => {
             segCtx.stroke();
 
             // Draw a square paper label with an ink outline.
-            const [centroidX, centroidY] = roomCentroid(room);
+            const [centroidX, centroidY] = sourcePoint(room, roomCentroid(room));
             const cx = centroidX / mpp;
             const cy = centroidY / mpp;
 
@@ -922,10 +1362,34 @@ document.addEventListener("DOMContentLoaded", () => {
             segCtx.fillText(room.label || room.id, cx, cy + 2);
         });
 
+        if (polygonEditActive) {
+            const room = (currentSceneData.rooms || []).find(item => item.id === selectedRoomId && belongsToSelectedLevel(item));
+            if (room) {
+                const radius = Math.max(6, Math.min(11, segmentationCanvas.width / 100));
+                room.polygon.forEach((point, index) => {
+                    const x = point[0] / mpp;
+                    const y = point[1] / mpp;
+                    segCtx.beginPath();
+                    segCtx.arc(x, y, radius, 0, Math.PI * 2);
+                    segCtx.fillStyle = index === polygonEditDragIndex ? "#D02020" : "#00A6C7";
+                    segCtx.fill();
+                    segCtx.lineWidth = Math.max(2, radius * 0.25);
+                    segCtx.strokeStyle = "#FFFFFF";
+                    segCtx.stroke();
+                    segCtx.fillStyle = "#121212";
+                    segCtx.font = `bold ${Math.max(10, radius * 1.3)}px sans-serif`;
+                    segCtx.textAlign = "center";
+                    segCtx.textBaseline = "middle";
+                    segCtx.fillText(String(index + 1), x, y);
+                });
+            }
+        }
+
         // Draw Doors
         (currentSceneData.doors || []).filter(belongsToSelectedLevel).forEach(door => {
-            const cx = (door.center ? door.center[0] : 0) / mpp;
-            const cy = (door.center ? door.center[1] : 0) / mpp;
+            const [sourceX, sourceY] = sourcePoint(door, door.center || [0, 0]);
+            const cx = sourceX / mpp;
+            const cy = sourceY / mpp;
             const w = (door.width || 0.9) / mpp;
 
             segCtx.strokeStyle = "#D02020";
@@ -937,8 +1401,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Draw Windows
         (currentSceneData.windows || []).filter(belongsToSelectedLevel).forEach(win => {
-            const cx = (win.center ? win.center[0] : 0) / mpp;
-            const cy = (win.center ? win.center[1] : 0) / mpp;
+            const [sourceX, sourceY] = sourcePoint(win, win.center || [0, 0]);
+            const cx = sourceX / mpp;
+            const cy = sourceY / mpp;
             const w = (win.width || 1.2) / mpp;
 
             segCtx.strokeStyle = "#1040C0";
@@ -1018,7 +1483,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const typeOption = Array.from(editRoomType.options).find(option => option.value === (room.type || "room"));
         if (!typeOption) editRoomType.add(new Option(room.type || "room", room.type || "room"));
         editRoomType.value = room.type || "room";
-        [editRoomName, editRoomType, btnSaveRoomEdit, btnDeleteRoom].forEach(control => { control.disabled = false; });
+        [editRoomName, editRoomType, btnSaveRoomEdit, btnDeleteRoom, btnEditBoundary].forEach(control => { control.disabled = false; });
     };
 
     btnSaveRoomEdit.addEventListener("click", () => {

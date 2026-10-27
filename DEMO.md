@@ -7,7 +7,7 @@
 - Keep the sample loaded as the fallback. Live processing depends on valid provider keys and an available endpoint.
 - Do not show `.env` or API key values on screen.
 
-## Two-minute walkthrough
+## Three-minute walkthrough
 
 **0:00–0:20 — Introduce the goal**
 
@@ -17,21 +17,31 @@
 
 Choose **Load Hackathon Demo Plan**. Point out that the 3D viewer, room labels, and prepared scene data load locally. Be clear that this is prepared example output, not a fresh SAM result.
 
-**0:45–1:15 — Explore the model**
+**0:45–1:20 — Explore and verify the map**
 
 Orbit the building, switch to top-down, toggle cutaway, focus a room from **Find and Route**, and click a room. If the prepared sample has a connected pair available, show a door-based route. Explain that the viewer uses meter coordinates from `scene.json`; the click panel shows the room’s label, type, and estimated area.
 
-**1:15–1:35 — Show the 2D and structured views**
+**1:20–1:50 — Correct an outline**
+
+Click a room, choose **Edit room outline**, and open the 2D tab. Drag a cyan vertex to correct an estimated boundary, then use **Undo** to show that corrections are reversible. Finish and explain that the corrected scene is the one exported.
+
+**1:50–2:15 — Ask the map**
+
+Ask “Where is the Computer Lab?” Point out the provider label: it identifies Muse Spark through Modal or the offline scene lookup, so a prepared/lookup answer is not presented as a model answer.
+
+**2:15–2:35 — Show the 2D and structured views**
 
 Open the 2D overlay tab, then the `scene.json` tab. Explain that the scene contract keeps geometry and labels separate from the renderer.
 
-**1:35–1:50 — Export**
+**2:35–2:50 — Export**
 
 Download the GLB and explain that it can be opened in a compatible 3D viewer. Avoid claiming it is a construction-ready BIM model.
 
-**1:50–2:00 — State the next step**
+**2:50–3:00 — State the limits clearly**
 
-“The live upload path is designed to segment uploaded plans with SAM and optionally classify rooms. I’ll enable and validate that path once the API credentials and endpoints are available. The current output is a single-floor visualization and needs scale and geometry review.”
+“The live upload path segments uploaded plans with SAM and can classify rooms when the optional labeler is configured. Review scale and room geometry before relying on measurements. Multi-floor alignment is estimated and needs verification.”
+
+For a building with actual per-floor drawings, select the images together in ground-to-top order and choose **Process selected plans as stories**. The app aligns detected stair/elevator regions when possible. Check each story against its source drawing and verify alignment; the prepared two-story demo is illustrative and duplicates the sample layout.
 
 ## Likely issues and recovery
 
@@ -44,6 +54,9 @@ Download the GLB and explain that it can be opened in a compatible 3D viewer. Av
 ## Claims to keep precise
 
 - The offline sample is precomputed and works without keys.
+- The offline scene assistant is a deterministic lookup. Only a provider-labeled response from Muse Spark is a Muse Spark answer.
+- Multi-floor image alignment is an estimate based on connector-room outlines or plan centers and needs visual confirmation.
+- The map quality card reports structural checks, not measured model accuracy.
 - Live segmentation is an external-service path; a configured flag does not guarantee provider reachability.
 - Room classification may be generic when optional classification endpoints are unavailable.
 - Scale, room boundaries, doors, and windows are estimates. This prototype is for visualization, not construction or safety decisions.
