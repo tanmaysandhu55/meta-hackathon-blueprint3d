@@ -37,7 +37,7 @@ class FloorPlanViewer {
         };
         this.groups.measurements.name = "measurements";
         this.floorGroups = new Map();
-        this.floorLayerNames = ["walls", "rooms", "labels", "doors", "windows", "furniture"];
+        this.floorLayerNames = ["walls", "rooms", "labels", "doors", "windows", "furniture", "stairs"];
         this.layerVisibility = Object.fromEntries(this.floorLayerNames.map(name => [name, true]));
         this.layerVisibility.furniture = false;
         this.selectableMeshes = [];
@@ -67,20 +67,30 @@ class FloorPlanViewer {
         this.walkthroughPitch = 0;
         this.walkthroughMouseDown = false;
         this.walkthroughLastPointer = null;
+        this.walkthroughVelocity = new THREE.Vector3();
+        this.walkthroughEyeHeight = 1.6;
+        this.walkthroughTransition = null;
+        this.walkthroughDoors = [];
+        this.walkthroughHintElement = document.getElementById("walkthrough-hint");
+        this.walkthroughHud = document.getElementById("walkthrough-hud");
+        this.walkthroughStairLinks = [];
+        this.walkthroughNearbyInteraction = null;
+        this.walkthroughBobPhase = 0;
+        this.generatedStairwellOpenings = new Map();
         this.measurementActive = false;
         this.measurementPoints = [];
 
-        // Room categories use the Bauhaus primary palette plus paper and ink.
+        // Muted architectural colors retain room-type distinction without overpowering the model.
         this.roomColors = {
-            classroom: 0x1040c0,
-            lab:       0xd02020,
-            corridor:  0xe0e0e0,
-            restroom:  0x1040c0,
-            stairs:    0xf0c020,
-            elevator: 0xd02020,
-            entrance: 0xf0c020,
-            room:      0xe0e0e0,
-            other:     0xe0e0e0,
+            classroom: 0x527ca8,
+            lab:       0x9570ad,
+            corridor:  0x707b89,
+            restroom:  0x4b9c94,
+            stairs:    0xc28b3c,
+            elevator:  0x637db7,
+            entrance:  0x4e9a79,
+            room:      0x8993a0,
+            other:     0x788596,
         };
 
         // Initialize WebGL scene
@@ -93,7 +103,7 @@ class FloorPlanViewer {
 
         // 1. Scene
         this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(0x1040c0); // Bauhaus blue viewport field
+        this.scene.background = new THREE.Color(0x172131); // Deep slate viewport field
 
         // 2. Camera (Perspective)
         this.camera = new THREE.PerspectiveCamera(45, width / height, 0.05, 1000);
@@ -139,6 +149,25 @@ class FloorPlanViewer {
             this.walkthroughLastPointer = null;
         });
         this.renderer.domElement.addEventListener("click", (e) => this.onPointerClick(e));
+        document.querySelectorAll("[data-walk-key]").forEach(button => {
+            const key = button.dataset.walkKey;
+            button.addEventListener("pointerdown", event => {
+                if (!this.walkthroughActive) return;
+                event.preventDefault();
+                button.setPointerCapture?.(event.pointerId);
+                this.setWalkthroughKey(key, true);
+            });
+            ["pointerup", "pointercancel", "lostpointercapture"].forEach(type => {
+                button.addEventListener(type, () => this.setWalkthroughKey(key, false));
+            });
+        });
+        document.querySelectorAll("[data-walk-interact]").forEach(button => {
+            button.addEventListener("pointerdown", event => {
+                if (!this.walkthroughActive) return;
+                event.preventDefault();
+                this.tryWalkthroughInteraction();
+            });
+        });
 
         // 8. Start Render Loop
         this.animate();
@@ -146,16 +175,16 @@ class FloorPlanViewer {
 
     setupLighting() {
         // Soft ambient fill light
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.45);
+        const ambientLight = new THREE.AmbientLight(0xe5e9f0, 0.34);
         this.scene.add(ambientLight);
 
         // Hemisphere light: subtle blue sky vs warm bounce ground
-        const hemiLight = new THREE.HemisphereLight(0xf0f0f0, 0x121212, 0.65);
+        const hemiLight = new THREE.HemisphereLight(0xe6edf7, 0x4a4038, 0.5);
         hemiLight.position.set(0, 50, 0);
         this.scene.add(hemiLight);
 
         // Key directional light with soft architectural shadows
-        const dirLight = new THREE.DirectionalLight(0xffffff, 1.15);
+        const dirLight = new THREE.DirectionalLight(0xfff4df, 0.88);
         dirLight.position.set(30, 45, 25);
         dirLight.castShadow = true;
         dirLight.shadow.mapSize.width = 4096;
@@ -216,9 +245,11 @@ class FloorPlanViewer {
         this.calculateCenterOffset(sceneData);
         this.configureShadowCamera();
         this.createFloorGroups(sceneData);
+        this.buildStairs(sceneData.rooms || []);
 
         // 2. Build 3D elements
         this.buildGroundAndGrid();
+        this.buildDoorThresholds(sceneData.doors || []);
         this.buildRooms(sceneData.rooms || []);
         this.hideLoadingState();
         this.buildWalls(sceneData.walls || []);
@@ -402,6 +433,10 @@ class FloorPlanViewer {
     getItemFloorIndex(item) {
         const value = item && (item.floorIndex ?? item.level);
         return Number.isFinite(Number(value)) ? Number(value) : 0;
+    }
+
+    getRoomHoles(room) {
+        return [...(Array.isArray(room?.holes) ? room.holes : []), ...(this.generatedStairwellOpenings.get(room) || [])];
     }
 
     getFloorLayer(floorIndex, layerName) {
@@ -717,14 +752,14 @@ class FloorPlanViewer {
         const divisions = gridSize; // 1 division = exactly 1 meter!
 
         // 1-meter architectural grid helper
-        const grid = new THREE.GridHelper(gridSize, divisions, 0xd02020, 0x121212);
+        const grid = new THREE.GridHelper(gridSize, divisions, 0x4b83bd, 0x39485d);
         grid.position.y = -0.01;
         this.groups.grid.add(grid);
 
         // Ground foundation plane
         const groundGeo = new THREE.PlaneGeometry(gridSize * 1.5, gridSize * 1.5);
         const groundMat = new THREE.MeshStandardMaterial({
-            color: 0xf0f0f0,
+            color: 0x273447,
             roughness: 0.9,
             metalness: 0.1
         });
@@ -735,13 +770,37 @@ class FloorPlanViewer {
         this.groups.grid.add(ground);
     }
 
+    buildDoorThresholds(doors) {
+        const thresholdMaterial = new THREE.MeshStandardMaterial({
+            color: 0x626e7d,
+            roughness: 0.92,
+            metalness: 0.02,
+        });
+        const wallThickness = this.getWallThickness();
+        doors.forEach(door => {
+            if (!Array.isArray(door.center) || door.center.length < 2) return;
+            const level = this.getItemFloorIndex(door);
+            const center = this.toWorldCoords(door.center[0], door.center[1]);
+            const width = Math.max(0.55, Number(door.width) || 0.9);
+            const patch = new THREE.Mesh(
+                new THREE.BoxGeometry(width + 0.08, 0.018, wallThickness + 0.24),
+                thresholdMaterial
+            );
+            patch.position.set(center.x, 0.008, center.z);
+            patch.rotation.y = this.getOpeningRotation(door, level);
+            patch.receiveShadow = true;
+            patch.userData = { isDoorThreshold: true, floorIndex: level };
+            this.getFloorLayer(level, "rooms")?.add(patch);
+        });
+    }
+
     /**
      * Builds extruded 3D walls from scene.json walls array.
      * Supports holes (openings) and dynamic height updates.
      */
     buildWalls(walls) {
         const wallMat = this.wallMaterial || (this.wallMaterial = new THREE.MeshStandardMaterial({
-            color: 0xf0f0f0,      // Architectural paper-white plaster
+            color: 0xc5c5bf,      // Warm light-gray plaster with visible shading
             roughness: 0.8,
             metalness: 0.1,
             side: THREE.DoubleSide
@@ -820,6 +879,18 @@ class FloorPlanViewer {
                 shape.lineTo(pt.x, -pt.z);
             }
             shape.closePath();
+            this.getRoomHoles(room).forEach(hole => {
+                if (!Array.isArray(hole) || hole.length < 3) return;
+                const first = this.toWorldCoords(hole[0][0], hole[0][1]);
+                const holePath = new THREE.Path();
+                holePath.moveTo(first.x, -first.z);
+                hole.slice(1).forEach(point => {
+                    const converted = this.toWorldCoords(point[0], point[1]);
+                    holePath.lineTo(converted.x, -converted.z);
+                });
+                holePath.closePath();
+                shape.holes.push(holePath);
+            });
 
             // Room floor geometry
             const roomGeo = new THREE.ShapeGeometry(shape);
@@ -979,6 +1050,157 @@ class FloorPlanViewer {
         Object.values(materials).forEach(material => { if (!usedMaterials.has(material)) material.dispose(); });
     }
 
+    buildStairs(rooms) {
+        this.generatedStairwellOpenings = new Map();
+        const stairRooms = rooms.filter(room => ["stair", "stairs"].includes(String(room.type || "").toLowerCase()));
+        const byLevel = new Map();
+        stairRooms.forEach(room => {
+            const level = this.getItemFloorIndex(room);
+            if (!byLevel.has(level)) byLevel.set(level, []);
+            byLevel.get(level).push(room);
+        });
+        const levels = [...byLevel.keys()].sort((a, b) => a - b);
+        this.walkthroughStairLinks = [];
+
+        for (let index = 0; index < levels.length - 1; index++) {
+            const lowerLevel = levels[index], upperLevel = levels[index + 1];
+            const lowerRoom = byLevel.get(lowerLevel)?.[0];
+            const upperRoom = byLevel.get(upperLevel)?.[0];
+            if (!lowerRoom || !upperRoom) continue;
+            const lowerPoly = lowerRoom.polygon || [], upperPoly = upperRoom.polygon || [];
+            if (lowerPoly.length < 3 || upperPoly.length < 3) continue;
+
+            const boundsFor = polygon => ({
+                minX: Math.min(...polygon.map(point => point[0])),
+                maxX: Math.max(...polygon.map(point => point[0])),
+                minY: Math.min(...polygon.map(point => point[1])),
+                maxY: Math.max(...polygon.map(point => point[1])),
+            });
+            const bounds = boundsFor(lowerPoly);
+            const width = bounds.maxX - bounds.minX;
+            const depth = bounds.maxY - bounds.minY;
+            const centerX = (bounds.minX + bounds.maxX) / 2;
+            const centerY = (bounds.minY + bounds.maxY) / 2;
+            const runStart = bounds.maxY - Math.min(0.25, depth * 0.08);
+            const runEnd = bounds.minY + Math.min(1.05, depth * 0.3);
+            const runLength = runStart - runEnd;
+            const rise = this.getLevelElevation(upperLevel) - this.getLevelElevation(lowerLevel);
+            if (width < 1.55 || depth < 2.2 || runLength < 1.5 || rise <= 0) continue;
+
+            const stairGroup = new THREE.Group();
+            stairGroup.name = `stairFlight_${lowerLevel}_${upperLevel}`;
+            stairGroup.userData = { floorIndex: lowerLevel, connectsLevels: [lowerLevel, upperLevel] };
+            const stepMaterial = new THREE.MeshStandardMaterial({ color: 0x9a8064, roughness: 0.83 });
+            const railMaterial = new THREE.MeshStandardMaterial({ color: 0x5e4635, roughness: 0.68 });
+            const flightWidth = Math.min(0.62, width * 0.28);
+            const laneOffset = Math.min(width * 0.2, 0.42);
+            const flightCount = 8;
+            const flightRun = runLength / flightCount;
+            const halfRise = rise / 2;
+            const addStep = (laneX, startY, direction, baseY, stepIndex) => {
+                const top = baseY + halfRise * (stepIndex + 1) / flightCount;
+                const planY = startY + direction * flightRun * (stepIndex + 0.5);
+                const world = this.toWorldCoords(laneX, planY);
+                const tread = new THREE.Mesh(
+                    new THREE.BoxGeometry(flightWidth, Math.max(0.055, halfRise / flightCount), flightRun + 0.025),
+                    stepMaterial
+                );
+                tread.position.set(world.x, (baseY + top) / 2, world.z);
+                tread.castShadow = true;
+                tread.receiveShadow = true;
+                stairGroup.add(tread);
+            };
+            const addBeam = (start, end, radius, material) => {
+                const delta = end.clone().sub(start);
+                const beam = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, delta.length(), 8), material);
+                beam.position.copy(start).add(end).multiplyScalar(0.5);
+                beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.normalize());
+                beam.castShadow = true;
+                stairGroup.add(beam);
+                return beam;
+            };
+            const addRail = (laneX, startY, direction, baseY, heightEnd) => {
+                const first = this.toWorldCoords(laneX, startY);
+                const last = this.toWorldCoords(laneX, startY + direction * runLength);
+                addBeam(
+                    new THREE.Vector3(first.x, baseY + 0.88, first.z),
+                    new THREE.Vector3(last.x, heightEnd + 0.88, last.z),
+                    0.035, railMaterial
+                );
+                for (let post = 0; post <= flightCount; post += 2) {
+                    const t = post / flightCount;
+                    const planY = startY + direction * runLength * t;
+                    const world = this.toWorldCoords(laneX, planY);
+                    const bottomY = baseY + (heightEnd - baseY) * t + 0.12;
+                    addBeam(
+                        new THREE.Vector3(world.x, bottomY, world.z),
+                        new THREE.Vector3(world.x, baseY + (heightEnd - baseY) * t + 0.88, world.z),
+                        0.022, railMaterial
+                    );
+                }
+            };
+
+            const lowerLaneX = centerX - laneOffset;
+            const upperLaneX = centerX + laneOffset;
+            const landingPlanY = (runStart + runEnd) / 2;
+            for (let step = 0; step < flightCount; step++) {
+                addStep(lowerLaneX, runEnd, 1, 0, step);
+                addStep(upperLaneX, runStart, -1, halfRise, step);
+            }
+            const landingWorld = this.toWorldCoords(centerX, landingPlanY);
+            const landing = new THREE.Mesh(
+                new THREE.BoxGeometry(flightWidth * 2 + laneOffset * 2, 0.12, Math.max(0.45, flightRun * 1.4)),
+                stepMaterial
+            );
+            landing.position.set(landingWorld.x, halfRise - 0.06, landingWorld.z);
+            landing.castShadow = true;
+            landing.receiveShadow = true;
+            stairGroup.add(landing);
+            addRail(lowerLaneX - flightWidth / 2 + 0.06, runEnd, 1, 0, halfRise);
+            addRail(upperLaneX + flightWidth / 2 - 0.06, runStart, -1, halfRise, rise);
+
+            // Upper landing bridges the stair opening to the existing stairwell door.
+            const upperDoorSideX = bounds.minX + Math.min(0.72, width * 0.34);
+            const upperLandingPlanX = (upperLaneX + upperDoorSideX) / 2;
+            const upperLanding = new THREE.Mesh(
+                new THREE.BoxGeometry(Math.max(0.9, Math.abs(upperLaneX - upperDoorSideX) + 0.35), 0.14, Math.max(0.5, flightRun * 1.8)),
+                stepMaterial
+            );
+            const upperLandingWorld = this.toWorldCoords(upperLandingPlanX, runEnd);
+            upperLanding.position.set(upperLandingWorld.x, rise - 0.07, upperLandingWorld.z);
+            upperLanding.castShadow = true;
+            upperLanding.receiveShadow = true;
+            stairGroup.add(upperLanding);
+
+            const layer = this.getFloorLayer(lowerLevel, "stairs");
+            layer?.add(stairGroup);
+
+            const lowerEntryPlan = this.toWorldCoords(lowerLaneX, runEnd);
+            const upperExitPlan = this.toWorldCoords(upperDoorSideX, runEnd);
+            const upperBounds = boundsFor(upperPoly);
+            const holeWidth = Math.min(0.92, (upperBounds.maxX - upperBounds.minX) * 0.44);
+            const holeCenterX = (upperBounds.minX + upperBounds.maxX) / 2 + laneOffset;
+            const holeMinX = holeCenterX - holeWidth / 2;
+            const holeMaxX = holeCenterX + holeWidth / 2;
+            const holeMinY = upperBounds.minY + Math.min(1.05, (upperBounds.maxY - upperBounds.minY) * 0.3);
+            const holeMaxY = upperBounds.maxY - Math.min(0.25, (upperBounds.maxY - upperBounds.minY) * 0.08);
+            if (!this.generatedStairwellOpenings.has(upperRoom)) {
+                this.generatedStairwellOpenings.set(upperRoom, [[
+                    [holeMinX, holeMinY], [holeMaxX, holeMinY], [holeMaxX, holeMaxY], [holeMinX, holeMaxY]
+                ]]);
+            }
+            this.walkthroughStairLinks.push({
+                lowerLevel, upperLevel,
+                lowerPoint: new THREE.Vector3(lowerEntryPlan.x, this.getLevelElevation(lowerLevel) + 1.6, lowerEntryPlan.z),
+                middlePoint: new THREE.Vector3(landingWorld.x, this.getLevelElevation(lowerLevel) + halfRise + 1.6, landingWorld.z),
+                upperPoint: new THREE.Vector3(upperExitPlan.x, this.getLevelElevation(upperLevel) + 1.6, upperExitPlan.z),
+                lowerYaw: Math.PI / 2,
+                upperYaw: Math.PI / 2,
+                roomCenter: [centerX, centerY],
+            });
+        }
+    }
+
     /**
      * Creates an architectural text badge sprite using an HTML5 2D canvas.
      */
@@ -1056,7 +1278,10 @@ class FloorPlanViewer {
             side: THREE.DoubleSide
         });
         this.wallMaterial = wallMat;
-        const doorPanelMat = new THREE.MeshStandardMaterial({ color: 0xd02020, roughness: 0.8, metalness: 0 });
+        const doorPanelMat = new THREE.MeshStandardMaterial({ color: 0x805437, roughness: 0.72, metalness: 0 });
+        const knobMat = new THREE.MeshStandardMaterial({ color: 0xb58b42, metalness: 0.72, roughness: 0.28 });
+
+        this.walkthroughDoors = [];
 
         doors.forEach(door => {
             const center = door.center || [0, 0];
@@ -1070,8 +1295,25 @@ class FloorPlanViewer {
             const level = this.getItemFloorIndex(door);
             doorGroup.position.set(pt.x, 0, pt.z);
             doorGroup.rotation.y = this.getOpeningRotation(door, level);
-            doorGroup.userData.level = level;
-            doorGroup.userData.floorIndex = level;
+            doorGroup.userData = {
+                level, floorIndex: level, doorId: door.id,
+                planCenter: center.slice(), width, open: Boolean(door.open),
+                wallThickness, height: doorHeight
+            };
+
+            // Simple white jambs make the wall opening read as a framed doorway.
+            [-1, 1].forEach(side => {
+                const jamb = new THREE.Mesh(
+                    new THREE.BoxGeometry(0.09, doorHeight, wallThickness), wallMat
+                );
+                jamb.position.set(side * (width / 2 - 0.045), doorHeight / 2, 0);
+                jamb.castShadow = true;
+                jamb.receiveShadow = true;
+                jamb.scale.set(1, 0.001, 1);
+                jamb.userData = { isWall: true, floorIndex: level, level, openingFiller: "door-jamb" };
+                doorGroup.add(jamb);
+                this.animatingMeshes.push(jamb);
+            });
 
             const headerHeight = Math.max(0, this.wallHeight - doorHeight);
             if (headerHeight > 0) {
@@ -1088,13 +1330,26 @@ class FloorPlanViewer {
                 this.animatingMeshes.push(header);
             }
 
-            // A thin wooden leaf, rotated open around its approximate hinge side.
-            const panelGeo = new THREE.BoxGeometry(width * 0.95, doorHeight, 0.05);
+            // Hinged wood door. The leaf rotates only when the user presses E nearby.
+            const hinge = new THREE.Group();
+            hinge.position.set(-width / 2 + 0.045, 0, 0);
+            const panelGeo = new THREE.BoxGeometry(width - 0.09, doorHeight, 0.05);
             const panelMesh = new THREE.Mesh(panelGeo, doorPanelMat);
-            panelMesh.position.set(width * 0.25, doorHeight / 2, 0);
-            panelMesh.rotation.y = Math.PI / 4; // 45-degree welcoming open swing
+            panelMesh.position.set((width - 0.09) / 2, doorHeight / 2, 0);
             panelMesh.castShadow = true;
-            doorGroup.add(panelMesh);
+            panelMesh.receiveShadow = true;
+            hinge.add(panelMesh);
+            const knob = new THREE.Mesh(new THREE.SphereGeometry(0.045, 12, 8), knobMat);
+            knob.position.set(width - 0.18, 1.0, 0.04);
+            panelMesh.add(knob);
+            const backKnob = knob.clone();
+            backKnob.position.z = -0.04;
+            panelMesh.add(backKnob);
+            hinge.rotation.y = doorGroup.userData.open ? Math.PI / 2 : 0;
+            doorGroup.add(hinge);
+            doorGroup.userData.hinge = hinge;
+            doorGroup.userData.targetAngle = doorGroup.userData.open ? Math.PI / 2 : 0;
+            this.walkthroughDoors.push({ data: door, group: doorGroup, hinge, level, width });
 
             this.getFloorLayer(level, "doors")?.add(doorGroup);
         });
@@ -1353,8 +1608,6 @@ class FloorPlanViewer {
 
     setEyeLevelView() {
         if (this.walkthroughActive) this.toggleWalkthroughMode(false);
-        this.is2DMode = false;
-        this.isEyeLevelView = true;
 
         const rooms = this.currentSceneData?.rooms || [];
         const getArea = room => {
@@ -1373,37 +1626,22 @@ class FloorPlanViewer {
         const preferredRooms = availableRooms.filter(room => ["corridor", "entrance"].includes(
             String(room.type || "").toLowerCase()
         ));
-        const room = (preferredRooms.length ? preferredRooms : availableRooms)
-            .slice()
-            .sort((a, b) => getArea(b) - getArea(a))[0]
-            || rooms.slice().sort((a, b) => getArea(b) - getArea(a))[0];
-
-        let worldX = 0;
-        let worldZ = 0;
-        let floorIndex = this.visibleLevel === null ? 0 : this.visibleLevel;
-        if (room?.polygon?.length) {
-            floorIndex = this.getItemFloorIndex(room);
-            let twiceArea = 0;
-            let centroidX = 0;
-            let centroidY = 0;
-            room.polygon.forEach((point, index) => {
-                const next = room.polygon[(index + 1) % room.polygon.length];
-                const cross = point[0] * next[1] - next[0] * point[1];
-                twiceArea += cross;
-                centroidX += (point[0] + next[0]) * cross;
-                centroidY += (point[1] + next[1]) * cross;
-            });
-            if (Math.abs(twiceArea) > 1e-8) {
-                centroidX /= 3 * twiceArea;
-                centroidY /= 3 * twiceArea;
-            } else {
-                centroidX = room.polygon.reduce((sum, point) => sum + point[0], 0) / room.polygon.length;
-                centroidY = room.polygon.reduce((sum, point) => sum + point[1], 0) / room.polygon.length;
-            }
-            const world = this.toWorldCoords(centroidX, centroidY);
-            worldX = world.x;
-            worldZ = world.z;
+        const roomCandidates = (preferredRooms.length ? preferredRooms : availableRooms)
+            .slice().sort((a, b) => getArea(b) - getArea(a));
+        let room = null;
+        let planPoint = null;
+        for (const candidate of roomCandidates) {
+            this.walkthroughFloorIndex = this.getItemFloorIndex(candidate);
+            planPoint = this.getWalkthroughInteriorPoint(candidate);
+            if (planPoint) { room = candidate; break; }
         }
+        if (!room || !planPoint) return;
+        this.is2DMode = false;
+        this.isEyeLevelView = true;
+        const floorIndex = this.getItemFloorIndex(room);
+        const world = this.toWorldCoords(planPoint[0], planPoint[1]);
+        const worldX = world.x;
+        const worldZ = world.z;
 
         const floorElevation = this.getLevelElevation(floorIndex);
         const eyeY = floorElevation + 1.7;
@@ -1411,7 +1649,9 @@ class FloorPlanViewer {
         this.camera.near = 0.05;
         this.camera.far = Math.max(1000, this.sceneHeight + span * 10);
         this.camera.updateProjectionMatrix();
-        this.controls.target.set(worldX, eyeY - 0.12, worldZ - 2);
+        const yaw = this.getWalkthroughYaw(room, planPoint);
+        const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+        this.controls.target.set(worldX + forward.x * 2, eyeY - 0.12, worldZ + forward.z * 2);
         this.camera.position.set(worldX, eyeY, worldZ);
         this.controls.minDistance = 0.1;
         this.controls.maxDistance = Math.max(150, span * 8);
@@ -1600,10 +1840,13 @@ class FloorPlanViewer {
         if (!enable) {
             this.walkthroughActive = false;
             this.walkthroughKeys.clear();
+            this.walkthroughVelocity.set(0, 0, 0);
+            this.walkthroughTransition = null;
             this.walkthroughMouseDown = false;
             this.walkthroughPointerLocked = false;
             if (this.controls) this.controls.enabled = true;
             this.container.classList.remove("walkthrough-active");
+            this.walkthroughHud?.classList.add("hidden");
             if (document.pointerLockElement === this.renderer.domElement) document.exitPointerLock();
             this.setPerspectiveView();
             if (this.onWalkthroughChange) this.onWalkthroughChange(false);
@@ -1612,20 +1855,32 @@ class FloorPlanViewer {
 
         const rooms = this.currentSceneData?.rooms || [];
         if (!rooms.length) return false;
+        // Keep connected stories visible while walking so the stair flight and its landing remain usable.
+        if (this.walkthroughStairLinks.length && this.visibleLevel !== null) {
+            this.visibleLevel = null;
+            this.updateVisibleLevels();
+            this.onWalkthroughStoryViewChange?.("all");
+        }
         const allowedRooms = this.visibleLevel === null
             ? rooms
             : rooms.filter(room => this.getItemFloorIndex(room) === this.visibleLevel);
         const preferred = allowedRooms.filter(room => ["corridor", "entrance"].includes(String(room.type || "").toLowerCase()));
         const candidates = preferred.length ? preferred : allowedRooms;
-        const room = candidates.slice().sort((a, b) => this.getPolygonArea(b.polygon) - this.getPolygonArea(a.polygon))[0];
-        if (!room) return false;
+        let room = null;
+        let interiorPoint = null;
+        for (const candidate of candidates.slice().sort((a, b) => this.getPolygonArea(b.polygon) - this.getPolygonArea(a.polygon))) {
+            this.walkthroughFloorIndex = this.getItemFloorIndex(candidate);
+            interiorPoint = this.getWalkthroughInteriorPoint(candidate);
+            if (interiorPoint) { room = candidate; break; }
+        }
+        if (!room || !interiorPoint) return false;
 
-        const [planX, planY] = this.getPolygonCentroid(room.polygon || []);
+        const [planX, planY] = interiorPoint;
         const world = this.toWorldCoords(planX, planY);
         this.walkthroughFloorIndex = this.getItemFloorIndex(room);
-        this.walkthroughYaw = 0;
+        this.walkthroughYaw = this.getWalkthroughYaw(room, [planX, planY]);
         this.walkthroughPitch = 0;
-        this.camera.position.set(world.x, this.getLevelElevation(this.walkthroughFloorIndex) + 1.6, world.z);
+        this.camera.position.set(world.x, this.getLevelElevation(this.walkthroughFloorIndex) + this.walkthroughEyeHeight, world.z);
         this.camera.rotation.order = "YXZ";
         this.camera.rotation.set(0, this.walkthroughYaw, 0);
         this.is2DMode = false;
@@ -1634,6 +1889,8 @@ class FloorPlanViewer {
         this.walkthroughPointerLocked = false;
         this.controls.enabled = false;
         this.container.classList.add("walkthrough-active");
+        this.walkthroughHud?.classList.remove("hidden");
+        this.walkthroughHintElement && (this.walkthroughHintElement.textContent = "WASD / arrows to walk · drag to look · E to interact · Esc to exit");
         this.camera.updateMatrixWorld();
         this.updateRoomLabelVisibility(1 / 60);
         if (this.onWalkthroughChange) this.onWalkthroughChange(true);
@@ -1692,50 +1949,292 @@ class FloorPlanViewer {
     onWalkthroughKeyDown(event) {
         if (!this.walkthroughActive) return;
         const key = event.key.toLowerCase();
-        if (!["w", "a", "s", "d", "shift"].includes(key)) return;
         const target = event.target;
         if (target && (target.isContentEditable || ["input", "textarea", "select"].includes(target.tagName?.toLowerCase()))) return;
+        if (key === "e" || event.code === "KeyE") {
+            event.preventDefault();
+            if (event.repeat) return;
+            this.tryWalkthroughInteraction();
+            return;
+        }
+        if (!["w", "a", "s", "d", "shift", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(key)) return;
         event.preventDefault();
-        this.walkthroughKeys.add(key);
+        this.setWalkthroughKey(key, true);
     }
 
     onWalkthroughKeyUp(event) {
-        this.walkthroughKeys.delete(event.key.toLowerCase());
+        this.setWalkthroughKey(event.key.toLowerCase(), false);
+    }
+
+    setWalkthroughKey(key, pressed) {
+        const normalized = String(key).toLowerCase();
+        if (!["w", "a", "s", "d", "shift", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(normalized)) return;
+        if (pressed && this.walkthroughActive) this.walkthroughKeys.add(normalized);
+        else this.walkthroughKeys.delete(normalized);
+    }
+
+    getWalkthroughInteriorPoint(room) {
+        const polygon = room.polygon || [];
+        if (polygon.length < 3) return null;
+        const xs = polygon.map(point => point[0]), ys = polygon.map(point => point[1]);
+        const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+        const span = Math.max(maxX - minX, maxY - minY);
+        const step = Math.max(0.12, Math.min(0.22, span / 32));
+        let best = null;
+        for (let y = minY + step / 2; y < maxY; y += step) {
+            for (let x = minX + step / 2; x < maxX; x += step) {
+                const point = [x, y];
+                if (!this.isPlanPointInRing(point, polygon)) continue;
+                if (this.getRoomHoles(room).some(hole => this.isPlanPointInRing(point, hole))) continue;
+                const world = this.toWorldCoords(x, y);
+                if (this.isWalkPositionBlocked(world.x, world.z)) continue;
+                const roomClearance = this.planPointRingClearance(point, polygon);
+                const wallClearance = (this.currentSceneData?.walls || [])
+                    .filter(wall => this.getItemFloorIndex(wall) === this.walkthroughFloorIndex && wall.polygon?.length >= 3)
+                    .reduce((minimum, wall) => Math.min(minimum, this.planPointRingClearance(point, wall.polygon)), Infinity);
+                const clearance = Math.min(roomClearance, wallClearance);
+                if (!best || clearance > best.clearance) best = { point: [x, y], clearance };
+            }
+        }
+        return best?.point || null;
+    }
+
+    getWalkthroughYaw(room, planPoint) {
+        const origin = this.toWorldCoords(planPoint[0], planPoint[1]);
+        let best = null;
+        const distances = [0.7, 1.2, 1.8];
+        for (let index = 0; index < 24; index++) {
+            const yaw = index * Math.PI * 2 / 24;
+            const forwardX = -Math.sin(yaw);
+            const forwardZ = -Math.cos(yaw);
+            for (const distance of distances) {
+                const candidateWorldX = origin.x + forwardX * distance;
+                const candidateWorldZ = origin.z + forwardZ * distance;
+                const candidatePlan = [candidateWorldX + this.centerOffset.x, candidateWorldZ + this.centerOffset.y];
+                if (!this.isPlanPointInRing(candidatePlan, room.polygon || [])) continue;
+                if (this.getRoomHoles(room).some(hole => this.isPlanPointInRing(candidatePlan, hole))) continue;
+                if (this.isWalkPositionBlocked(candidateWorldX, candidateWorldZ)) continue;
+                const clearance = this.planPointRingClearance(candidatePlan, room.polygon || []);
+                const score = clearance + distance * 0.015;
+                if (!best || score > best.score) best = { yaw, score };
+            }
+        }
+        return best?.yaw ?? 0;
+    }
+
+    isPlanPointInRing(point, ring) {
+        if (!Array.isArray(ring) || ring.length < 3) return false;
+        let inside = false;
+        for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+            const a = ring[i], b = ring[j];
+            if (((a[1] > point[1]) !== (b[1] > point[1]))
+                && point[0] < (b[0] - a[0]) * (point[1] - a[1]) / ((b[1] - a[1]) || 1e-9) + a[0]) inside = !inside;
+        }
+        return inside;
+    }
+
+    planPointRingClearance(point, ring) {
+        let minimum = Infinity;
+        for (let index = 0; index < ring.length; index++) {
+            const a = ring[index], b = ring[(index + 1) % ring.length];
+            const dx = b[0] - a[0], dy = b[1] - a[1];
+            const lengthSquared = dx * dx + dy * dy;
+            const t = lengthSquared
+                ? THREE.MathUtils.clamp(((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / lengthSquared, 0, 1)
+                : 0;
+            minimum = Math.min(minimum, Math.hypot(point[0] - (a[0] + t * dx), point[1] - (a[1] + t * dy)));
+        }
+        return minimum;
+    }
+
+    findNearbyWalkthroughInteraction() {
+        if (!this.walkthroughActive || this.walkthroughTransition) return null;
+        const planX = this.camera.position.x + this.centerOffset.x;
+        const planY = this.camera.position.z + this.centerOffset.y;
+        const nearbyDoors = this.walkthroughDoors
+            .filter(door => door.level === this.walkthroughFloorIndex)
+            .map(door => ({ door, distance: Math.hypot(door.data.center[0] - planX, door.data.center[1] - planY) }))
+            .filter(item => item.distance <= Math.max(1.15, item.door.width / 2 + 0.55))
+            .sort((a, b) => a.distance - b.distance);
+        const closedDoor = nearbyDoors.find(item => !item.door.group.userData.open);
+        if (closedDoor) return { type: "door", ...closedDoor };
+
+        for (const link of this.walkthroughStairLinks) {
+            let endpoint, nextLevel;
+            if (link.lowerLevel === this.walkthroughFloorIndex) {
+                endpoint = link.lowerPoint;
+                nextLevel = link.upperLevel;
+            } else if (link.upperLevel === this.walkthroughFloorIndex) {
+                endpoint = link.upperPoint;
+                nextLevel = link.lowerLevel;
+            } else continue;
+            const distanceToLanding = Math.hypot(endpoint.x - this.camera.position.x, endpoint.z - this.camera.position.z);
+            const planPoint = [planX, planY];
+            const isInsideStairwell = (this.currentSceneData?.rooms || []).some(room =>
+                this.getItemFloorIndex(room) === this.walkthroughFloorIndex
+                && ["stair", "stairs"].includes(String(room.type || "").toLowerCase())
+                && this.isPlanPointInRing(planPoint, room.polygon || [])
+            );
+            // The stair room itself is an interaction zone; the generous landing radius also
+            // covers small differences between detected room bounds and generated stair geometry.
+            if (distanceToLanding < 2.1 || isInsideStairwell) {
+                return { type: "stairs", link, nextLevel };
+            }
+        }
+        const openDoor = nearbyDoors[0];
+        if (openDoor) return { type: "door", ...openDoor };
+        return null;
+    }
+
+    tryWalkthroughInteraction() {
+        const interaction = this.walkthroughNearbyInteraction || this.findNearbyWalkthroughInteraction();
+        if (!interaction) {
+            if (this.walkthroughHintElement) this.walkthroughHintElement.textContent = "Move close to a door or stair landing to interact.";
+            return;
+        }
+        if (interaction.type === "door") {
+            const { group, data } = interaction.door;
+            group.userData.open = !group.userData.open;
+            group.userData.targetAngle = group.userData.open ? Math.PI / 2 : 0;
+            data.open = group.userData.open;
+            this.updateWalkthroughInteractionHint();
+            return;
+        }
+        const { link, nextLevel } = interaction;
+        const ascending = nextLevel > this.walkthroughFloorIndex;
+        const points = ascending
+            ? [link.lowerPoint, link.middlePoint, link.upperPoint]
+            : [link.upperPoint, link.middlePoint, link.lowerPoint];
+        const curve = new THREE.CatmullRomCurve3(points.map(point => point.clone()), false, "centripetal", 0.25);
+        this.walkthroughTransition = {
+            curve, elapsed: 0, duration: 2.4, fromFloor: this.walkthroughFloorIndex,
+            toFloor: nextLevel, direction: ascending ? 1 : -1,
+        };
+        this.walkthroughKeys.clear();
+        this.walkthroughVelocity.set(0, 0, 0);
+        this.walkthroughNearbyInteraction = null;
+        if (this.visibleLevel !== null) {
+            this.visibleLevel = null;
+            this.updateVisibleLevels();
+            this.onWalkthroughLevelChange?.(null);
+        }
+        if (this.walkthroughHintElement) this.walkthroughHintElement.textContent = ascending ? "Walking upstairs…" : "Walking downstairs…";
     }
 
     updateWalkthrough(deltaSeconds) {
-        if (!this.walkthroughActive || !this.walkthroughKeys.size) return;
+        if (!this.walkthroughActive) return;
+        const delta = Math.min(deltaSeconds, 0.05);
+        if (this.walkthroughTransition) {
+            const transition = this.walkthroughTransition;
+            transition.elapsed = Math.min(transition.duration, transition.elapsed + delta);
+            const t = transition.elapsed / transition.duration;
+            const eased = t * t * (3 - 2 * t);
+            this.camera.position.copy(transition.curve.getPoint(eased));
+            const tangent = transition.curve.getTangent(Math.min(0.99, Math.max(0.01, eased)));
+            this.walkthroughYaw = Math.atan2(-tangent.x, -tangent.z);
+            this.walkthroughPitch = Math.atan2(tangent.y, Math.hypot(tangent.x, tangent.z));
+            this.camera.rotation.set(this.walkthroughPitch, this.walkthroughYaw, 0, "YXZ");
+            if (t >= 1) {
+                this.walkthroughFloorIndex = transition.toFloor;
+                this.camera.position.y = this.getLevelElevation(this.walkthroughFloorIndex) + this.walkthroughEyeHeight;
+                this.walkthroughTransition = null;
+                this.walkthroughPitch = 0;
+                this.camera.rotation.set(0, this.walkthroughYaw, 0, "YXZ");
+                this.onWalkthroughFloorChanged?.(this.walkthroughFloorIndex);
+            }
+            return;
+        }
+
+        const forwardAmount = (this.walkthroughKeys.has("w") || this.walkthroughKeys.has("arrowup") ? 1 : 0)
+            - (this.walkthroughKeys.has("s") || this.walkthroughKeys.has("arrowdown") ? 1 : 0);
+        const sideAmount = (this.walkthroughKeys.has("d") || this.walkthroughKeys.has("arrowright") ? 1 : 0)
+            - (this.walkthroughKeys.has("a") || this.walkthroughKeys.has("arrowleft") ? 1 : 0);
         const forward = new THREE.Vector3(-Math.sin(this.walkthroughYaw), 0, -Math.cos(this.walkthroughYaw));
         const right = new THREE.Vector3(-forward.z, 0, forward.x);
-        const movement = new THREE.Vector3();
-        if (this.walkthroughKeys.has("w")) movement.add(forward);
-        if (this.walkthroughKeys.has("s")) movement.sub(forward);
-        if (this.walkthroughKeys.has("d")) movement.add(right);
-        if (this.walkthroughKeys.has("a")) movement.sub(right);
-        if (movement.lengthSq() === 0) return;
-        movement.normalize().multiplyScalar((this.walkthroughKeys.has("shift") ? 5 : 2.5) * Math.min(deltaSeconds, 0.05));
-        const currentX = this.camera.position.x, currentZ = this.camera.position.z;
-        const nextX = currentX + movement.x, nextZ = currentZ + movement.z;
-        if (!this.isWalkPositionBlocked(nextX, nextZ)) {
-            this.camera.position.x = nextX;
-            this.camera.position.z = nextZ;
-        } else if (!this.isWalkPositionBlocked(nextX, currentZ)) {
-            this.camera.position.x = nextX;
-        } else if (!this.isWalkPositionBlocked(currentX, nextZ)) {
-            this.camera.position.z = nextZ;
+        const desired = new THREE.Vector3().addScaledVector(forward, forwardAmount).addScaledVector(right, sideAmount);
+        if (desired.lengthSq()) desired.normalize().multiplyScalar(this.walkthroughKeys.has("shift") ? 3.35 : 1.85);
+        const blend = 1 - Math.exp(-(desired.lengthSq() ? 8.5 : 11.0) * delta);
+        this.walkthroughVelocity.x = THREE.MathUtils.lerp(this.walkthroughVelocity.x, desired.x, blend);
+        this.walkthroughVelocity.z = THREE.MathUtils.lerp(this.walkthroughVelocity.z, desired.z, blend);
+
+        const distance = Math.hypot(this.walkthroughVelocity.x, this.walkthroughVelocity.z) * delta;
+        const substeps = Math.max(1, Math.ceil(distance / 0.075));
+        const stepX = this.walkthroughVelocity.x * delta / substeps;
+        const stepZ = this.walkthroughVelocity.z * delta / substeps;
+        for (let step = 0; step < substeps; step++) {
+            const nextX = this.camera.position.x + stepX;
+            const nextZ = this.camera.position.z + stepZ;
+            if (!this.isWalkPositionBlocked(nextX, nextZ)) {
+                this.camera.position.x = nextX;
+                this.camera.position.z = nextZ;
+            } else {
+                if (this.isWalkPositionBlocked(nextX, this.camera.position.z)) this.walkthroughVelocity.x = 0;
+                else this.camera.position.x = nextX;
+                if (this.isWalkPositionBlocked(this.camera.position.x, nextZ)) this.walkthroughVelocity.z = 0;
+                else this.camera.position.z = nextZ;
+            }
         }
+        this.camera.position.y = this.getLevelElevation(this.walkthroughFloorIndex) + this.walkthroughEyeHeight;
+        const speed = Math.hypot(this.walkthroughVelocity.x, this.walkthroughVelocity.z);
+        if (speed > 0.08) {
+            this.walkthroughBobPhase += delta * Math.min(1.7, speed / 1.85);
+            this.camera.position.y += Math.sin(this.walkthroughBobPhase * Math.PI * 2) * 0.018 * Math.min(1, speed / 1.85);
+        }
+        this.walkthroughNearbyInteraction = this.findNearbyWalkthroughInteraction();
+        this.updateWalkthroughInteractionHint();
+    }
+
+    updateWalkthroughInteractionHint() {
+        if (!this.walkthroughHintElement) return;
+        if (!this.walkthroughNearbyInteraction) {
+            this.walkthroughHintElement.textContent = "WASD / arrows to walk · drag to look · E to interact · Esc to exit";
+        } else if (this.walkthroughNearbyInteraction.type === "door") {
+            const isOpen = this.walkthroughNearbyInteraction.door.group.userData.open;
+            this.walkthroughHintElement.textContent = `Press E to ${isOpen ? "close" : "open"} door`;
+        } else {
+            this.walkthroughHintElement.textContent = this.walkthroughNearbyInteraction.nextLevel > this.walkthroughFloorIndex
+                ? "Press E to go upstairs"
+                : "Press E to go downstairs";
+        }
+    }
+
+    updateWalkthroughDoors(deltaSeconds) {
+        const blend = 1 - Math.exp(-9 * Math.min(deltaSeconds, 0.05));
+        this.walkthroughDoors.forEach(({ group }) => {
+            const hinge = group.userData.hinge;
+            hinge.rotation.y = THREE.MathUtils.lerp(hinge.rotation.y, group.userData.targetAngle, blend);
+        });
     }
 
     isWalkPositionBlocked(worldX, worldZ) {
         const px = worldX + this.centerOffset.x;
         const py = worldZ + this.centerOffset.y;
-        const radius = 0.16;
-        const withinDoorOpening = (this.currentSceneData?.doors || []).some(door => {
-            if (this.getItemFloorIndex(door) !== this.walkthroughFloorIndex || !door.center) return false;
-            const openingRadius = Math.max(radius, Number(door.width || 0.8) / 2) + radius;
-            return Math.hypot(px - door.center[0], py - door.center[1]) <= openingRadius;
+        const radius = 0.18;
+        const pointRingDistance = (point, ring) => {
+            let minimum = Infinity;
+            for (let index = 0; index < ring.length; index++) {
+                const a = ring[index], b = ring[(index + 1) % ring.length];
+                const dx = b[0] - a[0], dy = b[1] - a[1];
+                const lengthSq = dx * dx + dy * dy;
+                const t = lengthSq
+                    ? THREE.MathUtils.clamp(((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / lengthSq, 0, 1)
+                    : 0;
+                minimum = Math.min(minimum, Math.hypot(point[0] - (a[0] + t * dx), point[1] - (a[1] + t * dy)));
+            }
+            return minimum;
+        };
+        const onWalkableRoom = (this.currentSceneData?.rooms || []).some(room => {
+            if (this.getItemFloorIndex(room) !== this.walkthroughFloorIndex) return false;
+            const polygon = room.polygon || [];
+            if (polygon.length < 3) return false;
+            const point = [px, py];
+            if (this.getRoomHoles(room).some(hole => this.isPlanPointInRing(point, hole))) return false;
+            // Floor masks leave a narrow gap at many door thresholds. Let the player's center
+            // bridge that gap; wall and closed-door checks below still prevent walking through solids.
+            return this.isPlanPointInRing(point, polygon) || pointRingDistance(point, polygon) <= radius + 0.07;
         });
-        if (withinDoorOpening) return false;
+        if (!onWalkableRoom) return true;
+
         const pointSegmentDistance = (point, a, b) => {
             const dx = b[0] - a[0], dy = b[1] - a[1];
             const lengthSq = dx * dx + dy * dy;
@@ -1762,6 +2261,15 @@ class FloorPlanViewer {
                 return !inOpening;
             }
             return false;
+        }) || this.walkthroughDoors.some(({ group, level, width }) => {
+            if (level !== this.walkthroughFloorIndex || group.userData.open) return false;
+            const dx = px - group.userData.planCenter[0];
+            const dy = py - group.userData.planCenter[1];
+            const angle = group.rotation.y;
+            const along = dx * Math.cos(angle) - dy * Math.sin(angle);
+            const across = dx * Math.sin(angle) + dy * Math.cos(angle);
+            return Math.abs(along) <= width / 2 + radius
+                && Math.abs(across) <= group.userData.wallThickness / 2 + radius;
         });
     }
 
@@ -1820,7 +2328,7 @@ class FloorPlanViewer {
         // Build a clean export container including walls, floors, doors, and windows
         const exportScene = new THREE.Scene();
         this.floorGroups.forEach(floorGroup => {
-            ["walls", "rooms", "doors", "windows", "furniture"].forEach(layerName => {
+            ["walls", "rooms", "doors", "windows", "furniture", "stairs"].forEach(layerName => {
                 if (layerName === "furniture" && !this.layerVisibility.furniture) return;
                 const layer = floorGroup.getObjectByName(layerName);
                 if (!layer) return;
@@ -1977,6 +2485,7 @@ class FloorPlanViewer {
         const deltaSeconds = this.lastLabelUpdateTime ? (now - this.lastLabelUpdateTime) / 1000 : 1 / 60;
         this.lastLabelUpdateTime = now;
         this.updateWalkthrough(deltaSeconds);
+        this.updateWalkthroughDoors(deltaSeconds);
         this.camera?.updateMatrixWorld();
         this.updateRoomLabelVisibility(deltaSeconds);
         if (this.activeRouteTexture) {

@@ -543,6 +543,7 @@ document.addEventListener("DOMContentLoaded", () => {
         btnWalkthrough.setAttribute("aria-pressed", String(enabled));
         btnWalkthrough.textContent = enabled ? "Exit Walkthrough" : "Walkthrough";
     };
+    viewer.onWalkthroughStoryViewChange = value => { levelFilter.value = value; };
     btnMeasure.addEventListener("click", () => {
         const enabled = viewer.toggleMeasurementMode();
         btnMeasure.setAttribute("aria-pressed", String(enabled));

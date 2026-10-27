@@ -364,6 +364,19 @@
                 <div id="tab-3d" class="tab-panel relative h-full w-full">
                     <div id="threejs-canvas-container" class="w-full h-full" tabindex="0" role="application" aria-label="Interactive 3D floor plan. Use mouse to orbit, arrow keys to pan, or enable walkthrough with WASD."></div>
 
+                    <section id="walkthrough-hud" class="walkthrough-hud hidden" aria-label="Walkthrough controls">
+                        <p id="walkthrough-hint" role="status" aria-live="polite">WASD / arrows to walk · drag to look · E to interact · Esc to exit</p>
+                        <div class="walkthrough-touch-controls" aria-label="Touch movement controls">
+                            <div class="walkthrough-dpad">
+                                <button type="button" data-walk-key="w" aria-label="Walk forward">↑</button>
+                                <button type="button" data-walk-key="a" aria-label="Walk left">←</button>
+                                <button type="button" data-walk-key="s" aria-label="Walk backward">↓</button>
+                                <button type="button" data-walk-key="d" aria-label="Walk right">→</button>
+                            </div>
+                            <button type="button" data-walk-interact aria-label="Open nearby door or use stairs">Interact · E</button>
+                        </div>
+                    </section>
+
                     <div id="measurement-panel" class="glass-panel absolute right-4 top-4 hidden rounded-none border-2 border-bauhaus-ink bg-white p-3 text-xs" role="status" aria-live="polite">
                         <div class="flex items-center gap-3"><span id="measurement-status">Click a first point to measure.</span><button id="btn-clear-measurement" type="button" aria-label="Clear current measurement" class="border border-bauhaus-ink px-2 py-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Clear</button></div>
                     </div>
