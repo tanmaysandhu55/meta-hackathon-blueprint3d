@@ -510,8 +510,10 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     inputWallThickness.addEventListener("input", (e) => {
-        labelWallThickness.textContent = `${parseFloat(e.target.value).toFixed(2)} m`;
+        const value = parseFloat(e.target.value);
+        labelWallThickness.textContent = `${value.toFixed(2)} m`;
     });
+    inputWallThickness.addEventListener("change", e => viewer.setWallThickness(parseFloat(e.target.value)));
 
     // -------------------------------------------------------------
     // Drag & Drop / File Selection
@@ -596,7 +598,7 @@ document.addEventListener("DOMContentLoaded", () => {
             btnCutaway.classList.remove("bg-amber-600", "text-white");
             btnCutaway.classList.add("bg-slate-800", "text-slate-300");
             const originalHeight = parseFloat(inputWallHeight.value) || 3.0;
-            viewer.setWallHeight(originalHeight);
+            viewer.setWallHeight(originalHeight, { syncFloors: false });
             labelWallHeight.textContent = `${originalHeight.toFixed(1)} m`;
         }
         viewer.setEyeLevelView();
@@ -616,13 +618,13 @@ document.addEventListener("DOMContentLoaded", () => {
         if (isCutawayActive) {
             btnCutaway.classList.add("bg-amber-600", "text-white");
             btnCutaway.classList.remove("bg-slate-800", "text-slate-300");
-            viewer.setWallHeight(1.1); // Cutaway height
+            viewer.setWallHeight(1.1, { syncFloors: false }); // Cutaway height only; preserve story spacing.
             labelWallHeight.textContent = "1.1 m (Cutaway)";
         } else {
             btnCutaway.classList.remove("bg-amber-600", "text-white");
             btnCutaway.classList.add("bg-slate-800", "text-slate-300");
             const originalHeight = parseFloat(inputWallHeight.value) || 3.0;
-            viewer.setWallHeight(originalHeight);
+            viewer.setWallHeight(originalHeight, { syncFloors: false });
             labelWallHeight.textContent = `${originalHeight.toFixed(1)} m`;
         }
     });
@@ -1135,6 +1137,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function combineFloorScenes(scenes) {
         const baseAnchor = planAnchor(scenes[0]);
+        const hasConnector = scene => (scene.rooms || []).some(room => ["stairs", "stair", "elevator"].includes(String(room.type || "").toLowerCase()));
+        const connectorLevels = scenes.map((scene, index) => hasConnector(scene) ? index : null).filter(index => index !== null);
         const floorHeight = Math.max(2.5, Number(scenes[0].meta?.wallHeight) || Number(inputWallHeight.value) || 3.0);
         const merged = {
             meta: {
@@ -1148,6 +1152,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     elevation: level * floorHeight,
                     metersPerPixel: Number(scene.meta?.metersPerPixel) || 0.02,
                     imageSize: scene.meta?.imageSize || [1, 1],
+                    alignmentMethod: hasConnector(scene) ? "connector-centroid" : "plan-bounds-center",
                     planOffset: [baseAnchor[0] - planAnchor(scene)[0], baseAnchor[1] - planAnchor(scene)[1]],
                     planAnchor: planAnchor(scene),
                 })),
@@ -1176,7 +1181,14 @@ document.addEventListener("DOMContentLoaded", () => {
                 });
             });
         });
-        merged.meta.warnings.push("Stories were translated so detected stair/elevator regions overlap; verify alignment against the building drawings before relying on cross-floor measurements or routes.");
+        if (connectorLevels.length === scenes.length) {
+            merged.meta.warnings.push("Stories were automatically aligned by detected stair/elevator room centroids. Verify alignment against the building drawings before relying on cross-floor measurements or routes.");
+        } else if (connectorLevels.length) {
+            const missingLevels = scenes.map((_scene, index) => index).filter(index => !connectorLevels.includes(index)).map(index => index + 1);
+            merged.meta.warnings.push(`Stories with detected stair/elevator rooms were aligned by their centroids; floor(s) ${missingLevels.join(", ")} used plan-bound centers. Verify connector alignment before relying on cross-floor routes or measurements.`);
+        } else {
+            merged.meta.warnings.push("No stair/elevator room was detected. Stories were centered by plan bounds; no vertical connector relationship was inferred. Verify alignment before relying on cross-floor routes or measurements.");
+        }
         const modes = scenes.map(scene => String(scene.meta?.processingMode || "OFFLINE").toUpperCase());
         merged.meta.processingMode = modes.every(mode => mode === "LIVE") ? "LIVE"
             : modes.includes("MOCK") ? "MOCK" : modes.includes("REPLAY") ? "REPLAY" : "DEMO";
@@ -1252,6 +1264,16 @@ document.addEventListener("DOMContentLoaded", () => {
         floorPlanImages = Array.isArray(data.floorImages) ? data.floorImages : [];
         setProcessingBadge(currentSceneData.meta?.processingMode || "");
         currentOverlays = data.overlays;
+        const sceneWallHeight = Number(currentSceneData.meta.wallHeight);
+        if (Number.isFinite(sceneWallHeight) && sceneWallHeight >= Number(inputWallHeight.min) && sceneWallHeight <= Number(inputWallHeight.max)) {
+            inputWallHeight.value = String(sceneWallHeight);
+            labelWallHeight.textContent = `${sceneWallHeight.toFixed(1)} m`;
+        }
+        const sceneWallThickness = Number(currentSceneData.meta.wallThickness);
+        if (Number.isFinite(sceneWallThickness) && sceneWallThickness >= Number(inputWallThickness.min) && sceneWallThickness <= Number(inputWallThickness.max)) {
+            inputWallThickness.value = String(sceneWallThickness);
+            labelWallThickness.textContent = `${sceneWallThickness.toFixed(2)} m`;
+        }
         const levels = currentSceneData.meta.levels || [];
         levelFilter.replaceChildren(new Option("All Stories", "all"));
         levels.forEach(level => levelFilter.add(new Option(level.name || `Level ${Number(level.level) + 1}`, String(level.level))));

@@ -58,10 +58,14 @@ JOBS = {}
 JOBS_LOCK = threading.Lock()
 UPLOAD_RATE_LOCK = threading.Lock()
 UPLOAD_REQUESTS = defaultdict(deque)
+QUESTION_REQUESTS = defaultdict(deque)
+QUESTION_RATE_LOCK = threading.Lock()
 ALLOWED_IMAGE_FORMATS = {"PNG", "JPEG", "WEBP"}
 MAX_ACTIVE_JOBS = 2
 UPLOAD_RATE_WINDOW_SECONDS = 60
 UPLOAD_RATE_LIMIT = 10
+QUESTION_RATE_LIMIT = 20
+QUESTION_RATE_WINDOW_SECONDS = 60
 PROVIDER_IMAGE_MAX_SIDE = 2048
 
 
@@ -92,6 +96,24 @@ def _rate_limit_upload(ip_address):
         if len(requests_for_ip) >= UPLOAD_RATE_LIMIT:
             retry_after = max(1, int(UPLOAD_RATE_WINDOW_SECONDS - (now - requests_for_ip[0])))
             return retry_after
+        requests_for_ip.append(now)
+        return 0
+
+
+def _rate_limit_question(ip_address):
+    now = time.monotonic()
+    with QUESTION_RATE_LOCK:
+        requests_for_ip = QUESTION_REQUESTS[ip_address]
+        stale_ips = []
+        for address, entries in QUESTION_REQUESTS.items():
+            while entries and now - entries[0] >= QUESTION_RATE_WINDOW_SECONDS:
+                entries.popleft()
+            if address != ip_address and not entries:
+                stale_ips.append(address)
+        for address in stale_ips:
+            QUESTION_REQUESTS.pop(address, None)
+        if len(requests_for_ip) >= QUESTION_RATE_LIMIT:
+            return max(1, int(QUESTION_RATE_WINDOW_SECONDS - (now - requests_for_ip[0])))
         requests_for_ip.append(now)
         return 0
 
@@ -484,6 +506,11 @@ def ask_about_scene():
         return jsonify({"success": False, "error": "Enter a question of 1 to 500 characters."}), 400
     if not isinstance(scene, dict):
         return jsonify({"success": False, "error": "Load a floor-plan scene before asking a question."}), 400
+    retry_after = _rate_limit_question(request.remote_addr or "unknown")
+    if retry_after:
+        response = jsonify({"success": False, "error": "Map assistant rate limit reached. Wait before asking again."})
+        response.headers["Retry-After"] = str(retry_after)
+        return response, 429
     try:
         validate_scene_contract(scene)
     except RuntimeError:

@@ -281,7 +281,7 @@ def get_fireworks_client(timeout=60):
         return None
 
     base_url = os.environ.get("FIREWORKS_BASE_URL", "https://api.fireworks.ai/inference/v1").strip()
-    return OpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
+    return OpenAI(base_url=base_url, api_key=api_key, timeout=timeout, max_retries=0)
 
 
 def generate_with_fireworks_llama(prompt, system_prompt=None, response_format=None, timeout=60):
@@ -402,7 +402,7 @@ def label_rooms_with_modal_muse_spark(b64_data_url, room_candidates, warnings=No
                     break
             if not base_url.endswith("/v1"):
                 base_url += "/v1"
-            client = OpenAI(base_url=base_url, api_key=modal_cfg["api_key"], timeout=min(60, timeout))
+            client = OpenAI(base_url=base_url, api_key=modal_cfg["api_key"], timeout=min(60, timeout), max_retries=0)
             candidate_json = json.dumps([
                 {
                     "id": room["id"],
@@ -507,7 +507,12 @@ def ask_modal_muse_spark_about_scene(question, scene_facts, timeout=25):
     if not base_url.endswith("/v1"):
         base_url += "/v1"
 
-    client = OpenAI(base_url=base_url, api_key=modal_cfg["api_key"], timeout=max(1.0, min(30.0, timeout)))
+    client = OpenAI(
+        base_url=base_url,
+        api_key=modal_cfg["api_key"],
+        timeout=max(1.0, min(30.0, timeout)),
+        max_retries=0,
+    )
     facts_json = json.dumps(scene_facts, ensure_ascii=False, separators=(",", ":"))[:18000]
     response = client.chat.completions.create(
         model=modal_cfg["model_name"],

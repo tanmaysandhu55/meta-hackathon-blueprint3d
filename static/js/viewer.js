@@ -1468,11 +1468,13 @@ class FloorPlanViewer {
     /**
      * Interactively updates wall height across all walls.
      */
-    setWallHeight(heightMeters) {
+    setWallHeight(heightMeters, { syncFloors = true } = {}) {
         if (!this.currentSceneData) return;
         this.wallHeight = Math.max(0.2, parseFloat(heightMeters) || 3.0);
-        this.currentSceneData.meta.wallHeight = this.wallHeight;
-        this.syncFloorSpacing();
+        if (syncFloors) {
+            this.currentSceneData.meta.wallHeight = this.wallHeight;
+            this.syncFloorSpacing();
+        }
         const floorIndices = Array.from(this.floorGroups.keys());
         const highestFloor = floorIndices.length
             ? Math.max(...floorIndices.map(index => this.getLevelElevation(index)))
@@ -1482,7 +1484,17 @@ class FloorPlanViewer {
             group.position.y = this.getLevelElevation(floorIndex);
         });
         
-        // Rebuild only the walls layer
+        this.rebuildWallAndOpeningGeometry();
+    }
+
+    setWallThickness(thicknessMeters) {
+        if (!this.currentSceneData) return;
+        this.currentSceneData.meta.wallThickness = Math.max(0.05, parseFloat(thicknessMeters) || 0.2);
+        this.rebuildWallAndOpeningGeometry();
+    }
+
+    rebuildWallAndOpeningGeometry() {
+        if (!this.currentSceneData) return;
         this.floorGroups.forEach(group => {
             const wallLayer = group.getObjectByName("walls");
             while (wallLayer.children.length > 0) {

@@ -20,6 +20,7 @@ def client():
     app_module.app.config.update(TESTING=True)
     app_module.JOBS.clear()
     app_module.UPLOAD_REQUESTS.clear()
+    app_module.QUESTION_REQUESTS.clear()
     return app_module.app.test_client()
 
 
@@ -118,6 +119,18 @@ def test_scene_question_rejects_missing_or_invalid_inputs(client):
 
     no_scene = client.post("/api/scene/ask", json={"question": "How many rooms?"})
     assert no_scene.status_code == 400
+
+
+def test_scene_question_rate_limit_returns_429(client, monkeypatch):
+    monkeypatch.setattr(app_module, "get_modal_config", lambda: {"is_configured": False})
+    monkeypatch.setattr(app_module, "QUESTION_RATE_LIMIT", 1)
+    scene = app_module.get_sample_scene_json()
+    payload = {"question": "How many rooms?", "scene": scene}
+
+    assert client.post("/api/scene/ask", json=payload).status_code == 200
+    limited = client.post("/api/scene/ask", json=payload)
+    assert limited.status_code == 429
+    assert limited.headers.get("Retry-After")
 
 
 def test_upload_returns_429_when_concurrency_cap_is_reached(client, monkeypatch):
