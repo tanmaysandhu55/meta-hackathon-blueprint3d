@@ -22,7 +22,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const btnLoadTwoStoryDemo = document.getElementById("btn-load-two-story-demo");
     const levelFilter = document.getElementById("level-filter");
     const appMessage = document.getElementById("app-message");
-    const liveReady = document.body.dataset.liveReady === "true";
+    const processingReady = document.body.dataset.processingReady === "true";
+    const initialProcessingMode = document.body.dataset.processingMode || "OFFLINE";
+    const processingModeBadge = document.getElementById("processing-mode-badge");
     const progressContainer = document.getElementById("progress-container");
     const progressBar = document.getElementById("progress-bar");
     const progressStatus = document.getElementById("progress-status");
@@ -49,6 +51,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const chkLabels = document.getElementById("chk-labels");
     const chkOpenings = document.getElementById("chk-openings");
     const chkGrid = document.getElementById("chk-grid");
+    const chkFurniture = document.getElementById("chk-furniture");
+    const btnWalkthrough = document.getElementById("btn-walkthrough");
+    const btnMeasure = document.getElementById("btn-measure");
+    const measurementPanel = document.getElementById("measurement-panel");
+    const measurementStatus = document.getElementById("measurement-status");
+    const btnClearMeasurement = document.getElementById("btn-clear-measurement");
 
     // Tabs
     const tabBtns = document.querySelectorAll(".nav-tab-btn");
@@ -81,6 +89,17 @@ document.addEventListener("DOMContentLoaded", () => {
     const inspectorArea = document.getElementById("inspector-area");
     const inspectorPoints = document.getElementById("inspector-points");
     const inspectorDoors = document.getElementById("inspector-doors");
+    const areaSummaryTotal = document.getElementById("area-summary-total");
+    const areaSummaryRooms = document.getElementById("area-summary-rooms");
+    const editRoomName = document.getElementById("edit-room-name");
+    const editRoomType = document.getElementById("edit-room-type");
+    const btnSaveRoomEdit = document.getElementById("btn-save-room-edit");
+    const btnDeleteRoom = document.getElementById("btn-delete-room");
+    const btnCalibrateScale = document.getElementById("btn-calibrate-scale");
+    const btnApplyScale = document.getElementById("btn-apply-scale");
+    const btnCancelScale = document.getElementById("btn-cancel-scale");
+    const knownLength = document.getElementById("known-length");
+    const scaleCalibrationStatus = document.getElementById("scale-calibration-status");
 
     // Application State
     let selectedFile = null;
@@ -88,6 +107,35 @@ document.addEventListener("DOMContentLoaded", () => {
     let currentOverlays = null;
     let loadedImageElement = null;
     let isCutawayActive = false;
+    let selectedRoomId = null;
+    let scaleCalibrationActive = false;
+    let scaleCalibrationPoints = [];
+
+    function setProcessingBadge(mode) {
+        if (!processingModeBadge) return;
+        const messages = {
+            MOCK: "MOCK MODE — SYNTHETIC SAMPLE, NOT LIVE AI",
+            REPLAY: "REPLAY MODE — STORED SAM RESPONSES, NOT LIVE AI",
+            DEMO: "PREPARED DEMO — NOT A LIVE AI RESULT",
+            LIVE: "LIVE AI RESULT — PROVIDER PROCESSED UPLOAD",
+        };
+        if (!messages[mode]) {
+            processingModeBadge.classList.add("hidden");
+            processingModeBadge.textContent = "";
+            return;
+        }
+        processingModeBadge.textContent = messages[mode];
+        processingModeBadge.title = mode === "MOCK"
+            ? "Generated from the prepared sample plan. Uploaded image pixels were not analyzed."
+            : mode === "REPLAY"
+                ? "Generated from recorded SAM responses. No live SAM request was made."
+                : mode === "LIVE"
+                    ? "External provider inference was used for this result."
+                    : "Prepared sample data, not a live provider result.";
+        processingModeBadge.classList.remove("hidden");
+    }
+
+    if (["MOCK", "REPLAY"].includes(initialProcessingMode)) setProcessingBadge(initialProcessingMode);
 
     function showMessage(message, kind = "info") {
         if (!appMessage) return;
@@ -146,6 +194,52 @@ document.addEventListener("DOMContentLoaded", () => {
             return polygon.reduce((sum, point) => [sum[0] + point[0] / polygon.length, sum[1] + point[1] / polygon.length], [0, 0]);
         }
         return [xSum / (3 * twiceArea), ySum / (3 * twiceArea)];
+    }
+
+    function polygonArea(polygon) {
+        if (!polygon || polygon.length < 3) return 0;
+        let twiceArea = 0;
+        polygon.forEach((point, index) => {
+            const next = polygon[(index + 1) % polygon.length];
+            twiceArea += point[0] * next[1] - next[0] * point[1];
+        });
+        return Math.abs(twiceArea) / 2;
+    }
+
+    function updateAreaSummary() {
+        if (!currentSceneData) {
+            areaSummaryTotal.textContent = "Load a plan to calculate areas.";
+            areaSummaryRooms.replaceChildren();
+            return;
+        }
+        const rooms = currentSceneData.rooms || [];
+        const totalArea = rooms.reduce((sum, room) => sum + polygonArea(room.polygon), 0);
+        areaSummaryTotal.textContent = `${rooms.length} rooms · ${totalArea.toFixed(1)} m² total`;
+        areaSummaryRooms.replaceChildren();
+        rooms.forEach(room => {
+            const row = document.createElement("li");
+            row.className = "flex justify-between gap-2 border-b border-bauhaus-muted py-1";
+            const name = document.createElement("span");
+            name.textContent = room.label || room.id;
+            const area = document.createElement("span");
+            area.className = "font-mono";
+            area.textContent = `${polygonArea(room.polygon).toFixed(1)} m²`;
+            row.append(name, area);
+            areaSummaryRooms.appendChild(row);
+        });
+    }
+
+    function refreshEditedScene() {
+        if (!currentSceneData) return;
+        viewer.loadScene(currentSceneData);
+        jsonOutput.textContent = JSON.stringify(currentSceneData, null, 2);
+        updateAreaSummary();
+        populateRoomControls(currentSceneData);
+        if (loadedImageElement) render2DSegmentationCanvas();
+        inspectorCard.classList.add("hidden");
+        inspectorEmpty.classList.remove("hidden");
+        selectedRoomId = null;
+        [editRoomName, editRoomType, btnSaveRoomEdit, btnDeleteRoom].forEach(control => { control.disabled = true; });
     }
 
     function showRoomRoute(scene, startId, endId) {
@@ -379,7 +473,7 @@ document.addEventListener("DOMContentLoaded", () => {
             imagePreview.src = event.target.result;
             imagePreviewContainer.classList.remove("hidden");
             dropZonePrompt.classList.add("hidden");
-            btnGenerate.disabled = !liveReady;
+            btnGenerate.disabled = !processingReady;
 
             // Pre-load image for 2D canvas
             const img = new Image();
@@ -438,6 +532,124 @@ document.addEventListener("DOMContentLoaded", () => {
         viewer.toggleLayer("windows", e.target.checked);
     });
     chkGrid.addEventListener("change", (e) => viewer.toggleLayer("grid", e.target.checked));
+    chkFurniture.addEventListener("change", (e) => viewer.toggleLayer("furniture", e.target.checked));
+
+    btnWalkthrough.addEventListener("click", () => {
+        const enabled = viewer.toggleWalkthroughMode();
+        btnWalkthrough.setAttribute("aria-pressed", String(enabled));
+        btnWalkthrough.textContent = enabled ? "Exit Walkthrough" : "Walkthrough";
+    });
+    viewer.onWalkthroughChange = enabled => {
+        btnWalkthrough.setAttribute("aria-pressed", String(enabled));
+        btnWalkthrough.textContent = enabled ? "Exit Walkthrough" : "Walkthrough";
+    };
+    btnMeasure.addEventListener("click", () => {
+        const enabled = viewer.toggleMeasurementMode();
+        btnMeasure.setAttribute("aria-pressed", String(enabled));
+        btnMeasure.textContent = enabled ? "Stop Measure" : "Measure";
+        measurementPanel.classList.toggle("hidden", !enabled);
+        measurementStatus.textContent = enabled ? "Click a first point in the 3D view." : "Measurement stopped.";
+    });
+    btnClearMeasurement.addEventListener("click", () => {
+        viewer.clearMeasurement();
+        measurementStatus.textContent = "Click a first point to measure.";
+    });
+    viewer.onMeasurementUpdate = message => { measurementStatus.textContent = message; };
+    viewer.onMeasurementModeChange = enabled => {
+        btnMeasure.setAttribute("aria-pressed", String(enabled));
+        btnMeasure.textContent = enabled ? "Stop Measure" : "Measure";
+        measurementPanel.classList.toggle("hidden", !enabled);
+    };
+
+    btnCalibrateScale.addEventListener("click", () => {
+        if (!currentSceneData || !loadedImageElement) {
+            scaleCalibrationStatus.textContent = "Load a floor plan before calibrating scale.";
+            return;
+        }
+        scaleCalibrationActive = true;
+        scaleCalibrationPoints = [];
+        btnCalibrateScale.setAttribute("aria-pressed", "true");
+        btnCalibrateScale.classList.add("calibration-active");
+        btnApplyScale.disabled = true;
+        scaleCalibrationStatus.textContent = "Click the first point, then the second point on the plan.";
+        segmentationCanvas.classList.add("calibration-crosshair");
+    });
+
+    segmentationCanvas.addEventListener("click", event => {
+        if (!scaleCalibrationActive) return;
+        const rect = segmentationCanvas.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        scaleCalibrationPoints.push([
+            (event.clientX - rect.left) * segmentationCanvas.width / rect.width,
+            (event.clientY - rect.top) * segmentationCanvas.height / rect.height,
+        ]);
+        if (scaleCalibrationPoints.length === 1) {
+            scaleCalibrationStatus.textContent = "First point set. Click the second point.";
+            render2DSegmentationCanvas();
+            return;
+        }
+        scaleCalibrationActive = false;
+        segmentationCanvas.classList.remove("calibration-crosshair");
+        btnCalibrateScale.setAttribute("aria-pressed", "false");
+        btnCalibrateScale.classList.remove("calibration-active");
+        btnApplyScale.disabled = false;
+        scaleCalibrationStatus.textContent = `Points selected (${Math.hypot(scaleCalibrationPoints[1][0] - scaleCalibrationPoints[0][0], scaleCalibrationPoints[1][1] - scaleCalibrationPoints[0][1]).toFixed(1)} px). Enter the known length and apply.`;
+        render2DSegmentationCanvas();
+    });
+
+    btnCancelScale.addEventListener("click", () => {
+        scaleCalibrationActive = false;
+        scaleCalibrationPoints = [];
+        btnApplyScale.disabled = true;
+        btnCalibrateScale.setAttribute("aria-pressed", "false");
+        btnCalibrateScale.classList.remove("calibration-active");
+        segmentationCanvas.classList.remove("calibration-crosshair");
+        scaleCalibrationStatus.textContent = "Scale calibration cancelled.";
+        if (loadedImageElement) render2DSegmentationCanvas();
+    });
+
+    btnApplyScale.addEventListener("click", () => {
+        const knownMeters = Number(knownLength.value);
+        const [first, second] = scaleCalibrationPoints;
+        if (!currentSceneData || !first || !second || !Number.isFinite(knownMeters) || knownMeters <= 0) {
+            scaleCalibrationStatus.textContent = "Choose two points and enter a positive known length.";
+            return;
+        }
+        const pixelDistance = Math.hypot(second[0] - first[0], second[1] - first[1]);
+        if (pixelDistance < 1) {
+            scaleCalibrationStatus.textContent = "The selected points are too close together.";
+            return;
+        }
+        const newScale = knownMeters / pixelDistance;
+        const previousScale = Number(currentSceneData.meta.metersPerPixel) || 0.02;
+        const factor = newScale / previousScale;
+        const scalePoints = points => (points || []).map(([x, y]) => [x * factor, y * factor]);
+        currentSceneData.rooms.forEach(room => {
+            room.polygon = scalePoints(room.polygon);
+            if (room.centroid) room.centroid = [room.centroid[0] * factor, room.centroid[1] * factor];
+            if (Number.isFinite(Number(room.area_m2))) room.area_m2 *= factor * factor;
+        });
+        currentSceneData.walls.forEach(wall => {
+            wall.polygon = scalePoints(wall.polygon);
+            wall.holes = (wall.holes || []).map(scalePoints);
+        });
+        ["doors", "windows"].forEach(collection => (currentSceneData[collection] || []).forEach(item => {
+            item.center = [item.center[0] * factor, item.center[1] * factor];
+            item.width *= factor;
+        }));
+        currentSceneData.meta.metersPerPixel = newScale;
+        currentSceneData.meta.scaleMethod = "interactive two-point calibration";
+        currentSceneData.meta.warnings = [...new Set([...(currentSceneData.meta.warnings || []), "Scale was recalibrated from two user-selected points and a known length."])];
+        inputMpp.min = String(Math.min(0.005, newScale));
+        inputMpp.max = String(Math.max(0.08, newScale));
+        inputMpp.value = String(newScale);
+        labelMpp.textContent = `${newScale.toFixed(4)} m/px`;
+        overlayScale.textContent = `Scale: ${newScale.toFixed(4)} m/px`;
+        scaleCalibrationPoints = [];
+        btnApplyScale.disabled = true;
+        scaleCalibrationStatus.textContent = `Scale updated to ${newScale.toFixed(5)} m/px.`;
+        refreshEditedScene();
+    });
 
     // -------------------------------------------------------------
     // Tab Navigation
@@ -586,10 +798,14 @@ document.addEventListener("DOMContentLoaded", () => {
             handleProcessSuccess(data);
             progressBar.style.width = "100%";
             progressStatus.textContent = "3D map ready";
-            if (data.scene.meta.warnings && data.scene.meta.warnings.length) {
+            if (data.scene.meta.processingMode === "MOCK") {
+                showMessage("MOCK MODE completed from the prepared sample plan. Your uploaded image was not analyzed and no live AI inference ran.", "warning");
+            } else if (data.scene.meta.processingMode === "REPLAY") {
+                showMessage("REPLAY MODE completed from recorded SAM responses. No live SAM inference ran.", "warning");
+            } else if (data.scene.meta.warnings && data.scene.meta.warnings.length) {
                 showMessage(data.scene.meta.warnings.join(" "), "warning");
             } else {
-                showMessage("Floor plan processed successfully.");
+                showMessage("LIVE AI processed this floor plan using the configured providers.");
             }
             setTimeout(() => {
                 progressContainer.classList.add("hidden");
@@ -602,12 +818,13 @@ document.addEventListener("DOMContentLoaded", () => {
             progressBar.style.width = "0%";
             showMessage(err.message || "Could not process this floor plan.", "error");
         } finally {
-            btnGenerate.disabled = !liveReady || !selectedFile;
+            btnGenerate.disabled = !processingReady || !selectedFile;
         }
     });
 
     function handleProcessSuccess(data) {
         currentSceneData = data.scene;
+        setProcessingBadge(currentSceneData.meta?.processingMode || "");
         currentOverlays = data.overlays;
         const levels = currentSceneData.meta.levels || [];
         levelFilter.replaceChildren(new Option("All Stories", "all"));
@@ -644,6 +861,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // 3. Switch to 3D tab
         document.querySelector('[data-tab="3d"]').click();
+        updateAreaSummary();
     }
 
     // -------------------------------------------------------------
@@ -729,6 +947,21 @@ document.addEventListener("DOMContentLoaded", () => {
             segCtx.lineTo(cx + w / 2, cy);
             segCtx.stroke();
         });
+
+        scaleCalibrationPoints.forEach((point, index) => {
+            segCtx.fillStyle = "#D02020";
+            segCtx.strokeStyle = "#FFFFFF";
+            segCtx.lineWidth = Math.max(2, segmentationCanvas.width / 500);
+            segCtx.beginPath();
+            segCtx.arc(point[0], point[1], Math.max(6, segmentationCanvas.width / 100), 0, Math.PI * 2);
+            segCtx.fill();
+            segCtx.stroke();
+            segCtx.fillStyle = "#FFFFFF";
+            segCtx.font = `bold ${Math.max(12, segmentationCanvas.width / 40)}px sans-serif`;
+            segCtx.textAlign = "center";
+            segCtx.textBaseline = "middle";
+            segCtx.fillText(String(index + 1), point[0], point[1]);
+        });
     }
 
     function getRoomTypeCanvasColor(type) {
@@ -751,6 +984,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // -------------------------------------------------------------
     window.onFloorPlanRoomSelected = (room) => {
         if (!room) return;
+        selectedRoomId = room.id;
         inspectorEmpty.classList.add("hidden");
         inspectorCard.classList.remove("hidden");
 
@@ -763,16 +997,8 @@ document.addEventListener("DOMContentLoaded", () => {
             : "Unclassified";
 
         // Calculate approximate area in sq meters
-        let area = 0;
         const poly = room.polygon || [];
-        if (poly.length >= 3) {
-            for (let i = 0; i < poly.length; i++) {
-                const j = (i + 1) % poly.length;
-                area += poly[i][0] * poly[j][1];
-                area -= poly[j][0] * poly[i][1];
-            }
-            area = Math.abs(area) / 2.0;
-        }
+        const area = polygonArea(poly);
         const sqft = area * 10.7639;
         inspectorArea.textContent = `${area.toFixed(1)} m² (${sqft.toFixed(0)} sq ft)`;
         inspectorPoints.textContent = `${poly.length} Vertices`;
@@ -786,7 +1012,38 @@ document.addEventListener("DOMContentLoaded", () => {
                 inspectorDoors.textContent = "None detected";
             }
         }
+
+        editRoomName.value = room.label || "";
+        const typeOption = Array.from(editRoomType.options).find(option => option.value === (room.type || "room"));
+        if (!typeOption) editRoomType.add(new Option(room.type || "room", room.type || "room"));
+        editRoomType.value = room.type || "room";
+        [editRoomName, editRoomType, btnSaveRoomEdit, btnDeleteRoom].forEach(control => { control.disabled = false; });
     };
+
+    btnSaveRoomEdit.addEventListener("click", () => {
+        const room = (currentSceneData?.rooms || []).find(item => item.id === selectedRoomId);
+        const name = editRoomName.value.trim();
+        if (!room || !name) {
+            showMessage("Select a room and enter a non-empty room name.", "error");
+            return;
+        }
+        room.label = name.slice(0, 100);
+        room.type = editRoomType.value || "room";
+        refreshEditedScene();
+        showMessage("Room edit saved to the scene. Export scene.json or GLB to keep it.");
+    });
+
+    btnDeleteRoom.addEventListener("click", () => {
+        if (!currentSceneData || !selectedRoomId) return;
+        const deletedId = selectedRoomId;
+        currentSceneData.rooms = currentSceneData.rooms.filter(room => room.id !== deletedId);
+        currentSceneData.doors = (currentSceneData.doors || []).map(door => ({
+            ...door,
+            connects: (door.connects || []).filter(roomId => roomId !== deletedId),
+        })).filter(door => (door.connects || []).length > 0);
+        refreshEditedScene();
+        showMessage("Room removed from the scene. Export scene.json or GLB to keep the edit.", "warning");
+    });
 
     // -------------------------------------------------------------
     // Copy & Download scene.json

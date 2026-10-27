@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://floorplan3d.local/schemas/scene.schema.json",
+  "title": "FloorPlan3D Scene",
+  "type": "object",
+  "required": ["meta", "rooms", "walls", "doors", "windows"],
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": ["source", "imageSize", "metersPerPixel", "wallHeight", "wallThickness"],
+      "properties": {
+        "source": { "type": "string" },
+        "imageSize": {
+          "type": "array", "prefixItems": [{ "type": "integer", "minimum": 1 }, { "type": "integer", "minimum": 1 }],
+          "minItems": 2, "maxItems": 2
+        },
+        "metersPerPixel": { "type": "number", "exclusiveMinimum": 0 },
+        "wallHeight": { "type": "number", "exclusiveMinimum": 0 },
+        "wallThickness": { "type": "number", "exclusiveMinimum": 0 },
+        "floorHeight": { "type": "number", "exclusiveMinimum": 0 },
+        "levelCount": { "type": "integer", "minimum": 1 },
+        "processingMode": { "enum": ["DEMO", "MOCK", "REPLAY", "LIVE"] },
+        "levels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["level", "name"],
+            "properties": {
+              "level": { "type": "integer", "minimum": 0 },
+              "floorIndex": { "type": "integer", "minimum": 0 },
+              "name": { "type": "string" },
+              "elevation": { "type": "number", "minimum": 0 }
+            },
+            "additionalProperties": true
+          }
+        },
+        "warnings": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    },
+    "rooms": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "label", "confidence", "polygon"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "type": { "type": "string", "minLength": 1 },
+          "label": { "type": "string", "minLength": 1 },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "polygon": { "$ref": "#/$defs/polygon" },
+          "centroid": { "$ref": "#/$defs/point" },
+          "area_m2": { "type": "number", "minimum": 0 },
+          "level": { "type": "integer", "minimum": 0 },
+          "floorIndex": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": true
+      }
+    },
+    "walls": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "polygon"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "polygon": { "$ref": "#/$defs/polygon" },
+          "holes": { "type": "array", "items": { "$ref": "#/$defs/polygon" } },
+          "level": { "type": "integer", "minimum": 0 },
+          "floorIndex": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": true
+      }
+    },
+    "doors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "center", "width"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "center": { "$ref": "#/$defs/point" },
+          "width": { "type": "number", "exclusiveMinimum": 0 },
+          "connects": { "type": "array", "items": { "type": "string" } },
+          "level": { "type": "integer", "minimum": 0 },
+          "floorIndex": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": true
+      }
+    },
+    "windows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "center", "width"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "center": { "$ref": "#/$defs/point" },
+          "width": { "type": "number", "exclusiveMinimum": 0 },
+          "level": { "type": "integer", "minimum": 0 },
+          "floorIndex": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "$defs": {
+    "point": {
+      "type": "array", "prefixItems": [{ "type": "number" }, { "type": "number" }],
+      "minItems": 2, "maxItems": 2
+    },
+    "polygon": {
+      "type": "array", "items": { "$ref": "#/$defs/point" }, "minItems": 3
+    }
+  },
+  "additionalProperties": true
+}

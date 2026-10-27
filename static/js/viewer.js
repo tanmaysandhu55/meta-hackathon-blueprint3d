@@ -33,10 +33,13 @@ class FloorPlanViewer {
         this.groups = {
             grid: new THREE.Group(),
             route: new THREE.Group(),
+            measurements: new THREE.Group(),
         };
+        this.groups.measurements.name = "measurements";
         this.floorGroups = new Map();
-        this.floorLayerNames = ["walls", "rooms", "labels", "doors", "windows"];
+        this.floorLayerNames = ["walls", "rooms", "labels", "doors", "windows", "furniture"];
         this.layerVisibility = Object.fromEntries(this.floorLayerNames.map(name => [name, true]));
+        this.layerVisibility.furniture = false;
         this.selectableMeshes = [];
 
         // Scene state & metadata
@@ -57,6 +60,15 @@ class FloorPlanViewer {
         this.loadingGroup = null;
         this.loadingLaser = null;
         this.animatingMeshes = [];
+        this.walkthroughActive = false;
+        this.walkthroughKeys = new Set();
+        this.walkthroughFloorIndex = 0;
+        this.walkthroughYaw = 0;
+        this.walkthroughPitch = 0;
+        this.walkthroughMouseDown = false;
+        this.walkthroughLastPointer = null;
+        this.measurementActive = false;
+        this.measurementPoints = [];
 
         // Room categories use the Bauhaus primary palette plus paper and ink.
         this.roomColors = {
@@ -112,7 +124,20 @@ class FloorPlanViewer {
 
         // 7. Event Listeners
         window.addEventListener("resize", () => this.onWindowResize());
-        window.addEventListener("keydown", (event) => this.panWithArrowKeys(event));
+        window.addEventListener("keydown", (event) => {
+            this.panWithArrowKeys(event);
+            this.onWalkthroughKeyDown(event);
+        });
+        window.addEventListener("keyup", event => this.onWalkthroughKeyUp(event));
+        window.addEventListener("blur", () => this.walkthroughKeys.clear());
+        document.addEventListener("pointerlockchange", () => this.onPointerLockChange());
+        document.addEventListener("mousemove", event => this.onWalkthroughMouseMove(event));
+        this.renderer.domElement.addEventListener("pointerdown", event => this.onWalkthroughPointerDown(event));
+        this.renderer.domElement.addEventListener("pointermove", event => this.onWalkthroughPointerMove(event));
+        this.renderer.domElement.addEventListener("pointerup", () => {
+            this.walkthroughMouseDown = false;
+            this.walkthroughLastPointer = null;
+        });
         this.renderer.domElement.addEventListener("click", (e) => this.onPointerClick(e));
 
         // 8. Start Render Loop
@@ -165,6 +190,8 @@ class FloorPlanViewer {
             return;
         }
 
+        if (this.walkthroughActive) this.toggleWalkthroughMode(false);
+        if (this.measurementActive) this.toggleMeasurementMode(false);
         this.currentSceneData = sceneData;
         this.wallHeight = Number(sceneData.meta.wallHeight) || 3.0;
         this.floorHeight = Number(sceneData.meta.floorHeight) || this.wallHeight;
@@ -197,6 +224,7 @@ class FloorPlanViewer {
         this.buildWalls(sceneData.walls || []);
         this.buildDoors(sceneData.doors || []);
         this.buildWindows(sceneData.windows || []);
+        this.buildFurniture(sceneData.rooms || []);
 
         this.updateVisibleLevels();
         this.refreshSelectableMeshes();
@@ -512,6 +540,7 @@ class FloorPlanViewer {
     }
 
     setVisibleLevel(level) {
+        if (this.walkthroughActive) this.toggleWalkthroughMode(false);
         if (this.currentIsolatedFloor !== null || this.isolationTween) this.restoreFloorIsolation();
         this.visibleLevel = level === null || level === "all" ? null : Number(level);
         this.updateVisibleLevels();
@@ -863,6 +892,93 @@ class FloorPlanViewer {
         ], [0, 0]);
     }
 
+    getPolygonArea(polygon) {
+        if (!polygon || polygon.length < 3) return 0;
+        let twiceArea = 0;
+        polygon.forEach((point, index) => {
+            const next = polygon[(index + 1) % polygon.length];
+            twiceArea += point[0] * next[1] - next[0] * point[1];
+        });
+        return Math.abs(twiceArea) / 2;
+    }
+
+    buildFurniture(rooms) {
+        const materials = {
+            wood: new THREE.MeshStandardMaterial({ color: 0x9a6842, roughness: 0.82 }),
+            fabric: new THREE.MeshStandardMaterial({ color: 0x8794a6, roughness: 0.95 }),
+            ceramic: new THREE.MeshStandardMaterial({ color: 0xe8e8e8, roughness: 0.28 }),
+        };
+        const addBox = (group, material, x, y, z, width, height, depth) => {
+            const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), material);
+            mesh.position.set(x, y, z);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            group.add(mesh);
+            return mesh;
+        };
+        const addDesk = (group, x, z, width, depth) => {
+            addBox(group, materials.wood, x, 0.76, z, width, 0.08, depth);
+            [-1, 1].forEach(sx => [-1, 1].forEach(sz =>
+                addBox(group, materials.wood, x + sx * width * 0.42, 0.37, z + sz * depth * 0.38, 0.06, 0.72, 0.06)
+            ));
+        };
+
+        rooms.forEach(room => {
+            const polygon = room.polygon || [];
+            if (polygon.length < 3) return;
+            const type = String(room.type || "room").toLowerCase();
+            if (["stairs", "stair", "elevator", "corridor", "entrance", "other", "room"].includes(type)) return;
+            const points = polygon.map(point => this.toWorldCoords(point[0], point[1]));
+            const minX = Math.min(...points.map(point => point.x));
+            const maxX = Math.max(...points.map(point => point.x));
+            const minZ = Math.min(...points.map(point => point.z));
+            const maxZ = Math.max(...points.map(point => point.z));
+            const roomWidth = maxX - minX, roomDepth = maxZ - minZ;
+            const [cxPlan, cyPlan] = this.getPolygonCentroid(polygon);
+            const center = this.toWorldCoords(cxPlan, cyPlan);
+            const furniture = new THREE.Group();
+            furniture.name = `furniture_${room.id}`;
+            furniture.userData = { roomId: room.id, floorIndex: this.getItemFloorIndex(room) };
+
+            if (["bedroom", "bed", "hotel_room"].includes(type)) {
+                const bedWidth = Math.min(1.5, roomWidth * 0.48);
+                const bedDepth = Math.min(2.0, roomDepth * 0.58);
+                addBox(furniture, materials.wood, center.x, 0.28, center.z, bedWidth, 0.28, bedDepth);
+                addBox(furniture, materials.fabric, center.x, 0.48, center.z, bedWidth * 0.94, 0.16, bedDepth * 0.9);
+                addBox(furniture, materials.fabric, center.x, 0.62, center.z - bedDepth * 0.32, bedWidth * 0.55, 0.12, bedDepth * 0.18);
+            } else if (["restroom", "bathroom", "toilet"].includes(type)) {
+                const toilet = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.25, 0.36, 16), materials.ceramic);
+                toilet.position.set(center.x, 0.2, center.z);
+                toilet.castShadow = true;
+                furniture.add(toilet);
+                addBox(furniture, materials.ceramic, center.x, 0.55, center.z - 0.34, 0.36, 0.55, 0.16);
+            } else if (["living_room", "lounge", "lounge_room"].includes(type)) {
+                const sofaWidth = Math.min(1.8, roomWidth * 0.5);
+                addBox(furniture, materials.fabric, center.x, 0.35, center.z - roomDepth * 0.18, sofaWidth, 0.55, 0.55);
+                addBox(furniture, materials.fabric, center.x, 0.72, center.z - roomDepth * 0.39, sofaWidth, 0.32, 0.14);
+                addDesk(furniture, center.x, center.z + roomDepth * 0.2, Math.min(0.8, roomWidth * 0.28), 0.45);
+            } else if (["kitchen", "dining_room", "dining"].includes(type)) {
+                addDesk(furniture, center.x, center.z, Math.min(1.2, roomWidth * 0.48), Math.min(0.75, roomDepth * 0.32));
+            } else {
+                const deskCount = type === "classroom" || type === "lab" ? 2 : 1;
+                const deskWidth = Math.min(1.0, roomWidth * 0.25);
+                const deskDepth = Math.min(0.55, roomDepth * 0.2);
+                for (let index = 0; index < deskCount; index++) {
+                    const offset = (index - (deskCount - 1) / 2) * Math.min(1.4, roomWidth * 0.35);
+                    addDesk(furniture, center.x + offset, center.z, deskWidth, deskDepth);
+                }
+            }
+            this.getFloorLayer(this.getItemFloorIndex(room), "furniture")?.add(furniture);
+        });
+        const usedMaterials = new Set();
+        this.floorGroups.forEach(floorGroup => {
+            floorGroup.getObjectByName("furniture")?.traverse(object => {
+                if (object.material) usedMaterials.add(object.material);
+            });
+        });
+        Object.values(materials).forEach(material => { if (!usedMaterials.has(material)) material.dispose(); });
+    }
+
     /**
      * Creates an architectural text badge sprite using an HTML5 2D canvas.
      */
@@ -1126,6 +1242,12 @@ class FloorPlanViewer {
         this.raycaster.setFromCamera(this.mouse, this.camera);
         const intersects = this.raycaster.intersectObjects(this.selectableMeshes, false);
 
+        if (this.measurementActive) {
+            if (intersects.length) this.handleMeasurementClick(intersects[0]);
+            else this.onMeasurementUpdate?.("Click a visible floor or wall surface to measure.");
+            return;
+        }
+
         if (!intersects.length) {
             this.restoreFloorIsolation();
             return;
@@ -1170,6 +1292,7 @@ class FloorPlanViewer {
      * Camera View Presets
      */
     setPerspectiveView() {
+        if (this.walkthroughActive) this.toggleWalkthroughMode(false);
         this.is2DMode = false;
         this.isEyeLevelView = false;
         const width = Math.max(this.bounds ? this.bounds.width : 16, 1);
@@ -1218,6 +1341,7 @@ class FloorPlanViewer {
     }
 
     setTopDownView() {
+        if (this.walkthroughActive) this.toggleWalkthroughMode(false);
         this.is2DMode = true;
         this.isEyeLevelView = false;
         const span = Math.max(this.bounds ? this.bounds.width : 20, this.bounds ? this.bounds.height : 20, 20);
@@ -1228,6 +1352,7 @@ class FloorPlanViewer {
     }
 
     setEyeLevelView() {
+        if (this.walkthroughActive) this.toggleWalkthroughMode(false);
         this.is2DMode = false;
         this.isEyeLevelView = true;
 
@@ -1423,7 +1548,7 @@ class FloorPlanViewer {
     }
 
     panWithArrowKeys(event) {
-        if (!this.camera || !this.controls || event.altKey || event.ctrlKey || event.metaKey) return;
+        if (this.walkthroughActive || !this.camera || !this.controls || event.altKey || event.ctrlKey || event.metaKey) return;
         if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
 
         const target = event.target;
@@ -1469,6 +1594,219 @@ class FloorPlanViewer {
         this.refreshSelectableMeshes();
     }
 
+    toggleWalkthroughMode(forceState) {
+        const enable = forceState === undefined ? !this.walkthroughActive : Boolean(forceState);
+        if (enable === this.walkthroughActive) return this.walkthroughActive;
+        if (!enable) {
+            this.walkthroughActive = false;
+            this.walkthroughKeys.clear();
+            this.walkthroughMouseDown = false;
+            this.walkthroughPointerLocked = false;
+            if (this.controls) this.controls.enabled = true;
+            this.container.classList.remove("walkthrough-active");
+            if (document.pointerLockElement === this.renderer.domElement) document.exitPointerLock();
+            this.setPerspectiveView();
+            if (this.onWalkthroughChange) this.onWalkthroughChange(false);
+            return false;
+        }
+
+        const rooms = this.currentSceneData?.rooms || [];
+        if (!rooms.length) return false;
+        const allowedRooms = this.visibleLevel === null
+            ? rooms
+            : rooms.filter(room => this.getItemFloorIndex(room) === this.visibleLevel);
+        const preferred = allowedRooms.filter(room => ["corridor", "entrance"].includes(String(room.type || "").toLowerCase()));
+        const candidates = preferred.length ? preferred : allowedRooms;
+        const room = candidates.slice().sort((a, b) => this.getPolygonArea(b.polygon) - this.getPolygonArea(a.polygon))[0];
+        if (!room) return false;
+
+        const [planX, planY] = this.getPolygonCentroid(room.polygon || []);
+        const world = this.toWorldCoords(planX, planY);
+        this.walkthroughFloorIndex = this.getItemFloorIndex(room);
+        this.walkthroughYaw = 0;
+        this.walkthroughPitch = 0;
+        this.camera.position.set(world.x, this.getLevelElevation(this.walkthroughFloorIndex) + 1.6, world.z);
+        this.camera.rotation.order = "YXZ";
+        this.camera.rotation.set(0, this.walkthroughYaw, 0);
+        this.is2DMode = false;
+        this.isEyeLevelView = true;
+        this.walkthroughActive = true;
+        this.walkthroughPointerLocked = false;
+        this.controls.enabled = false;
+        this.container.classList.add("walkthrough-active");
+        this.camera.updateMatrixWorld();
+        this.updateRoomLabelVisibility(1 / 60);
+        if (this.onWalkthroughChange) this.onWalkthroughChange(true);
+        try {
+            const request = this.renderer.domElement.requestPointerLock?.();
+            if (request && typeof request.catch === "function") request.catch(() => {});
+        } catch (_error) {
+            // Mouse drag fallback remains available when pointer lock is denied.
+        }
+        return true;
+    }
+
+    onPointerLockChange() {
+        if (!this.walkthroughActive) return;
+        const hasLock = document.pointerLockElement === this.renderer.domElement;
+        if (hasLock) {
+            this.walkthroughPointerLocked = true;
+            return;
+        }
+        if (this.walkthroughPointerLocked) this.toggleWalkthroughMode(false);
+    }
+
+    onWalkthroughMouseMove(event) {
+        if (!this.walkthroughActive) return;
+        const locked = document.pointerLockElement === this.renderer.domElement;
+        if (!locked) return;
+        this.applyWalkthroughLook(event.movementX, event.movementY);
+    }
+
+    onWalkthroughPointerDown(event) {
+        if (!this.walkthroughActive) return;
+        this.walkthroughMouseDown = true;
+        this.walkthroughLastPointer = [event.clientX, event.clientY];
+        try { this.renderer.domElement.setPointerCapture(event.pointerId); } catch (_error) {}
+    }
+
+    onWalkthroughPointerMove(event) {
+        if (!this.walkthroughActive || !this.walkthroughMouseDown
+            || document.pointerLockElement === this.renderer.domElement || !this.walkthroughLastPointer) return;
+        const deltaX = event.clientX - this.walkthroughLastPointer[0];
+        const deltaY = event.clientY - this.walkthroughLastPointer[1];
+        this.walkthroughLastPointer = [event.clientX, event.clientY];
+        this.applyWalkthroughLook(deltaX, deltaY);
+    }
+
+    applyWalkthroughLook(deltaX, deltaY) {
+        this.walkthroughYaw -= deltaX * 0.0025;
+        this.walkthroughPitch = THREE.MathUtils.clamp(
+            this.walkthroughPitch - deltaY * 0.002,
+            -Math.PI / 2 + 0.05,
+            Math.PI / 2 - 0.05
+        );
+        this.camera.rotation.set(this.walkthroughPitch, this.walkthroughYaw, 0, "YXZ");
+    }
+
+    onWalkthroughKeyDown(event) {
+        if (!this.walkthroughActive) return;
+        const key = event.key.toLowerCase();
+        if (!["w", "a", "s", "d", "shift"].includes(key)) return;
+        const target = event.target;
+        if (target && (target.isContentEditable || ["input", "textarea", "select"].includes(target.tagName?.toLowerCase()))) return;
+        event.preventDefault();
+        this.walkthroughKeys.add(key);
+    }
+
+    onWalkthroughKeyUp(event) {
+        this.walkthroughKeys.delete(event.key.toLowerCase());
+    }
+
+    updateWalkthrough(deltaSeconds) {
+        if (!this.walkthroughActive || !this.walkthroughKeys.size) return;
+        const forward = new THREE.Vector3(-Math.sin(this.walkthroughYaw), 0, -Math.cos(this.walkthroughYaw));
+        const right = new THREE.Vector3(-forward.z, 0, forward.x);
+        const movement = new THREE.Vector3();
+        if (this.walkthroughKeys.has("w")) movement.add(forward);
+        if (this.walkthroughKeys.has("s")) movement.sub(forward);
+        if (this.walkthroughKeys.has("d")) movement.add(right);
+        if (this.walkthroughKeys.has("a")) movement.sub(right);
+        if (movement.lengthSq() === 0) return;
+        movement.normalize().multiplyScalar((this.walkthroughKeys.has("shift") ? 5 : 2.5) * Math.min(deltaSeconds, 0.05));
+        const currentX = this.camera.position.x, currentZ = this.camera.position.z;
+        const nextX = currentX + movement.x, nextZ = currentZ + movement.z;
+        if (!this.isWalkPositionBlocked(nextX, nextZ)) {
+            this.camera.position.x = nextX;
+            this.camera.position.z = nextZ;
+        } else if (!this.isWalkPositionBlocked(nextX, currentZ)) {
+            this.camera.position.x = nextX;
+        } else if (!this.isWalkPositionBlocked(currentX, nextZ)) {
+            this.camera.position.z = nextZ;
+        }
+    }
+
+    isWalkPositionBlocked(worldX, worldZ) {
+        const px = worldX + this.centerOffset.x;
+        const py = worldZ + this.centerOffset.y;
+        const radius = 0.16;
+        const withinDoorOpening = (this.currentSceneData?.doors || []).some(door => {
+            if (this.getItemFloorIndex(door) !== this.walkthroughFloorIndex || !door.center) return false;
+            const openingRadius = Math.max(radius, Number(door.width || 0.8) / 2) + radius;
+            return Math.hypot(px - door.center[0], py - door.center[1]) <= openingRadius;
+        });
+        if (withinDoorOpening) return false;
+        const pointSegmentDistance = (point, a, b) => {
+            const dx = b[0] - a[0], dy = b[1] - a[1];
+            const lengthSq = dx * dx + dy * dy;
+            const t = lengthSq ? THREE.MathUtils.clamp(((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / lengthSq, 0, 1) : 0;
+            return Math.hypot(point[0] - (a[0] + t * dx), point[1] - (a[1] + t * dy));
+        };
+        return (this.currentSceneData?.walls || []).some(wall => {
+            if (this.getItemFloorIndex(wall) !== this.walkthroughFloorIndex) return false;
+            const polygon = wall.polygon || [];
+            if (polygon.length < 3) return false;
+            const pointInsideRing = ring => {
+                let inside = false;
+                for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+                    const a = ring[i], b = ring[j];
+                    if (((a[1] > py) !== (b[1] > py))
+                        && px < (b[0] - a[0]) * (py - a[1]) / ((b[1] - a[1]) || 1e-9) + a[0]) inside = !inside;
+                    if (pointSegmentDistance([px, py], a, b) < radius) return true;
+                }
+                return inside;
+            };
+            if (pointInsideRing(polygon)) {
+                // Segmentation can represent a doorway as a hole in a wall mask.
+                const inOpening = (wall.holes || []).some(hole => hole.length >= 3 && pointInsideRing(hole));
+                return !inOpening;
+            }
+            return false;
+        });
+    }
+
+    toggleMeasurementMode(forceState) {
+        this.measurementActive = forceState === undefined ? !this.measurementActive : Boolean(forceState);
+        if (this.measurementActive) this.onMeasurementUpdate?.("Click a first floor or wall point in the 3D view.");
+        if (this.onMeasurementModeChange) this.onMeasurementModeChange(this.measurementActive);
+        return this.measurementActive;
+    }
+
+    clearMeasurement() {
+        const group = this.groups.measurements;
+        while (group?.children.length) {
+            const object = group.children[0];
+            this.disposeObjectResources(object);
+            group.remove(object);
+        }
+        this.measurementPoints = [];
+    }
+
+    addMeasurementMarker(point) {
+        const marker = new THREE.Mesh(
+            new THREE.SphereGeometry(0.08, 12, 8),
+            new THREE.MeshStandardMaterial({ color: 0xf0c020, emissive: 0xf0c020, emissiveIntensity: 0.5 })
+        );
+        marker.position.copy(point);
+        this.groups.measurements.add(marker);
+    }
+
+    handleMeasurementClick(intersection) {
+        if (this.measurementPoints.length >= 2) this.clearMeasurement();
+        const point = intersection.point.clone();
+        this.measurementPoints.push(point);
+        this.addMeasurementMarker(point);
+        if (this.measurementPoints.length === 1) {
+            this.onMeasurementUpdate?.("First point set. Click a second point.");
+            return;
+        }
+        const [start, end] = this.measurementPoints;
+        const geometry = new THREE.BufferGeometry().setFromPoints([start, end]);
+        const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: 0xf0c020, depthTest: false }));
+        this.groups.measurements.add(line);
+        this.onMeasurementUpdate?.(`Distance: ${start.distanceTo(end).toFixed(2)} m · click again to start another measurement.`);
+    }
+
     /**
      * Exports the rendered 3D architectural scene as a standard binary .GLB file.
      * Can be opened in Blender, Windows 3D Viewer, Unity, Unreal Engine, etc.
@@ -1482,8 +1820,11 @@ class FloorPlanViewer {
         // Build a clean export container including walls, floors, doors, and windows
         const exportScene = new THREE.Scene();
         this.floorGroups.forEach(floorGroup => {
-            ["walls", "rooms", "doors", "windows"].forEach(layerName => {
-                floorGroup.getObjectByName(layerName).children.forEach(child => {
+            ["walls", "rooms", "doors", "windows", "furniture"].forEach(layerName => {
+                if (layerName === "furniture" && !this.layerVisibility.furniture) return;
+                const layer = floorGroup.getObjectByName(layerName);
+                if (!layer) return;
+                layer.children.forEach(child => {
                     if (child.isMesh || child.isGroup) exportScene.add(child.clone(true));
                 });
             });
@@ -1631,11 +1972,12 @@ class FloorPlanViewer {
             this.updateFloorIsolation(now);
             this.animate();
         });
-        if (this.controls) this.controls.update();
-        this.camera?.updateMatrixWorld();
+        if (this.controls && !this.walkthroughActive) this.controls.update();
         const now = performance.now();
         const deltaSeconds = this.lastLabelUpdateTime ? (now - this.lastLabelUpdateTime) / 1000 : 1 / 60;
         this.lastLabelUpdateTime = now;
+        this.updateWalkthrough(deltaSeconds);
+        this.camera?.updateMatrixWorld();
         this.updateRoomLabelVisibility(deltaSeconds);
         if (this.activeRouteTexture) {
             this.activeRouteTexture.offset.x = (this.activeRouteTexture.offset.x - 0.006) % 1;

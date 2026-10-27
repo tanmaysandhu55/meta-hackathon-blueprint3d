@@ -1,0 +1,13 @@
+.git
+.github
+pytest.ini
+tests
+.venv
+venv
+__pycache__
+*.py[cod]
+.env
+recorded_sam_responses
+.pytest_cache
+.idea
+.vscode

@@ -11,7 +11,7 @@ FloorPlan3D turns a 2D floor-plan image into a metric `scene.json` and a navigab
 - **Room labels:** uses the configured Modal classifier or Fireworks fallback. If neither returns usable labels, rooms stay generic and `scene.meta.warnings` explains the fallback.
 - **Viewer:** renders floors, extruded walls, doors, windows, labels, shadows, cutaway height, room selection and focus, door-based shortest routes, scene JSON, and GLB export.
 
-First-person walkthrough and robust segmentation across varied plans are not implemented yet. Room focus and routing depend on detected geometry and door connections, so they may be unavailable or inaccurate on some plans. Door and window positions are simplified markers; wall fallback geometry is an approximation. The multi-story scene format is supported, but live uploads are still interpreted as a single floor unless the input and processing pipeline provide per-level geometry.
+The viewer includes WASD first-person walkthrough with mouse look and approximate collision against detected wall polygons, 3D point-to-point measurement, two-point scale calibration, room/total area summaries, editable room labels/types, JSON/GLB export, and optional primitive furniture. Segmentation, geometry, and collision quality still depend on the uploaded drawing; the prepared multi-story demo is illustrative rather than an AI-generated multi-floor reconstruction.
 
 ## Architecture
 
@@ -35,8 +35,8 @@ Room labeling sends the plan image and room candidates to Muse Spark through Mod
 
 ## Run the offline demo now
 
-1. Install Python 3.11 or newer.
-2. In PowerShell, create a project environment and install the dependencies. If your Python is installed somewhere else, replace the interpreter path with that Python 3.11+ executable:
+1. Install Python 3.12 or newer.
+2. In PowerShell, create a project environment and install the dependencies. If your Python is installed somewhere else, replace the interpreter path with that Python 3.12+ executable:
 
    ```powershell
    & "$env:LOCALAPPDATA\Programs\Python\Python314\python.exe" -m venv .venv
@@ -47,9 +47,17 @@ Room labeling sends the plan image and room candidates to Muse Spark through Mod
 4. Open `http://127.0.0.1:5000` and choose **Load Hackathon Demo Plan**.
 5. Try room focus and routing, room selection, the 2D overlay and scene JSON tabs, cutaway view, and GLB export.
 
-Use the same interpreter for installation and startup. On some Windows setups, `python` can point to a separate distribution that does not have the packages installed.
+Use the same interpreter for installation and startup. On some Windows setups, `python` can point to a separate distribution that does not have the packages installed. Dependencies are pinned in `requirements.txt`; run tests with `python -m pytest -q`.
 
-The page shows **Offline demo mode** when no SAM credentials are configured. It disables live processing, but does not disable the prepared demo. Placeholder values in `.env.example` are blank so they cannot accidentally enable live processing.
+The page labels prepared scenes as **DEMO**, `MOCK_SAM=1` results as **MOCK MODE**, replayed provider payloads as **REPLAY MODE**, and only configured provider inference as **LIVE**. Mock processing always uses the bundled prepared plan and explicitly states that uploaded pixels were not analyzed. The mock path needs no provider keys. Placeholder values in `.env.example` are blank so they cannot accidentally enable live processing.
+
+## Mock, record, and replay the SAM pipeline
+
+Set `MOCK_SAM=1` in `.env` and restart the app to exercise the upload/job/geometry/UI path with realistic masks derived from the bundled sample. Mock results are clearly labeled and never represented as live results. The uploaded image is not used to produce the mock scene.
+
+When Baseten credentials are configured, `RECORD_SAM_RESPONSES=1` stores each raw response in `recorded_sam_responses/`, keyed to the image and concept. That folder is gitignored. To reuse those payloads without contacting Baseten, set `REPLAY_SAM_RESPONSES=1` and `MOCK_SAM=0`; mock takes precedence if both are enabled. Replay requires the exact same normalized image and concept prompts to find a recording. Replay covers the four SAM calls; room labeling uses its deterministic offline fallback.
+
+Four SAM concepts run concurrently with up to two retries for transient network/5xx failures and a total job budget controlled by `SAM_JOB_TIMEOUT_SECONDS` (default 180 seconds). The provider image is capped at 2048 pixels on its longest side and binary masks are resized back before geometry processing. Wall, door, and window failures add warnings; room segmentation failure stops the job. Upload concurrency is capped at two jobs and `/api/upload` allows ten requests per client IP per minute. Jobs and their results are held in memory and are lost when the server restarts.
 
 ## Configure live processing when your keys arrive
 
@@ -71,9 +79,18 @@ MODAL_MUSE_SPARK_MODEL=
 FIREWORKS_API_KEY=
 ```
 
-Keep `.env` private and never put keys in source files, screenshots, or commits. Restart Flask after editing `.env`. The page should then show **Live processing configured**. This confirms the Baseten key and endpoint settings are present; it does not confirm that the deployment is reachable or that its request/response schema matches the adapter. If no classifier is configured, processing still produces a scene with generic labels and a warning.
+Keep `.env` private and never put keys in source files, screenshots, or commits. Restart Flask after editing `.env`. The page should then show **Live processing configured**. This confirms the Baseten key and endpoint settings are present; it does not confirm that the deployment is reachable or that its request/response schema matches the adapter. If no classifier is configured, processing still produces a scene with generic labels and a warning. Safe error categories are returned to the browser; provider response bodies and credentials remain in server logs only.
 
 Live uploads use `POST /api/upload`, `GET /api/status/<job_id>`, and `GET /api/scene/<job_id>`. Uploads are limited to 10 MB and 20 megapixels. Supported formats are PNG, JPG, and WebP.
+
+## Container run
+
+Build and run with Docker, publishing port 8080. The image serves the app using Waitress. Keep .env out of the image; pass secrets through your deployment's environment configuration.
+
+```sh
+docker build -t floorplan3d .
+docker run --rm -p 8080:8080 --env-file .env floorplan3d
+```
 
 ## Scale and geometry notes
 
@@ -83,7 +100,7 @@ Coordinates in `scene.json` are meters, with the source plan’s top-left as ori
 
 ## Demo rehearsal
 
-See [DEMO.md](DEMO.md) for a two-minute flow and recovery steps. Use the built-in sample if live keys or provider availability are uncertain. Describe the sample as prepared demo data, and live-upload results as model-assisted estimates.
+See [DEMO.md](DEMO.md) for a two-minute flow and recovery steps. Use the built-in sample or mock pipeline if keys or providers are unavailable. Describe demo/mock/replay results using their visible labels; live-upload results are model-assisted estimates.
 
 ## Project files
 

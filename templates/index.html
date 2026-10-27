@@ -44,7 +44,7 @@
     <!-- Pinned Three.js GLTFExporter via CDN (jsdelivr) -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js"></script>
 </head>
-<body data-live-ready="{{ 'true' if live_ready else 'false' }}" class="h-screen flex flex-col overflow-hidden bg-bauhaus-paper font-sans antialiased text-bauhaus-ink">
+<body data-processing-ready="{{ 'true' if processing_ready else 'false' }}" data-processing-mode="{{ processing_mode }}" class="h-screen flex flex-col overflow-hidden bg-bauhaus-paper font-sans antialiased text-bauhaus-ink">
 
     <!-- Top Header Bar -->
     <header class="bauhaus-header z-20 flex h-16 shrink-0 items-center justify-between border-b-4 border-bauhaus-ink bg-bauhaus-paper px-4 text-bauhaus-ink sm:px-6">
@@ -62,8 +62,11 @@
             </div>
         </div>
 
-        <div class="status-badge border-2 border-bauhaus-ink px-3 py-1.5 text-xs font-bold uppercase tracking-wider {% if live_ready %}is-live{% else %}is-offline{% endif %}">
-            {% if live_ready %}Live processing configured{% else %}Offline demo mode{% endif %}
+        <div class="flex items-center gap-2">
+        <div id="processing-mode-badge" class="hidden rounded-none border-2 border-bauhaus-ink bg-bauhaus-yellow px-3 py-1.5 text-xs font-black uppercase tracking-wider" role="status" aria-live="polite"></div>
+        <div class="status-badge border-2 border-bauhaus-ink px-3 py-1.5 text-xs font-bold uppercase tracking-wider {% if processing_mode == 'LIVE' %}is-live{% else %}is-offline{% endif %}">
+            {% if processing_mode == 'MOCK' %}Mock pipeline ready{% elif processing_mode == 'REPLAY' %}Replay pipeline ready{% elif processing_mode == 'LIVE' %}Live processing configured{% else %}Offline demo mode{% endif %}
+        </div>
         </div>
     </header>
 
@@ -87,7 +90,16 @@
                     </p>
                 </div>
 
-                {% if not live_ready %}
+                <section id="area-summary-panel" class="bauhaus-card geo-blue space-y-2 rounded-none border-2 border-bauhaus-ink bg-white p-4" aria-labelledby="area-summary-title">
+                    <h2 id="area-summary-title" class="text-xs font-semibold uppercase tracking-wider">Area Summary</h2>
+                    <p id="area-summary-total" class="font-mono text-sm">Load a plan to calculate areas.</p>
+                    <details>
+                        <summary class="cursor-pointer text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Per-room areas</summary>
+                        <ul id="area-summary-rooms" class="mt-2 max-h-48 space-y-1 overflow-y-auto text-xs"></ul>
+                    </details>
+                </section>
+
+                {% if not processing_ready %}
                 <div class="bauhaus-warning rounded-none border-2 border-bauhaus-ink bg-bauhaus-yellow p-3 text-xs leading-relaxed text-bauhaus-ink">
                     <strong class="block mb-1">Live AI is not configured yet</strong>
                     Use the built-in demo for now. When your keys arrive, add the SAM key and endpoint settings to <code>.env</code>, then restart the app to enable live uploads.
@@ -196,7 +208,7 @@
                 <!-- 4. Generate Button & Progress -->
                 <div>
                     <button id="btn-generate" type="button" disabled class="flex w-full items-center justify-center gap-2 rounded-none border border-bauhaus-ink bg-bauhaus-red px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-[4px_4px_0px_0px_#121212] transition-colors duration-150 ease-in-out hover:bg-bauhaus-red active:scale-95 disabled:cursor-not-allowed disabled:opacity-40">
-                        <span>{% if live_ready %}🚀 Process with AI{% else %}🔒 Live AI unavailable{% endif %}</span>
+                        <span>{% if processing_mode == 'MOCK' %}🧪 Run Mock Pipeline{% elif processing_mode == 'REPLAY' %}📼 Run SAM Replay{% elif processing_ready %}🚀 Process with AI{% else %}🔒 Live AI unavailable{% endif %}</span>
                     </button>
 
                     <!-- Progress Bar -->
@@ -236,6 +248,10 @@
                             <input id="chk-grid" type="checkbox" checked class="rounded-none border-bauhaus-ink bg-white text-bauhaus-blue focus:ring-bauhaus-red">
                             <span>1-Meter Architectural Grid</span>
                         </label>
+                        <label class="flex items-center space-x-2 cursor-pointer col-span-2">
+                            <input id="chk-furniture" type="checkbox" class="rounded-none border-bauhaus-ink bg-white text-bauhaus-blue focus:ring-bauhaus-red">
+                            <span>Furniture & Props</span>
+                        </label>
                     </div>
                 </div>
 
@@ -273,6 +289,16 @@
                             <div class="flex justify-between">
                                 <span class="text-bauhaus-ink">Connected Doors:</span>
                                 <span id="inspector-doors" class="font-mono text-bauhaus-ink">d1, d2</span>
+                            </div>
+                            <label for="edit-room-name" class="block pt-2 font-semibold">Room name</label>
+                            <input id="edit-room-name" type="text" maxlength="100" class="w-full rounded-none border border-bauhaus-ink bg-white px-2 py-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red" disabled>
+                            <label for="edit-room-type" class="block font-semibold">Room type</label>
+                            <select id="edit-room-type" class="w-full rounded-none border border-bauhaus-ink bg-white px-2 py-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red" disabled>
+                                <option>classroom</option><option>lab</option><option>corridor</option><option>restroom</option><option>stairs</option><option>elevator</option><option>entrance</option><option>bedroom</option><option>office</option><option>kitchen</option><option>living_room</option><option>room</option><option>other</option>
+                            </select>
+                            <div class="flex gap-2 pt-1">
+                                <button id="btn-save-room-edit" type="button" class="flex-1 rounded-none border border-bauhaus-ink bg-bauhaus-blue px-2 py-1.5 text-xs font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red" disabled>Save edit</button>
+                                <button id="btn-delete-room" type="button" class="rounded-none border border-bauhaus-ink bg-bauhaus-red px-2 py-1.5 text-xs font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red" disabled>Delete room</button>
                             </div>
                         </div>
                     </div>
@@ -313,6 +339,12 @@
                     <button id="btn-view-eye" title="Eye-Level Orbit" class="viewport-control rounded-none px-2.5 py-1 text-bauhaus-ink transition-colors duration-150 ease-in-out">
                         Eye Level
                     </button>
+                    <button id="btn-walkthrough" type="button" aria-label="Toggle first-person walkthrough" aria-pressed="false" title="Walk with WASD; move mouse to look" class="viewport-control rounded-none px-2.5 py-1 text-bauhaus-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">
+                        Walkthrough
+                    </button>
+                    <button id="btn-measure" type="button" aria-label="Toggle 3D measurement tool" aria-pressed="false" title="Click two floor or wall points to measure" class="viewport-control rounded-none px-2.5 py-1 text-bauhaus-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">
+                        Measure
+                    </button>
                     <button id="btn-cutaway" title="Cut walls to 1.1m to view room interiors" class="viewport-control rounded-none px-2.5 py-1 text-bauhaus-ink transition-colors duration-150 ease-in-out">
                         Cutaway View
                     </button>
@@ -330,7 +362,11 @@
 
                 <!-- Tab 1: 3D Interactive Map (Three.js WebGL Canvas) -->
                 <div id="tab-3d" class="tab-panel relative h-full w-full">
-                    <div id="threejs-canvas-container" class="w-full h-full"></div>
+                    <div id="threejs-canvas-container" class="w-full h-full" tabindex="0" role="application" aria-label="Interactive 3D floor plan. Use mouse to orbit, arrow keys to pan, or enable walkthrough with WASD."></div>
+
+                    <div id="measurement-panel" class="glass-panel absolute right-4 top-4 hidden rounded-none border-2 border-bauhaus-ink bg-white p-3 text-xs" role="status" aria-live="polite">
+                        <div class="flex items-center gap-3"><span id="measurement-status">Click a first point to measure.</span><button id="btn-clear-measurement" type="button" aria-label="Clear current measurement" class="border border-bauhaus-ink px-2 py-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Clear</button></div>
+                    </div>
 
                     <!-- Overlay Legend & Controls Guide -->
                     <div class="glass-panel bauhaus-overlay pointer-events-auto absolute bottom-4 left-4 space-y-1.5 rounded-none border-2 border-bauhaus-ink bg-white p-3 text-[11px] text-bauhaus-ink shadow-2xl">
@@ -355,6 +391,14 @@
                 <!-- Tab 2: 2D AI Segmentation (Canvas Overlay) -->
                 <div id="tab-2d" class="tab-panel hidden h-full w-full flex-col items-center justify-center overflow-auto bg-bauhaus-muted p-6">
                     <div class="max-w-4xl w-full flex flex-col items-center space-y-3">
+                        <div class="w-full flex flex-wrap items-center gap-2 rounded-none border-2 border-bauhaus-ink bg-white p-3 text-xs" aria-label="Scale calibration controls">
+                            <button id="btn-calibrate-scale" type="button" aria-pressed="false" class="rounded-none border border-bauhaus-ink bg-bauhaus-blue px-3 py-1.5 font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Pick two points</button>
+                            <label for="known-length" class="font-semibold">Known length (m)</label>
+                            <input id="known-length" type="number" min="0.01" max="10000" step="0.01" value="1" class="w-24 rounded-none border border-bauhaus-ink px-2 py-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">
+                            <button id="btn-apply-scale" type="button" class="rounded-none border border-bauhaus-ink bg-bauhaus-yellow px-3 py-1.5 font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red" disabled>Apply scale</button>
+                            <button id="btn-cancel-scale" type="button" class="rounded-none border border-bauhaus-ink bg-white px-3 py-1.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Cancel</button>
+                            <span id="scale-calibration-status" class="text-bauhaus-ink" aria-live="polite">Use two points on a known length to recalibrate.</span>
+                        </div>
                         <div class="w-full flex items-center justify-between text-xs text-bauhaus-ink">
                             <span>Floor plan with detected room, wall, door, and window geometry</span>
                         <span id="overlay-scale" class="text-bauhaus-blue">Scale: 0.020 m/px</span>

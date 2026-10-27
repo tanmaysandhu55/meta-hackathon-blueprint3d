@@ -19,8 +19,13 @@ Implements external REST API integrations for Meta models without any local GPU 
 """
 
 import logging
+import hashlib
 import os
 import json
+import socket
+import time
+import tempfile
+from pathlib import Path
 import urllib.request
 import urllib.error
 import cv2
@@ -31,6 +36,64 @@ from openai import OpenAI
 # Load configuration from .env
 load_dotenv()
 logger = logging.getLogger(__name__)
+
+
+class ProviderError(RuntimeError):
+    """Provider failure with a safe message suitable for the browser."""
+
+    SAFE_MESSAGES = {
+        "timeout": "The AI provider timed out. Try again or use mock/replay mode.",
+        "auth": "The configured AI provider rejected authentication. Check the key and endpoint access.",
+        "schema": "The AI provider returned an unsupported response format.",
+        "down": "The AI provider is temporarily unavailable. Try again later.",
+        "request": "The AI provider rejected the request. Check the endpoint and model settings.",
+        "replay": "No recorded SAM response matches this image and concept. Record the request first.",
+        "configuration": "The AI provider is not configured. Check its endpoint and credentials.",
+        "budget": "The processing time limit was reached. Try a smaller image or retry later.",
+    }
+
+    def __init__(self, category, detail=None):
+        self.category = category
+        self.safe_message = self.SAFE_MESSAGES.get(category, self.SAFE_MESSAGES["down"])
+        super().__init__(detail or self.safe_message)
+
+
+def is_mock_sam_enabled():
+    return os.environ.get("MOCK_SAM", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def is_sam_replay_enabled():
+    return os.environ.get("REPLAY_SAM_RESPONSES", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _sam_record_path(b64_data_url, concept):
+    digest = hashlib.sha256(b64_data_url.encode("utf-8")).hexdigest()
+    folder = Path(os.environ.get("SAM_RESPONSE_DIR", Path(__file__).resolve().parent / "recorded_sam_responses"))
+    return folder / f"{digest}_{concept}.json"
+
+
+def _read_recorded_sam_response(b64_data_url, concept):
+    path = _sam_record_path(b64_data_url, concept)
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise ProviderError("replay", f"No recorded SAM response at {path}.") from exc
+    except OSError as exc:
+        raise ProviderError("replay", f"Could not read recorded SAM response: {exc}") from exc
+
+
+def _record_sam_response(b64_data_url, concept, response_text):
+    if os.environ.get("RECORD_SAM_RESPONSES", "0").strip().lower() not in {"1", "true", "yes", "on"}:
+        return
+    path = _sam_record_path(b64_data_url, concept)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, suffix=".tmp", delete=False) as temp_file:
+            temp_file.write(response_text)
+            temp_path = Path(temp_file.name)
+        os.replace(temp_path, path)
+    except OSError:
+        logger.exception("Could not record raw SAM response for concept %s", concept)
 
 
 def is_configured_value(value):
@@ -63,7 +126,7 @@ def get_baseten_config():
     }
 
 
-def query_baseten_sam(b64_data_url, concept, image_size):
+def query_baseten_sam(b64_data_url, concept, image_size, timeout=60):
     """
     Sends the floor plan image and a concept noun phrase (e.g. 'room', 'wall', 'door', 'window')
     to the configured Baseten production prediction URL for SAM 3.1.
@@ -72,11 +135,6 @@ def query_baseten_sam(b64_data_url, concept, image_size):
       List of 2D binary numpy arrays (uint8, values 0 or 255) for each detected instance.
     """
     config = get_baseten_config()
-    if not config["is_configured"]:
-        raise ValueError(
-            "Baseten SAM 3.1 is not fully configured. Please set BASETEN_API_KEY and "
-            "BASETEN_SAM_URL (or BASETEN_MODEL_ID) in your .env file."
-        )
 
     img_w, img_h = image_size
 
@@ -90,26 +148,64 @@ def query_baseten_sam(b64_data_url, concept, image_size):
         }
     }
 
-    req_data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        config["endpoint_url"],
-        data=req_data,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Api-Key {config['api_key']}",
-        },
-        method="POST"
-    )
+    if is_sam_replay_enabled():
+        res_body = _read_recorded_sam_response(b64_data_url, concept)
+    else:
+        if not config["is_configured"]:
+            raise ProviderError("configuration", "Baseten SAM is not configured.")
+        req_data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            config["endpoint_url"],
+            data=req_data,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Api-Key {config['api_key']}",
+            },
+            method="POST"
+        )
+
+        deadline = time.monotonic() + max(1.0, float(timeout))
+        res_body = None
+        for attempt in range(3):  # initial request plus at most two retries
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ProviderError("timeout", "SAM provider request budget expired.")
+            try:
+                with urllib.request.urlopen(req, timeout=min(60.0, remaining)) as response:
+                    res_body = response.read().decode("utf-8")
+                break
+            except urllib.error.HTTPError as http_err:
+                status = http_err.code
+                if status in (401, 403):
+                    raise ProviderError("auth", f"Baseten returned HTTP {status}.") from http_err
+                if status >= 500 and attempt < 2:
+                    delay = 0.5 * (2 ** attempt)
+                    if time.monotonic() + delay >= deadline:
+                        raise ProviderError("timeout", f"Baseten HTTP {status}; retry would exceed time budget.") from http_err
+                    time.sleep(delay)
+                    continue
+                if status >= 500:
+                    raise ProviderError("down", f"Baseten returned HTTP {status}.") from http_err
+                raise ProviderError("request", f"Baseten returned HTTP {status}.") from http_err
+            except (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError) as exc:
+                is_timeout = isinstance(exc, (socket.timeout, TimeoutError)) or isinstance(getattr(exc, "reason", None), (socket.timeout, TimeoutError))
+                if attempt < 2:
+                    delay = 0.5 * (2 ** attempt)
+                    if time.monotonic() + delay >= deadline:
+                        break
+                    time.sleep(delay)
+                    continue
+                if is_timeout or time.monotonic() >= deadline:
+                    raise ProviderError("timeout", f"Baseten request timed out: {exc}") from exc
+                raise ProviderError("down", f"Baseten network error: {exc}") from exc
+        if res_body is None:
+            raise ProviderError("timeout", "SAM provider request budget expired after retries.")
+        _record_sam_response(b64_data_url, concept, res_body)
 
     try:
-        with urllib.request.urlopen(req, timeout=60) as response:
-            res_body = response.read().decode("utf-8")
-            data = json.loads(res_body)
-    except urllib.error.HTTPError as http_err:
-        err_msg = http_err.read().decode("utf-8", errors="ignore")
-        raise RuntimeError(f"Baseten SAM API error (HTTP {http_err.code}): {err_msg}")
-    except Exception as e:
-        raise RuntimeError(f"Failed to query Baseten SAM 3.1: {str(e)}")
+        data = json.loads(res_body)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ProviderError("schema", f"Baseten returned invalid JSON: {exc}") from exc
 
     # Parse either a named response field or a raw list of masks. Some
     # deployments return one 2D mask directly instead of wrapping it in a list.
@@ -117,9 +213,17 @@ def query_baseten_sam(b64_data_url, concept, image_size):
     if isinstance(data, list):
         raw_masks = data
     elif isinstance(data, dict):
-        raw_masks = data.get("masks") or data.get("predictions") or data.get("output") or []
+        raw_masks = data.get("masks")
+        if raw_masks is None:
+            raw_masks = data.get("predictions")
+        if raw_masks is None:
+            raw_masks = data.get("output")
+        if raw_masks is None:
+            raise ProviderError("schema", "Baseten response omitted masks/predictions/output.")
     else:
-        raise RuntimeError("Baseten SAM returned an unsupported response format.")
+        raise ProviderError("schema", "Baseten returned an unsupported response format.")
+    if not isinstance(raw_masks, list):
+        raise ProviderError("schema", "Baseten mask field is not a list.")
 
     if isinstance(raw_masks, list) and raw_masks:
         try:
@@ -132,7 +236,7 @@ def query_baseten_sam(b64_data_url, concept, image_size):
             # Leave polygon/bounding-box response entries for the parser below.
             pass
 
-    if isinstance(raw_masks, list):
+    if raw_masks:
         for item in raw_masks:
             try:
                 if isinstance(item, (list, np.ndarray)):
@@ -155,7 +259,10 @@ def query_baseten_sam(b64_data_url, concept, image_size):
                         cv2.rectangle(canvas, (int(b[0]), int(b[1])), (int(b[2]), int(b[3])), 255, -1)
                         masks_list.append(canvas)
             except Exception as parse_err:
-                print(f"Warning: Could not parse mask from Baseten: {parse_err}")
+                logger.warning("Could not parse Baseten SAM mask for %s: %s", concept, parse_err)
+
+        if not masks_list:
+            raise ProviderError("schema", f"Baseten returned masks in an unsupported format for {concept}.")
 
     return masks_list
 
@@ -164,7 +271,7 @@ def query_baseten_sam(b64_data_url, concept, image_size):
 # 2. Fireworks API Endpoint: Meta Llama 3 (Text/NLP Generation)
 # =====================================================================
 
-def get_fireworks_client():
+def get_fireworks_client(timeout=60):
     """
     Initializes an OpenAI-compatible client for Fireworks API.
     Reads FIREWORKS_API_KEY from .env.
@@ -174,15 +281,15 @@ def get_fireworks_client():
         return None
 
     base_url = os.environ.get("FIREWORKS_BASE_URL", "https://api.fireworks.ai/inference/v1").strip()
-    return OpenAI(base_url=base_url, api_key=api_key)
+    return OpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
 
 
-def generate_with_fireworks_llama(prompt, system_prompt=None, response_format=None):
+def generate_with_fireworks_llama(prompt, system_prompt=None, response_format=None, timeout=60):
     """
     Generates text or structured JSON using Meta Llama 3 via Fireworks API.
     Default model: accounts/fireworks/models/llama-v3p1-70b-instruct
     """
-    client = get_fireworks_client()
+    client = get_fireworks_client(timeout=timeout)
     if not client:
         raise ValueError(
             "FIREWORKS_API_KEY is not set in .env. Please configure your Fireworks key for Meta Llama 3."
@@ -235,7 +342,7 @@ def get_modal_config():
     }
 
 
-def label_rooms_with_modal_muse_spark(b64_data_url, room_candidates, warnings=None):
+def label_rooms_with_modal_muse_spark(b64_data_url, room_candidates, warnings=None, timeout=60):
     """
     Calls the configured Modal classifier, then Fireworks if Modal is unavailable.
     Returns only validated model results; the pipeline owns the explicit generic fallback.
@@ -283,6 +390,7 @@ def label_rooms_with_modal_muse_spark(b64_data_url, room_candidates, warnings=No
     modal_cfg = get_modal_config()
     modal_labels = {}
     modal_failure_reason = None
+    provider_deadline = time.monotonic() + max(1.0, float(timeout))
 
     # Modal Shared/Dedicated Endpoints expose OpenAI-compatible chat completions.
     if modal_cfg["is_configured"]:
@@ -294,7 +402,7 @@ def label_rooms_with_modal_muse_spark(b64_data_url, room_candidates, warnings=No
                     break
             if not base_url.endswith("/v1"):
                 base_url += "/v1"
-            client = OpenAI(base_url=base_url, api_key=modal_cfg["api_key"], timeout=60)
+            client = OpenAI(base_url=base_url, api_key=modal_cfg["api_key"], timeout=min(60, timeout))
             candidate_json = json.dumps([
                 {
                     "id": room["id"],
@@ -344,7 +452,8 @@ def label_rooms_with_modal_muse_spark(b64_data_url, room_candidates, warnings=No
         modal_failure_reason = "Muse Spark (Modal) is not configured."
 
     # Fireworks Meta Llama 3 NLP fallback for room labeling
-    fw_client = get_fireworks_client()
+    remaining_timeout = max(0.0, provider_deadline - time.monotonic())
+    fw_client = get_fireworks_client(timeout=max(1.0, remaining_timeout)) if remaining_timeout > 0 else None
     if fw_client:
         prompt_text = (
             "You are an architectural floor plan classifier. Analyze these room regions detected by SAM:\n"
@@ -360,16 +469,22 @@ def label_rooms_with_modal_muse_spark(b64_data_url, room_candidates, warnings=No
             raw_json = generate_with_fireworks_llama(
                 prompt=prompt_text,
                 system_prompt="You are a professional architectural AI assistant. Respond strictly in JSON.",
-                response_format={"type": "json_object"}
+                response_format={"type": "json_object"},
+                timeout=max(1.0, remaining_timeout),
             )
             data = json.loads(raw_json)
             fireworks_labels = validated_labels(data.get("rooms", []))
             merged_labels = {**fireworks_labels, **modal_labels}
             if modal_failure_reason and warnings is not None:
-                warnings.append(f"{modal_failure_reason} Fireworks filled any missing room labels.")
+                if len(fireworks_labels) == len(expected_ids):
+                    warnings.append(f"{modal_failure_reason} Fireworks supplied the room labels.")
+                else:
+                    warnings.append(f"{modal_failure_reason} Fireworks returned incomplete labels; generic labels will be used for the rest.")
             return merged_labels
         except Exception as fw_err:
             logger.warning("Fireworks Llama 3 classification failed: %s", fw_err)
+            if warnings is not None:
+                warnings.append("Fireworks room classification failed; generic room labels will be used.")
 
     # The caller adds explicit generic labels and a scene warning. Do not infer
     # room types from area alone: that would make a fallback look like a model result.

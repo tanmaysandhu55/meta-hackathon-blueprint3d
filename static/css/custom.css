@@ -588,3 +588,26 @@ input:focus-visible {
 .animate-pulse-subtle {
     animation: pulse-subtle 1.5s infinite ease-out;
 }
+
+/* Keep keyboard and touch use visible and comfortable in the 3D canvas. */
+:focus-visible {
+    outline: 3px solid #f04438;
+    outline-offset: 2px;
+}
+
+#threejs-canvas-container canvas {
+    touch-action: none;
+}
+
+#segmentation-canvas.calibration-crosshair {
+    cursor: crosshair;
+}
+
+.calibration-active {
+    background: #f0c020 !important;
+    color: #161616 !important;
+}
+
+.walkthrough-active #threejs-canvas-container canvas {
+    cursor: crosshair;
+}

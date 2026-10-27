@@ -1,5 +1,6 @@
 # Environment variables (NEVER commit secrets/API keys to GitHub)
 .env
+recorded_sam_responses/
 
 # Python bytecode
 __pycache__/
@@ -9,6 +10,8 @@ __pycache__/
 # Virtual environments
 venv/
 .venv/
+.pytest_cache/
+.pytest-tmp/
 env/
 
 # OS and Editor files

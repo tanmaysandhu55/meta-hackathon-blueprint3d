@@ -1,19 +1,31 @@
 """FloorPlan3D Flask app and asynchronous image-processing API."""
 
 import base64
+import concurrent.futures
+import cv2
 import io
+import json
+import logging
 import math
 import os
 import threading
+import time
 import uuid
+from collections import defaultdict, deque
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request, send_file
+from jsonschema import Draft202012Validator
 from PIL import Image, UnidentifiedImageError
 from werkzeug.utils import secure_filename
 
-from cloud_services import get_baseten_config
+from cloud_services import (
+    ProviderError,
+    get_baseten_config,
+    is_mock_sam_enabled,
+    is_sam_replay_enabled,
+)
 from demo_data import generate_sample_floorplan_image, get_sample_mask_overlays, get_sample_scene_json, get_two_story_sample_scene_json
 from geometry_processor import (
     build_walls_from_rooms,
@@ -25,6 +37,7 @@ from geometry_processor import (
 from sam_service import label_rooms, query_sam_concept
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -33,14 +46,84 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_IMAGE_BYTES + 64 * 1024  # allow multipar
 SAMPLE_IMG_PATH = os.path.join(app.root_path, "samples", "sample_floorplan.png")
 if not os.path.exists(SAMPLE_IMG_PATH):
     generate_sample_floorplan_image(SAMPLE_IMG_PATH)
+SCENE_SCHEMA_PATH = os.path.join(app.root_path, "schemas", "scene.schema.json")
+with open(SCENE_SCHEMA_PATH, "r", encoding="utf-8") as schema_file:
+    SCENE_SCHEMA = json.load(schema_file)
+Draft202012Validator.check_schema(SCENE_SCHEMA)
+SCENE_VALIDATOR = Draft202012Validator(SCENE_SCHEMA)
 
 JOBS = {}
 JOBS_LOCK = threading.Lock()
+UPLOAD_RATE_LOCK = threading.Lock()
+UPLOAD_REQUESTS = defaultdict(deque)
 ALLOWED_IMAGE_FORMATS = {"PNG", "JPEG", "WEBP"}
+MAX_ACTIVE_JOBS = 2
+UPLOAD_RATE_WINDOW_SECONDS = 60
+UPLOAD_RATE_LIMIT = 10
+PROVIDER_IMAGE_MAX_SIDE = 2048
 
 
 def _live_sam_ready():
-    return get_baseten_config()["is_configured"]
+    return is_mock_sam_enabled() or is_sam_replay_enabled() or get_baseten_config()["is_configured"]
+
+
+def _processing_mode():
+    if is_mock_sam_enabled():
+        return "MOCK"
+    if is_sam_replay_enabled():
+        return "REPLAY"
+    return "LIVE" if get_baseten_config()["is_configured"] else "OFFLINE"
+
+
+def _rate_limit_upload(ip_address):
+    now = time.monotonic()
+    with UPLOAD_RATE_LOCK:
+        requests_for_ip = UPLOAD_REQUESTS[ip_address]
+        stale_ips = []
+        for address, entries in UPLOAD_REQUESTS.items():
+            while entries and now - entries[0] >= UPLOAD_RATE_WINDOW_SECONDS:
+                entries.popleft()
+            if address != ip_address and not entries:
+                stale_ips.append(address)
+        for address in stale_ips:
+            UPLOAD_REQUESTS.pop(address, None)
+        if len(requests_for_ip) >= UPLOAD_RATE_LIMIT:
+            retry_after = max(1, int(UPLOAD_RATE_WINDOW_SECONDS - (now - requests_for_ip[0])))
+            return retry_after
+        requests_for_ip.append(now)
+        return 0
+
+
+def _downscale_for_provider(image_bytes):
+    """Return PNG bytes reduced to a bounded provider dimension plus its size."""
+    with Image.open(io.BytesIO(image_bytes)) as source:
+        image = source.convert("RGB")
+    width, height = image.size
+    longest_side = max(width, height)
+    if longest_side <= PROVIDER_IMAGE_MAX_SIDE:
+        return image_bytes, (width, height)
+    ratio = PROVIDER_IMAGE_MAX_SIDE / longest_side
+    size = (max(1, round(width * ratio)), max(1, round(height * ratio)))
+    resized = image.resize(size, Image.Resampling.LANCZOS)
+    output = io.BytesIO()
+    resized.save(output, format="PNG", optimize=True)
+    return output.getvalue(), size
+
+
+def _restore_mask_sizes(masks, from_size, to_size):
+    if from_size == to_size:
+        return masks
+    target_width, target_height = to_size
+    return [cv2.resize(mask, (target_width, target_height), interpolation=cv2.INTER_NEAREST) for mask in masks]
+
+
+def validate_scene_contract(scene):
+    errors = sorted(SCENE_VALIDATOR.iter_errors(scene), key=lambda error: list(error.absolute_path))
+    if errors:
+        first = errors[0]
+        location = ".".join(str(part) for part in first.absolute_path) or "scene"
+        raise RuntimeError(f"Scene contract validation failed at {location}: {first.message}")
+    return scene
 
 
 def _number_field(name, default, minimum, maximum):
@@ -81,16 +164,90 @@ def _validate_image(file_storage):
 
 
 def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_height, wall_thickness, calibrate_scale, progress):
+    processing_mode = _processing_mode()
+    if processing_mode == "MOCK":
+        # Mock masks are deliberately tied to the prepared sample plan, never to
+        # the uploaded pixels. Show the same sample image to avoid implying AI analysis.
+        with open(SAMPLE_IMG_PATH, "rb") as sample_file:
+            image_bytes = sample_file.read()
+        with Image.open(io.BytesIO(image_bytes)) as sample_image:
+            image_size = sample_image.size
+        filename = "mock_sample_floorplan.png"
+    provider_bytes, provider_size = _downscale_for_provider(image_bytes)
+    provider_image_url = "data:image/png;base64," + base64.b64encode(provider_bytes).decode("ascii")
     image_url = "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
     img_w, img_h = image_size
+    warnings = []
+    if processing_mode == "MOCK":
+        warnings.append("MOCK MODE: generated from prepared sample geometry; uploaded pixels were not analyzed by AI.")
+    elif processing_mode == "REPLAY":
+        warnings.append("REPLAY MODE: stored SAM responses were used; no live SAM request was made.")
 
-    progress("Detecting rooms", 15)
-    room_masks = query_sam_concept(image_url, "room", image_size)
+    progress("Detecting rooms, walls, doors, and windows", 30)
+    job_budget = max(10.0, float(os.environ.get("SAM_JOB_TIMEOUT_SECONDS", "180")))
+    deadline = time.monotonic() + job_budget
 
-    progress("Detecting walls, doors, and windows", 38)
-    wall_masks = query_sam_concept(image_url, "wall", image_size)
-    door_masks = query_sam_concept(image_url, "door", image_size)
-    window_masks = query_sam_concept(image_url, "window", image_size)
+    def ensure_budget(stage):
+        if time.monotonic() >= deadline:
+            raise ProviderError("budget", f"The job time budget expired during {stage}.")
+
+    concepts = ("room", "wall", "door", "window")
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="sam-concept")
+    futures = {
+        executor.submit(
+            query_sam_concept,
+            provider_image_url,
+            concept,
+            provider_size,
+            max(1.0, deadline - time.monotonic()),
+        ): concept
+        for concept in concepts
+    }
+    done, pending = concurrent.futures.wait(
+        futures,
+        timeout=job_budget,
+        return_when=concurrent.futures.ALL_COMPLETED,
+    )
+    for future in pending:
+        future.cancel()
+    executor.shutdown(wait=False, cancel_futures=True)
+
+    masks_by_concept = {concept: [] for concept in concepts}
+    room_failure = None
+    for future in done:
+        concept = futures[future]
+        try:
+            masks_by_concept[concept] = _restore_mask_sizes(future.result(), provider_size, image_size)
+        except Exception as exc:
+            logger.exception("SAM %s segmentation failed", concept)
+            if concept == "room":
+                room_failure = exc
+            else:
+                safe_message = exc.safe_message if isinstance(exc, ProviderError) else ProviderError("down").safe_message
+                warnings.append(f"{concept.title()} detection was unavailable: {safe_message}")
+
+    if pending:
+        pending_concepts = {futures[future] for future in pending}
+        for future in pending:
+            future.cancel()
+        if "room" in pending_concepts:
+            room_failure = ProviderError("budget", "Room segmentation exceeded the job time budget.")
+        for concept in pending_concepts - {"room"}:
+            warnings.append(f"{concept.title()} detection exceeded the processing time limit and was skipped.")
+
+    if room_failure:
+        if isinstance(room_failure, ProviderError):
+            raise room_failure
+        if isinstance(room_failure, ValueError):
+            raise ProviderError("configuration", str(room_failure)) from room_failure
+        if isinstance(room_failure, TimeoutError):
+            raise ProviderError("timeout", str(room_failure)) from room_failure
+        raise ProviderError("down", str(room_failure)) from room_failure
+
+    room_masks = masks_by_concept["room"]
+    wall_masks = masks_by_concept["wall"]
+    door_masks = masks_by_concept["door"]
+    window_masks = masks_by_concept["window"]
 
     scale_method = "manual"
     if calibrate_scale:
@@ -120,12 +277,19 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
         raise ValueError("No rooms were detected. Try a clearer, higher-contrast floor plan.")
 
     progress("Classifying rooms", 79)
-    warnings = []
     try:
-        labels = label_rooms(image_url, rooms_data, warnings=warnings)
-    except Exception:
+        ensure_budget("room geometry processing")
+        remaining_budget = deadline - time.monotonic()
+        if remaining_budget <= 0:
+            raise ProviderError("budget", "The processing deadline expired before room labeling.")
+        labels = label_rooms(image_url, rooms_data, warnings=warnings, timeout=remaining_budget)
+    except Exception as exc:
+        logger.exception("Room classification failed")
         labels = {}
-        warnings.append("Room labels are unavailable; generic room labels are shown.")
+        if isinstance(exc, ProviderError):
+            warnings.append(f"Room labels are unavailable: {exc.safe_message}")
+        else:
+            warnings.append("Room labels are unavailable; generic room labels are shown.")
     for room in rooms_data:
         label = labels.get(room["id"])
         if label:
@@ -134,8 +298,10 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
             room["type"] = "room"
             room["label"] = f"Room {room['id'][1:]}"
             room["confidence"] = 0.0
-            if not warnings:
-                warnings.append("Some room labels are unavailable; generic room labels are shown.")
+            fallback_warning = "Some room labels are unavailable; generic room labels are shown."
+            if fallback_warning not in warnings:
+                warnings.append(fallback_warning)
+    ensure_budget("room labeling")
 
     cleaned_rooms = [
         {key: room[key] for key in ("id", "type", "label", "confidence", "polygon")}
@@ -153,16 +319,19 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
     if not walls_data:
         walls_data = build_walls_from_rooms(cleaned_rooms, meters_per_pixel, image_size, wall_thickness)
         warnings.append("Walls were approximated from detected room outlines.")
+    ensure_budget("wall geometry processing")
     if calibrate_scale and scale_method.startswith("manual fallback"):
         warnings.append("Automatic scale calibration could not find reliable doors; the selected scale was used.")
 
     doors_data = extract_doors(door_masks, cleaned_rooms, meters_per_pixel=meters_per_pixel)
     windows_data = extract_windows(window_masks, meters_per_pixel=meters_per_pixel)
+    ensure_budget("opening geometry processing")
     progress("Preparing 3D scene", 94)
 
     scene = {
         "meta": {
             "source": filename,
+            "processingMode": processing_mode,
             "imageSize": [img_w, img_h],
             "metersPerPixel": meters_per_pixel,
             "scaleMethod": scale_method,
@@ -192,11 +361,17 @@ def _run_job(job_id, image_bytes, image_size, filename, meters_per_pixel, wall_h
 
     try:
         result = _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_height, wall_thickness, calibrate_scale, progress)
+        validate_scene_contract(result["scene"])
         with JOBS_LOCK:
             JOBS[job_id].update(status="complete", stage="Complete", progress=100, result=result)
     except Exception as exc:
         app.logger.exception("Floor plan job %s failed", job_id)
-        message = str(exc) if isinstance(exc, ValueError) else "The AI processing service failed. Check your API key and provider endpoint settings."
+        if isinstance(exc, ProviderError):
+            message = exc.safe_message
+        elif isinstance(exc, ValueError):
+            message = str(exc)
+        else:
+            message = "The floor plan could not be processed because of an internal error. Details were logged on the server."
         with JOBS_LOCK:
             JOBS[job_id].update(status="failed", stage="Processing failed", error=message)
 
@@ -233,12 +408,19 @@ def request_too_large(_error):
 
 @app.route("/")
 def index():
-    return render_template("index.html", live_ready=_live_sam_ready())
+    return render_template("index.html", processing_ready=_live_sam_ready(), processing_mode=_processing_mode())
 
 
 @app.route("/api/health", methods=["GET"])
 def health():
-    return jsonify({"status": "online", "service": "FloorPlan3D", "live_processing_ready": _live_sam_ready()})
+    mode = _processing_mode()
+    return jsonify({
+        "status": "online",
+        "service": "FloorPlan3D",
+        "pipeline_ready": _live_sam_ready(),
+        "live_processing_ready": mode == "LIVE",
+        "processing_mode": mode,
+    })
 
 
 @app.route("/api/sample", methods=["GET"])
@@ -246,9 +428,13 @@ def sample_data():
     try:
         with open(SAMPLE_IMG_PATH, "rb") as sample_file:
             data_url = "data:image/png;base64," + base64.b64encode(sample_file.read()).decode("ascii")
+        scene = get_sample_scene_json()
+        scene["meta"]["processingMode"] = "DEMO"
+        scene["meta"].setdefault("warnings", []).append("Prepared demo scene; this is not a live AI result.")
+        validate_scene_contract(scene)
         return jsonify({
             "success": True,
-            "scene": get_sample_scene_json(),
+            "scene": scene,
             "overlays": get_sample_mask_overlays(),
             "imageUrl": data_url,
             "demoMode": True,
@@ -263,9 +449,13 @@ def two_story_sample_data():
     try:
         with open(SAMPLE_IMG_PATH, "rb") as sample_file:
             data_url = "data:image/png;base64," + base64.b64encode(sample_file.read()).decode("ascii")
+        scene = get_two_story_sample_scene_json()
+        scene["meta"]["processingMode"] = "DEMO"
+        scene["meta"].setdefault("warnings", []).append("Prepared two-story demo scene; this is not a live AI result.")
+        validate_scene_contract(scene)
         return jsonify({
             "success": True,
-            "scene": get_two_story_sample_scene_json(),
+            "scene": scene,
             "overlays": get_sample_mask_overlays(),
             "imageUrl": data_url,
             "demoMode": True,
@@ -285,8 +475,13 @@ def upload_floorplan():
     if not _live_sam_ready():
         return jsonify({
             "success": False,
-            "error": "Live AI processing is not configured yet. You can use the built-in demo now; add your SAM API key and endpoint settings to .env when you receive them.",
+            "error": "Live AI processing is not configured. Use the prepared demo, or enable MOCK_SAM / REPLAY_SAM_RESPONSES for an offline pipeline run.",
         }), 503
+    retry_after = _rate_limit_upload(request.remote_addr or "unknown")
+    if retry_after:
+        response = jsonify({"success": False, "error": "Upload rate limit reached. Please wait before trying again."})
+        response.headers["Retry-After"] = str(retry_after)
+        return response, 429
     if "file" not in request.files:
         return jsonify({"success": False, "error": "Choose a floor plan image first."}), 400
     file = request.files["file"]
@@ -305,6 +500,11 @@ def upload_floorplan():
     _prune_old_jobs()
     job_id = uuid.uuid4().hex
     with JOBS_LOCK:
+        active_jobs = sum(job.get("status") == "processing" for job in JOBS.values())
+        if active_jobs >= MAX_ACTIVE_JOBS:
+            response = jsonify({"success": False, "error": "The processing queue is full. Wait for a current job to finish and try again."})
+            response.headers["Retry-After"] = "10"
+            return response, 429
         JOBS[job_id] = {
             "status": "processing", "stage": "Queued", "progress": 5,
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -314,7 +514,13 @@ def upload_floorplan():
         args=(job_id, image_bytes, image_size, filename, mpp, wall_height, wall_thickness, calibrate_scale),
         daemon=True,
     )
-    worker.start()
+    try:
+        worker.start()
+    except RuntimeError:
+        with JOBS_LOCK:
+            JOBS.pop(job_id, None)
+        app.logger.exception("Could not start floor plan job %s", job_id)
+        return jsonify({"success": False, "error": "The processing worker could not be started. Please retry shortly."}), 503
     return jsonify({"success": True, "job_id": job_id}), 202
 
 
@@ -335,6 +541,7 @@ def job_scene(job_id):
             return jsonify({"error": "Processing job not found."}), 404
         if job["status"] != "complete":
             return jsonify({"error": "The scene is not ready yet."}), 409
+        validate_scene_contract(job["result"]["scene"])
         return jsonify(job["result"])
 
 
