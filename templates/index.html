@@ -57,7 +57,7 @@
             <div>
                 <h1 class="flex items-center gap-2 text-xl font-black uppercase tracking-tighter text-bauhaus-ink sm:text-2xl">
                     FloorPlan3D
-                    <span class="provider-tag border-2 border-bauhaus-ink bg-white px-2 py-0.5 text-xs font-bold uppercase tracking-wide">Local OpenCV • Optional Llama Labels</span>
+                    <span class="provider-tag border-2 border-bauhaus-ink bg-white px-2 py-0.5 text-xs font-bold uppercase tracking-wide">Meta SAM 3.1 • Muse Spark • OpenCV fallback</span>
                 </h1>
             </div>
         </div>
@@ -65,7 +65,7 @@
         <div class="flex items-center gap-2">
         <div id="processing-mode-badge" class="hidden rounded-none border-2 border-bauhaus-ink bg-bauhaus-yellow px-3 py-1.5 text-xs font-black uppercase tracking-wider" role="status" aria-live="polite"></div>
         <div class="status-badge border-2 border-bauhaus-ink px-3 py-1.5 text-xs font-bold uppercase tracking-wider {% if processing_mode == 'LIVE' %}is-live{% else %}is-offline{% endif %}">
-            {% if processing_mode == 'MOCK' %}MOCK MODE{% else %}Local segmentation · {% if labeling_ready %}Llama labels on{% else %}Generic labels{% endif %}{% endif %}
+            {% if processing_mode == 'MOCK' %}MOCK MODE{% else %}{% if sam_ready %}SAM 3.1 segmentation{% else %}Local OpenCV segmentation{% endif %} · {% if labeling_ready %}Muse labels on{% else %}Generic labels{% endif %}{% endif %}
         </div>
         </div>
     </header>
@@ -119,7 +119,7 @@
                     <p class="mt-2 text-[10px] text-bauhaus-ink">Both demos and the review flow work without API keys.</p>
                 </details>
 
-                {% if not labeling_ready %}<div class="bauhaus-warning rounded-none border-2 border-bauhaus-ink bg-bauhaus-yellow p-3 text-xs leading-relaxed text-bauhaus-ink"><strong class="block mb-1">Local segmentation ready</strong>Uploads work without a key. Room names use generic labels until optional Llama labeling is configured.</div>{% endif %}
+                {% if not sam_ready or not labeling_ready %}<div class="bauhaus-warning rounded-none border-2 border-bauhaus-ink bg-bauhaus-yellow p-3 text-xs leading-relaxed text-bauhaus-ink"><strong class="block mb-1">{% if sam_ready %}SAM segmentation ready{% else %}Local segmentation ready{% endif %}</strong>{% if sam_ready %}SAM 3.1 will segment uploads.{% else %}Uploads use local OpenCV until a Meta API key is added.{% endif %} {% if not labeling_ready %}Room labels will be generic until Meta model access is configured.{% endif %}</div>{% endif %}
 
                 <div id="app-message" role="status" aria-live="polite" class="hidden rounded-none border p-3 text-xs leading-relaxed"></div>
 
@@ -155,6 +155,15 @@
                     <button id="btn-process-building" type="button" disabled class="mt-2 hidden w-full rounded-none border border-bauhaus-ink bg-bauhaus-blue px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">Process selected plans as stories</button>
                     <p id="building-upload-status" class="hidden text-[10px] leading-relaxed" aria-live="polite"></p>
                 </div>
+
+                <section class="bauhaus-card geo-yellow space-y-2 rounded-none border-2 border-bauhaus-ink bg-white p-4" aria-labelledby="muse-image-title">
+                    <h2 id="muse-image-title" class="text-xs font-semibold uppercase tracking-wider">Create a draft with Muse Image</h2>
+                    <p class="text-[11px] text-bauhaus-ink">Describe a layout; review the generated drawing before processing. Generated plans are visual drafts, not measured designs.</p>
+                    <label for="muse-image-prompt" class="sr-only">Describe the floor plan</label>
+                    <textarea id="muse-image-prompt" maxlength="500" rows="2" placeholder="One-story home with two bedrooms, a kitchen, and central hallway" class="w-full rounded-none border border-bauhaus-ink bg-white px-2 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-bauhaus-red" {% if not image_generation_ready %}disabled{% endif %}></textarea>
+                    <button id="btn-muse-image" type="button" class="w-full rounded-none border border-bauhaus-ink bg-bauhaus-yellow px-3 py-2 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red" {% if not image_generation_ready %}disabled{% endif %}>Generate draft floor plan</button>
+                    <p id="muse-image-status" class="text-[10px]" aria-live="polite">{% if image_generation_ready %}Muse Image is ready.{% else %}Available after adding META_API_KEY.{% endif %}</p>
+                </section>
 
                 <!-- 3. Spatial Calibration Sliders -->
                 <div class="bauhaus-card geo-blue space-y-4 rounded-none border-2 border-bauhaus-ink bg-white p-4">
@@ -230,6 +239,12 @@
                         <input id="map-assistant-question" type="text" maxlength="500" placeholder="Where is the computer lab?" class="w-full rounded-none border border-bauhaus-ink bg-white px-2 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-bauhaus-red" required>
                         <button id="map-assistant-submit" type="submit" class="w-full rounded-none bg-bauhaus-blue px-3 py-2 text-xs font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Ask map assistant</button>
                     </form>
+                    <div class="space-y-2 border-t border-bauhaus-muted pt-2">
+                        <label for="map-audio-input" class="block text-[11px] font-semibold">Ask by voice (WAV)</label>
+                        <input id="map-audio-input" type="file" accept="audio/wav,.wav" class="w-full text-[10px]" {% if not voice_transcription_ready %}disabled{% endif %}>
+                        <button id="btn-transcribe-map" type="button" class="w-full rounded-none border border-bauhaus-ink bg-white px-3 py-2 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red" {% if not voice_transcription_ready %}disabled{% endif %}>Transcribe question</button>
+                        <p id="map-transcription-status" class="text-[10px]" aria-live="polite">{% if voice_transcription_ready %}Muse Voice Transcribe is ready.{% else %}Voice transcription needs META_API_KEY.{% endif %}</p>
+                    </div>
                     <p id="map-assistant-provider" class="text-[10px] font-mono text-bauhaus-ink" aria-live="polite">Offline scene lookup (no model call).</p>
                     <p id="map-assistant-answer" class="hidden rounded-none border border-bauhaus-muted bg-bauhaus-muted p-2 text-xs leading-relaxed" role="status" aria-live="polite"></p>
                 </section>
@@ -237,7 +252,7 @@
                 <!-- 4. Generate Button & Progress -->
                 <div>
                     <button id="btn-generate" type="button" disabled class="flex w-full items-center justify-center gap-2 rounded-none border border-bauhaus-ink bg-bauhaus-red px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-[4px_4px_0px_0px_#121212] transition-colors duration-150 ease-in-out hover:bg-bauhaus-red active:scale-95 disabled:cursor-not-allowed disabled:opacity-40">
-                        <span>{% if processing_mode == 'MOCK' %}🧪 Run Mock Pipeline{% else %}⚙️ Process locally{% endif %}</span>
+                        <span>{% if processing_mode == 'MOCK' %}🧪 Run Mock Pipeline{% elif sam_ready %}✨ Process with Meta AI{% else %}⚙️ Process locally{% endif %}</span>
                     </button>
 
                     <!-- Progress Bar -->

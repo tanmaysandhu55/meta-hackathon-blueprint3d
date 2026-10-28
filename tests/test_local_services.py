@@ -6,8 +6,8 @@ import numpy as np
 from PIL import Image
 
 from geometry_processor import extract_doors, mask_to_polygons_with_holes
-import meta_llama_service
-from meta_llama_service import validate_room_labels
+import meta_model_service
+from meta_model_service import validate_room_labels
 from segmentation_service import prepare_segmentation, segment_concept, segment_prepared_concept
 
 
@@ -79,9 +79,9 @@ def test_room_label_validation_handles_text_and_rejects_unknown_ids():
     assert validate_room_labels("not json", candidates) == {}
 
 
-def test_llama_retries_transient_server_error(monkeypatch):
-    monkeypatch.setenv("LLAMA_API_KEY", "test-only")
-    monkeypatch.setenv("LLAMA_VISION_MODEL", "test-model")
+def test_muse_retries_transient_server_error(monkeypatch):
+    monkeypatch.setenv("META_API_KEY", "test-only")
+    monkeypatch.setenv("MUSE_MODEL", "test-model")
     attempts = []
 
     class TransientError(Exception):
@@ -91,6 +91,9 @@ def test_llama_retries_transient_server_error(monkeypatch):
         def __init__(self, **_kwargs):
             self.chat = self
             self.completions = self
+
+        def with_options(self, **_kwargs):
+            return self
 
         def create(self, **_kwargs):
             attempts.append(1)
@@ -104,29 +107,29 @@ def test_llama_retries_transient_server_error(monkeypatch):
                 choices = [Choice()]
             return Result()
 
-    monkeypatch.setattr(meta_llama_service, "OpenAI", Client)
-    monkeypatch.setattr(meta_llama_service.time, "sleep", lambda _delay: None)
-    assert meta_llama_service.label_rooms(_image_data_url(), [{"id": "r1"}])
+    monkeypatch.setattr(meta_model_service, "OpenAI", Client)
+    monkeypatch.setattr(meta_model_service.time, "sleep", lambda _delay: None)
+    assert meta_model_service.label_rooms(_image_data_url(), [{"id": "r1"}])
     assert len(attempts) == 3
 
 
-def test_llama_image_payload_is_downscaled_to_2048_pixels():
-    resized_url = meta_llama_service._image_data_url(_image_data_url((2400, 1000)))
+def test_muse_image_payload_is_downscaled_to_2048_pixels():
+    resized_url = meta_model_service._image_data_url(_image_data_url((2400, 1000)))
     _, encoded = resized_url.split(",", 1)
     with Image.open(io.BytesIO(base64.b64decode(encoded))) as image:
         assert max(image.size) == 2048
 
 
-def test_invalid_llama_image_uses_generic_label_fallback(monkeypatch):
-    monkeypatch.setenv("LLAMA_API_KEY", "test-only")
-    monkeypatch.setenv("LLAMA_VISION_MODEL", "test-model")
+def test_invalid_muse_image_uses_generic_label_fallback(monkeypatch):
+    monkeypatch.setenv("META_API_KEY", "test-only")
+    monkeypatch.setenv("MUSE_MODEL", "test-model")
     monkeypatch.setattr(
-        meta_llama_service,
+        meta_model_service,
         "OpenAI",
         lambda **_kwargs: (_ for _ in ()).throw(AssertionError("API client must not be created")),
     )
-    assert meta_llama_service.label_rooms("not an image", [{"id": "r1"}]) == {}
-    assert meta_llama_service.last_error_category() == "bad_response"
+    assert meta_model_service.label_rooms("not an image", [{"id": "r1"}]) == {}
+    assert meta_model_service.last_error_category() == "bad_response"
 
 
 def test_repository_has_no_removed_provider_references():

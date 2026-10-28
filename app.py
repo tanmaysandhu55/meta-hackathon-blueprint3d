@@ -20,7 +20,9 @@ from jsonschema import Draft202012Validator
 from PIL import Image, UnidentifiedImageError
 from werkzeug.utils import secure_filename
 
-from meta_llama_service import label_rooms, is_labeling_configured, last_error_category
+from meta_model_service import label_rooms, is_labeling_configured, last_error_category
+from meta_sam_service import is_sam_configured, query_sam_concept
+from meta_media_service import generate_floorplan, image_generation_ready, transcribe_audio, voice_transcription_ready
 from demo_data import generate_sample_floorplan_image, get_sample_mask_overlays, get_sample_scene_json, get_two_story_sample_scene_json
 from geometry_processor import (
     build_walls_from_rooms,
@@ -36,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
-app.config["MAX_CONTENT_LENGTH"] = MAX_IMAGE_BYTES + 64 * 1024  # allow multipart form overhead
+app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024 + 64 * 1024  # audio endpoint limit plus multipart overhead
 
 SAMPLE_IMG_PATH = os.path.join(app.root_path, "samples", "sample_floorplan.png")
 if not os.path.exists(SAMPLE_IMG_PATH):
@@ -65,11 +67,14 @@ DEFAULT_WALL_THICKNESS = float(os.getenv("DEFAULT_WALL_THICKNESS", "0.2"))
 
 
 class ProviderError(RuntimeError):
-    SAFE_MESSAGES = {"timeout": "Room labeling timed out.", "auth": "Llama API authentication failed.",
-                     "schema": "Llama returned an unsupported label response.",
-                     "budget": "Floor plan processing exceeded its time limit.",
-                     "configuration": "Floor plan processing could not use the supplied settings.",
-                     "down": "Room labeling is unavailable."}
+    SAFE_MESSAGES = {
+        "timeout": "Meta model request timed out.",
+        "auth": "Meta API authentication failed.",
+        "schema": "Meta returned an unsupported response.",
+        "budget": "Floor plan processing exceeded its time limit.",
+        "configuration": "Floor plan processing could not use the supplied settings.",
+        "down": "Meta model service is unavailable.",
+    }
     def __init__(self, category, detail=""):
         self.safe_message = self.SAFE_MESSAGES.get(category, self.SAFE_MESSAGES["down"])
         super().__init__(detail or self.safe_message)
@@ -81,6 +86,10 @@ def segmentation_ready():
 
 def labeling_ready():
     return is_labeling_configured()
+
+
+def sam_ready():
+    return is_sam_configured()
 
 
 def _processing_mode():
@@ -235,9 +244,10 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
     image_url = "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
     img_w, img_h = image_size
     warnings = []
+    use_sam = processing_mode != "MOCK" and sam_ready()
     if processing_mode == "MOCK":
         warnings.append("MOCK MODE: generated from prepared sample geometry; uploaded pixels were not analyzed by AI.")
-    else:
+    elif not use_sam:
         warnings.append("Local OpenCV heuristic segmentation was used; results are estimates best suited to clean, high-contrast plans.")
 
     progress("Detecting rooms, walls, doors, and windows", 30)
@@ -255,14 +265,27 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
         raise ProviderError("configuration", str(exc)) from exc
 
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="local-segmentation")
-    futures = {
-        executor.submit(
-            segment_prepared_concept,
-            prepared_image,
-            concept,
-        ): concept
-        for concept in concepts
-    }
+    def segment_one(concept):
+        if use_sam:
+            try:
+                return query_sam_concept(
+                    image_bytes,
+                    concept,
+                    image_size,
+                    timeout=min(75, max(1, deadline - time.monotonic())),
+                ), "sam-3.1", None
+            except Exception as exc:
+                logger.warning(
+                    "SAM failed for %s; using local OpenCV fallback (%s)",
+                    concept,
+                    type(exc).__name__,
+                )
+                return segment_prepared_concept(prepared_image, concept), "opencv-fallback", getattr(
+                    exc, "safe_category", "unavailable"
+                )
+        return segment_prepared_concept(prepared_image, concept), "opencv-heuristic", None
+
+    futures = {executor.submit(segment_one, concept): concept for concept in concepts}
     done, pending = concurrent.futures.wait(
         futures,
         timeout=job_budget,
@@ -273,11 +296,16 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
     executor.shutdown(wait=False, cancel_futures=True)
 
     masks_by_concept = {concept: [] for concept in concepts}
+    backends_by_concept = {}
     room_failure = None
     for future in done:
         concept = futures[future]
         try:
-            masks_by_concept[concept] = future.result()
+            masks_by_concept[concept], backends_by_concept[concept], provider_error = future.result()
+            if provider_error:
+                warnings.append(
+                    f"Meta segmentation for {concept} was unavailable ({provider_error}); local OpenCV fallback was used."
+                )
         except Exception as exc:
             logger.exception("Local %s segmentation failed", concept)
             if concept == "room":
@@ -342,6 +370,17 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
     if not rooms_data:
         raise ValueError("No rooms were detected. Try a clearer, higher-contrast floor plan.")
 
+    used_sam = any(value == "sam-3.1" for value in backends_by_concept.values())
+    used_fallback = any(value == "opencv-fallback" for value in backends_by_concept.values())
+    if used_sam and used_fallback:
+        segmentation_backend = "sam-3.1+opencv-fallback"
+    elif used_sam:
+        segmentation_backend = "sam-3.1"
+    elif use_sam:
+        segmentation_backend = "opencv-fallback"
+    else:
+        segmentation_backend = "opencv-heuristic"
+
     progress("Classifying rooms", 79)
     try:
         ensure_budget("room geometry processing")
@@ -351,11 +390,11 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
             labels = label_rooms(image_url, rooms_data, timeout=max(1, deadline - time.monotonic()))
             if not labels:
                 category = last_error_category() or "bad_response"
-                safe_categories = {"timeout": "timeout", "auth": "authentication failed", "bad_response": "bad response", "unavailable": "provider unavailable"}
-                warnings.append(f"Llama labeling {safe_categories.get(category, 'provider unavailable')}; generic room labels are shown.")
+                safe_categories = {"timeout": "timed out", "auth": "authentication failed", "bad_response": "returned an unsupported response", "unavailable": "provider unavailable"}
+                warnings.append(f"Muse room labeling {safe_categories.get(category, 'provider unavailable')}; generic room labels are shown.")
         else:
             labels = {}
-            warnings.append("Llama labeling is not configured; generic room labels are shown.")
+            warnings.append("Muse room labeling is not configured; generic room labels are shown.")
     except Exception as exc:
         logger.exception("Room classification failed")
         labels = {}
@@ -404,8 +443,8 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
     scene = {
         "meta": {
             "source": filename,
-            "processingMode": processing_mode,
-            "segmentation": "opencv-heuristic",
+            "processingMode": "MOCK" if processing_mode == "MOCK" else "LIVE" if "sam-3.1" in segmentation_backend else "LOCAL",
+            "segmentation": segmentation_backend,
             "mock": processing_mode == "MOCK",
             "imageSize": [img_w, img_h],
             "metersPerPixel": meters_per_pixel,
@@ -483,7 +522,15 @@ def request_too_large(_error):
 
 @app.route("/")
 def index():
-    return render_template("index.html", processing_ready=True, processing_mode=_processing_mode(), labeling_ready=labeling_ready())
+    return render_template(
+        "index.html",
+        processing_ready=True,
+        processing_mode=_processing_mode(),
+        sam_ready=sam_ready(),
+        labeling_ready=labeling_ready(),
+        image_generation_ready=image_generation_ready(),
+        voice_transcription_ready=voice_transcription_ready(),
+    )
 
 
 @app.route("/api/health", methods=["GET"])
@@ -494,8 +541,12 @@ def health():
         "service": "FloorPlan3D",
         "pipeline_ready": True,
         "segmentation_ready": True,
+        "sam_ready": sam_ready(),
         "labeling_ready": labeling_ready(),
-        "live_processing_ready": labeling_ready(),
+        "image_generation_ready": image_generation_ready(),
+        "voice_transcription_ready": voice_transcription_ready(),
+        "live_processing_ready": sam_ready() or labeling_ready(),
+        "segmentation_mode": "sam-3.1" if sam_ready() else "opencv-heuristic",
         "processing_mode": mode,
     })
 
@@ -573,6 +624,46 @@ def two_story_sample_data():
 @app.route("/api/sample_image", methods=["GET"])
 def sample_image():
     return send_file(SAMPLE_IMG_PATH, mimetype="image/png")
+
+
+@app.route("/api/generate-floorplan", methods=["POST"])
+def generate_floorplan_image():
+    retry_after = _rate_limit_upload(request.remote_addr or "unknown")
+    if retry_after:
+        return jsonify({"success": False, "error": "Generation rate limit reached. Please wait before trying again."}), 429
+    if not image_generation_ready():
+        return jsonify({"success": False, "error": "Muse Image requires META_API_KEY."}), 503
+    payload = request.get_json(silent=True) or {}
+    prompt = payload.get("prompt")
+    if not isinstance(prompt, str) or not 8 <= len(prompt.strip()) <= 500:
+        return jsonify({"success": False, "error": "Describe the plan in 8 to 500 characters."}), 400
+    try:
+        image_bytes = generate_floorplan(prompt.strip())
+        data_url = "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
+        return jsonify({"success": True, "imageUrl": data_url, "model": os.getenv("MUSE_IMAGE_MODEL", "muse-image-1.0")})
+    except Exception as exc:
+        app.logger.warning("Muse Image generation failed (%s)", type(exc).__name__)
+        return jsonify({"success": False, "error": "Muse Image could not generate a plan. Check model access and try again."}), 502
+
+
+@app.route("/api/transcribe", methods=["POST"])
+def transcribe_map_question():
+    retry_after = _rate_limit_upload(request.remote_addr or "unknown")
+    if retry_after:
+        return jsonify({"success": False, "error": "Transcription rate limit reached. Please wait before trying again."}), 429
+    if not voice_transcription_ready():
+        return jsonify({"success": False, "error": "Muse Voice Transcribe requires META_API_KEY."}), 503
+    audio = request.files.get("audio")
+    if not audio or not audio.filename:
+        return jsonify({"success": False, "error": "Choose a WAV recording first."}), 400
+    try:
+        transcript = transcribe_audio(audio.read(32 * 1024 * 1024 + 1), audio.filename)
+        return jsonify({"success": True, "transcript": transcript, "model": os.getenv("MUSE_VOICE_MODEL", "muse-voice-transcribe-1.0")})
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as exc:
+        app.logger.warning("Muse Voice Transcribe failed (%s)", type(exc).__name__)
+        return jsonify({"success": False, "error": "Meta transcription is unavailable. Check model access and try again."}), 502
 
 
 @app.route("/api/upload", methods=["POST"])

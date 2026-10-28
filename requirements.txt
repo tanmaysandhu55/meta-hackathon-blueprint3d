@@ -1,6 +1,8 @@
 # Tested dependency set; Python 3.12+
 Flask==3.1.2
 openai==2.6.1
+httpx==0.28.1
+meta-sam-parser==0.1.0
 opencv-python==5.0.0.93
 shapely==2.1.2
 numpy==2.5.4

@@ -1,4 +1,4 @@
-"""Optional room labeling through Meta's hosted Llama-compatible API."""
+"""Optional room labeling through Meta Muse Spark."""
 import base64
 import json
 import logging
@@ -18,7 +18,10 @@ ALLOWED_TYPES = {"room", "classroom", "lab", "corridor", "stairs", "elevator", "
 
 
 def _configured():
-    return bool(os.getenv("LLAMA_API_KEY", "").strip() and os.getenv("LLAMA_VISION_MODEL", "").strip())
+    return bool(
+        os.getenv("META_API_KEY", "").strip()
+        and os.getenv("MUSE_MODEL", "muse-spark-1.3").strip()
+    )
 
 
 def is_labeling_configured():
@@ -86,15 +89,16 @@ def label_rooms(b64_data_url, room_candidates, timeout=45):
         image_url = _image_data_url(b64_data_url)
     except Exception as exc:
         _error_state.category = "bad_response"
-        logger.warning("Llama labeling skipped because image preparation failed (%s)", type(exc).__name__)
+        logger.warning("Muse labeling skipped because image preparation failed (%s)", type(exc).__name__)
         return {}
 
     client = OpenAI(
-        api_key=os.environ["LLAMA_API_KEY"].strip(),
-        base_url=os.getenv("LLAMA_API_BASE_URL", "https://api.meta.ai/v1").strip(),
+        api_key=os.environ["META_API_KEY"].strip(),
+        base_url=os.getenv("META_API_BASE_URL", "https://api.meta.ai/v1").strip(),
         timeout=timeout,
         max_retries=0,
     )
+    deadline = time.monotonic() + timeout
     prompt = (
         "Classify only the supplied floor-plan room regions. Allowed types: "
         + json.dumps(sorted(ALLOWED_TYPES))
@@ -107,22 +111,27 @@ def label_rooms(b64_data_url, room_candidates, timeout=45):
         {"type": "image_url", "image_url": {"url": image_url}},
     ]}]
     for attempt in range(3):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            _error_state.category = "timeout"
+            return {}
         try:
-            response = client.chat.completions.create(
-                model=os.environ["LLAMA_VISION_MODEL"].strip(), messages=messages,
+            response = client.with_options(timeout=remaining).chat.completions.create(
+                model=os.getenv("MUSE_MODEL", "muse-spark-1.3").strip(), messages=messages,
                 temperature=0.1, max_completion_tokens=1600,
             )
             result = validate_room_labels(response.choices[0].message.content or "", room_candidates)
             if not result:
-                logger.warning("Llama room-label response had an unsupported JSON shape")
+                logger.warning("Muse room-label response had an unsupported JSON shape")
             return result
         except Exception as exc:
             status = getattr(exc, "status_code", None)
             category = "auth" if status in (401, 403) else "timeout" if isinstance(exc, APITimeoutError) else "bad_response" if status in (400, 404, 422) else "unavailable"
             _error_state.category = category
             retryable = isinstance(exc, (APIConnectionError, APITimeoutError)) or (status is not None and status >= 500)
-            logger.warning("Llama labeling request failed (category=%s): %s", category, type(exc).__name__)
-            if not retryable or attempt == 2:
+            logger.warning("Muse labeling request failed (category=%s): %s", category, type(exc).__name__)
+            delay = 0.4 * (2 ** attempt)
+            if not retryable or attempt == 2 or time.monotonic() + delay >= deadline:
                 return {}
-            time.sleep(0.4 * (2 ** attempt))
+            time.sleep(delay)
     return {}

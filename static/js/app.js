@@ -86,6 +86,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const mapAssistantSubmit = document.getElementById("map-assistant-submit");
     const mapAssistantProvider = document.getElementById("map-assistant-provider");
     const mapAssistantAnswer = document.getElementById("map-assistant-answer");
+    const museImagePrompt = document.getElementById("muse-image-prompt");
+    const btnMuseImage = document.getElementById("btn-muse-image");
+    const museImageStatus = document.getElementById("muse-image-status");
+    const mapAudioInput = document.getElementById("map-audio-input");
+    const btnTranscribeMap = document.getElementById("btn-transcribe-map");
+    const mapTranscriptionStatus = document.getElementById("map-transcription-status");
 
     // Room Inspector Drawer
     const inspectorCard = document.getElementById("room-inspector-card");
@@ -138,6 +144,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const messages = {
             MOCK: "MOCK MODE — PREPARED SAMPLE, NOT LIVE AI",
             DEMO: "PREPARED DEMO — NOT A LIVE AI RESULT",
+            LIVE: "META SAM 3.1 RESULT",
             LOCAL: "LOCAL OPENCV SEGMENTATION — LABELING OPTIONAL",
         };
         if (!messages[mode]) {
@@ -149,7 +156,9 @@ document.addEventListener("DOMContentLoaded", () => {
         processingModeBadge.title = mode === "MOCK"
             ? "Generated from the prepared sample plan. Uploaded image pixels were not analyzed."
             : mode === "LOCAL"
-                ? "OpenCV analyzes uploaded floor plans locally. The optional Llama API is used only for room labels."
+                ? "OpenCV analyzes plans locally; Meta SAM 3.1 can segment uploads, and Muse Spark can suggest room labels."
+                : mode === "LIVE"
+                    ? "At least one segmentation concept was processed by Meta SAM 3.1. Check scene warnings for local fallback concepts."
                 : "Prepared sample data, not a live provider result.";
         processingModeBadge.classList.remove("hidden");
     }
@@ -546,6 +555,51 @@ document.addEventListener("DOMContentLoaded", () => {
             mapAssistantAnswer.classList.remove("hidden");
             mapAssistantSubmit.disabled = false;
             mapAssistantSubmit.textContent = "Ask map assistant";
+        }
+    });
+
+    btnMuseImage.addEventListener("click", async () => {
+        btnMuseImage.disabled = true;
+        museImageStatus.textContent = "Muse Image is creating a draft…";
+        try {
+            const response = await fetch("/api/generate-floorplan", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ prompt: museImagePrompt.value.trim() }),
+            });
+            const result = await response.json();
+            if (!response.ok || !result.success) throw new Error(result.error || "Could not generate a plan.");
+            const blob = await (await fetch(result.imageUrl)).blob();
+            const generatedFile = new File([blob], "muse-image-draft.png", { type: "image/png" });
+            handleFileSelection([generatedFile]);
+            museImageStatus.textContent = "Draft generated and loaded for review. Select Process to build the 3D estimate.";
+            showMessage("Muse Image created a visual draft. Check its walls and room boundaries before processing; dimensions are not guaranteed.", "warning");
+        } catch (error) {
+            museImageStatus.textContent = error.message || "Muse Image is unavailable.";
+        } finally {
+            btnMuseImage.disabled = false;
+        }
+    });
+
+    btnTranscribeMap.addEventListener("click", async () => {
+        if (!mapAudioInput.files.length) {
+            mapTranscriptionStatus.textContent = "Choose a supported mono PCM WAV recording first.";
+            return;
+        }
+        btnTranscribeMap.disabled = true;
+        mapTranscriptionStatus.textContent = "Transcribing…";
+        try {
+            const formData = new FormData();
+            formData.append("audio", mapAudioInput.files[0]);
+            const response = await fetch("/api/transcribe", { method: "POST", body: formData });
+            const result = await response.json();
+            if (!response.ok || !result.success) throw new Error(result.error || "Transcription failed.");
+            mapAssistantQuestion.value = result.transcript;
+            mapTranscriptionStatus.textContent = "Transcript added to the question box. Review it, then select Ask map assistant.";
+        } catch (error) {
+            mapTranscriptionStatus.textContent = error.message || "Transcription is unavailable.";
+        } finally {
+            btnTranscribeMap.disabled = false;
         }
     });
 
@@ -1140,7 +1194,7 @@ document.addEventListener("DOMContentLoaded", () => {
             } else if (data.scene.meta.warnings && data.scene.meta.warnings.length) {
                 showMessage(data.scene.meta.warnings.join(" "), "warning");
             } else {
-                showMessage("Floor plan processed locally. Room labels may be generic when Llama is not configured.");
+                showMessage("Floor plan processed. Local OpenCV fallback was used where Meta segmentation was unavailable; room labels may be generic.");
             }
             setTimeout(() => {
                 progressContainer.classList.add("hidden");

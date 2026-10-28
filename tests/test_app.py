@@ -73,10 +73,10 @@ def test_upload_job_completes_using_mock_pipeline_without_keys(client, monkeypat
     assert payload["scene"]["meta"]["source"] == "sample_plan_mock.png"
 
 
-def test_upload_job_completes_locally_without_llama_key(client, monkeypatch):
+def test_upload_job_completes_locally_without_meta_key(client, monkeypatch):
     monkeypatch.setenv("MOCK_MODE", "0")
-    monkeypatch.setenv("LLAMA_API_KEY", "")
-    monkeypatch.setenv("LLAMA_VISION_MODEL", "")
+    monkeypatch.setenv("META_API_KEY", "")
+    monkeypatch.setenv("MUSE_MODEL", "")
     sample = app_module.SAMPLE_IMG_PATH
     with open(sample, "rb") as source:
         response = client.post("/api/upload", data={"file": (io.BytesIO(source.read()), "sample.png"), "calibrateScale": "false"}, content_type="multipart/form-data")
@@ -92,7 +92,7 @@ def test_upload_job_completes_locally_without_llama_key(client, monkeypatch):
     scene = client.get(f"/api/scene/{job_id}").get_json()["scene"]
     assert scene["meta"]["segmentation"] == "opencv-heuristic"
     assert scene["rooms"]
-    assert any("Llama labeling is not configured" in warning for warning in scene["meta"]["warnings"])
+    assert any("Muse room labeling is not configured" in warning for warning in scene["meta"]["warnings"])
 
 
 def test_mock_health_is_ready_but_never_claims_live_processing(client, monkeypatch):
@@ -106,7 +106,70 @@ def test_mock_health_is_ready_but_never_claims_live_processing(client, monkeypat
     assert health["processing_mode"] == "MOCK"
     assert "MOCK MODE" in page
     assert "Run Mock Pipeline" in page
-    assert "Llama labels on" not in page
+    assert "Muse labels on" not in page
+
+
+@pytest.mark.parametrize("route, expected_floors", [
+    ("/api/sample", 1),
+    ("/api/sample/two-story", 2),
+])
+def test_prepared_demos_load_without_provider_keys(client, monkeypatch, route, expected_floors):
+    monkeypatch.setenv("META_API_KEY", "")
+    monkeypatch.setenv("SAM_MODEL", "")
+    monkeypatch.setenv("MUSE_MODEL", "")
+
+    response = client.get(route)
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["success"] is True
+    assert payload["demoMode"] is True
+    assert payload["scene"]["meta"]["processingMode"] == "DEMO"
+    assert len(payload["scene"]["meta"].get("levels", [{"level": 0}])) == expected_floors
+
+
+def test_health_reports_local_fallback_without_meta_key(client, monkeypatch):
+    monkeypatch.setenv("META_API_KEY", "")
+    monkeypatch.setenv("SAM_MODEL", "")
+    monkeypatch.setenv("MUSE_MODEL", "")
+
+    health = client.get("/api/health").get_json()
+
+    assert health["segmentation_ready"] is True
+    assert health["sam_ready"] is False
+    assert health["labeling_ready"] is False
+    assert health["live_processing_ready"] is False
+    assert health["segmentation_mode"] == "opencv-heuristic"
+
+
+def test_media_endpoints_are_disabled_cleanly_without_meta_key(client, monkeypatch):
+    monkeypatch.setenv("META_API_KEY", "")
+    monkeypatch.setenv("MUSE_IMAGE_MODEL", "muse-image-1.0")
+    monkeypatch.setenv("MUSE_VOICE_MODEL", "muse-voice-transcribe-1.0")
+
+    image = client.post("/api/generate-floorplan", json={"prompt": "A small two-bedroom apartment"})
+    audio = client.post("/api/transcribe")
+
+    assert image.status_code == 503
+    assert audio.status_code == 503
+    assert "META_API_KEY" in image.get_json()["error"]
+    assert "META_API_KEY" in audio.get_json()["error"]
+
+
+def test_media_endpoints_use_safe_mocked_provider_results(client, monkeypatch):
+    monkeypatch.setenv("META_API_KEY", "test-only")
+    monkeypatch.setattr(app_module, "image_generation_ready", lambda: True)
+    monkeypatch.setattr(app_module, "voice_transcription_ready", lambda: True)
+    monkeypatch.setattr(app_module, "generate_floorplan", lambda _prompt: b"\x89PNG\r\n\x1a\n")
+    monkeypatch.setattr(app_module, "transcribe_audio", lambda _audio, _filename: "Where is the computer lab?")
+
+    image = client.post("/api/generate-floorplan", json={"prompt": "A small two-bedroom apartment"})
+    audio = client.post("/api/transcribe", data={"audio": (io.BytesIO(b"test"), "question.wav")}, content_type="multipart/form-data")
+
+    assert image.status_code == 200
+    assert image.get_json()["imageUrl"].startswith("data:image/png;base64,")
+    assert audio.status_code == 200
+    assert audio.get_json()["transcript"] == "Where is the computer lab?"
 
 
 def test_scene_question_uses_explicit_offline_lookup(client, monkeypatch):
