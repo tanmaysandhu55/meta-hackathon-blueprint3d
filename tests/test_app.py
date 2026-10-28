@@ -46,22 +46,8 @@ def test_image_validation_rejects_unsupported_format():
         app_module._validate_image(upload)
 
 
-def test_provider_image_downscales_long_side_and_masks_restore_size():
-    source = png_bytes(size=(2400, 1200))
-    smaller, size = app_module._downscale_for_provider(source)
-    assert max(size) == 2048
-    assert size == (2048, 1024)
-    mask = __import__("numpy").ones((size[1], size[0]), dtype="uint8")
-    restored = app_module._restore_mask_sizes([mask], size, (2400, 1200))
-    assert restored[0].shape == (1200, 2400)
-
-
 def test_upload_job_completes_using_mock_pipeline_without_keys(client, monkeypatch):
-    monkeypatch.setenv("MOCK_SAM", "1")
-    monkeypatch.delenv("REPLAY_SAM_RESPONSES", raising=False)
-    monkeypatch.delenv("BASETEN_API_KEY", raising=False)
-    monkeypatch.delenv("BASETEN_MODEL_ID", raising=False)
-    monkeypatch.delenv("BASETEN_SAM_URL", raising=False)
+    monkeypatch.setenv("MOCK_MODE", "1")
 
     response = client.post(
         "/api/upload",
@@ -84,11 +70,33 @@ def test_upload_job_completes_using_mock_pipeline_without_keys(client, monkeypat
     payload = result.get_json()
     assert payload["scene"]["meta"]["processingMode"] == "MOCK"
     assert any("MOCK MODE" in warning for warning in payload["scene"]["meta"]["warnings"])
-    assert payload["scene"]["meta"]["source"] == "mock_sample_floorplan.png"
+    assert payload["scene"]["meta"]["source"] == "sample_plan_mock.png"
+
+
+def test_upload_job_completes_locally_without_llama_key(client, monkeypatch):
+    monkeypatch.setenv("MOCK_MODE", "0")
+    monkeypatch.setenv("LLAMA_API_KEY", "")
+    monkeypatch.setenv("LLAMA_VISION_MODEL", "")
+    sample = app_module.SAMPLE_IMG_PATH
+    with open(sample, "rb") as source:
+        response = client.post("/api/upload", data={"file": (io.BytesIO(source.read()), "sample.png"), "calibrateScale": "false"}, content_type="multipart/form-data")
+    assert response.status_code == 202
+    job_id = response.get_json()["job_id"]
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        status = client.get(f"/api/status/{job_id}").get_json()
+        if status["status"] != "processing":
+            break
+        time.sleep(0.05)
+    assert status["status"] == "complete", status
+    scene = client.get(f"/api/scene/{job_id}").get_json()["scene"]
+    assert scene["meta"]["segmentation"] == "opencv-heuristic"
+    assert scene["rooms"]
+    assert any("Llama labeling is not configured" in warning for warning in scene["meta"]["warnings"])
 
 
 def test_mock_health_is_ready_but_never_claims_live_processing(client, monkeypatch):
-    monkeypatch.setenv("MOCK_SAM", "1")
+    monkeypatch.setenv("MOCK_MODE", "1")
 
     health = client.get("/api/health").get_json()
     page = client.get("/").get_data(as_text=True)
@@ -96,13 +104,12 @@ def test_mock_health_is_ready_but_never_claims_live_processing(client, monkeypat
     assert health["pipeline_ready"] is True
     assert health["live_processing_ready"] is False
     assert health["processing_mode"] == "MOCK"
-    assert "Mock pipeline ready" in page
+    assert "MOCK MODE" in page
     assert "Run Mock Pipeline" in page
-    assert "Live processing configured" not in page
+    assert "Llama labels on" not in page
 
 
-def test_scene_question_uses_explicit_offline_lookup_without_modal(client, monkeypatch):
-    monkeypatch.setattr(app_module, "get_modal_config", lambda: {"is_configured": False})
+def test_scene_question_uses_explicit_offline_lookup(client, monkeypatch):
     scene = app_module.get_sample_scene_json()
     response = client.post("/api/scene/ask", json={"question": "Where is the Computer Lab?", "scene": scene})
 
@@ -122,7 +129,6 @@ def test_scene_question_rejects_missing_or_invalid_inputs(client):
 
 
 def test_scene_question_rate_limit_returns_429(client, monkeypatch):
-    monkeypatch.setattr(app_module, "get_modal_config", lambda: {"is_configured": False})
     monkeypatch.setattr(app_module, "QUESTION_RATE_LIMIT", 1)
     scene = app_module.get_sample_scene_json()
     payload = {"question": "How many rooms?", "scene": scene}
@@ -134,7 +140,7 @@ def test_scene_question_rate_limit_returns_429(client, monkeypatch):
 
 
 def test_upload_returns_429_when_concurrency_cap_is_reached(client, monkeypatch):
-    monkeypatch.setenv("MOCK_SAM", "1")
+    monkeypatch.setenv("MOCK_MODE", "1")
     app_module.JOBS["already-running-1"] = {"status": "processing"}
     app_module.JOBS["already-running-2"] = {"status": "processing"}
 
@@ -149,7 +155,7 @@ def test_upload_returns_429_when_concurrency_cap_is_reached(client, monkeypatch)
 
 
 def test_upload_rate_limit_returns_429(client, monkeypatch):
-    monkeypatch.setenv("MOCK_SAM", "1")
+    monkeypatch.setenv("MOCK_MODE", "1")
     monkeypatch.setattr(app_module, "UPLOAD_RATE_LIMIT", 1)
     app_module._rate_limit_upload("127.0.0.1")
 

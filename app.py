@@ -20,14 +20,7 @@ from jsonschema import Draft202012Validator
 from PIL import Image, UnidentifiedImageError
 from werkzeug.utils import secure_filename
 
-from cloud_services import (
-    ProviderError,
-    ask_modal_muse_spark_about_scene,
-    get_modal_config,
-    get_baseten_config,
-    is_mock_sam_enabled,
-    is_sam_replay_enabled,
-)
+from meta_llama_service import label_rooms, is_labeling_configured, last_error_category
 from demo_data import generate_sample_floorplan_image, get_sample_mask_overlays, get_sample_scene_json, get_two_story_sample_scene_json
 from geometry_processor import (
     build_walls_from_rooms,
@@ -36,7 +29,7 @@ from geometry_processor import (
     extract_windows,
     mask_to_polygons_with_holes,
 )
-from sam_service import label_rooms, query_sam_concept
+from segmentation_service import prepare_segmentation, segment_prepared_concept
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -66,19 +59,34 @@ UPLOAD_RATE_WINDOW_SECONDS = 60
 UPLOAD_RATE_LIMIT = 10
 QUESTION_RATE_LIMIT = 20
 QUESTION_RATE_WINDOW_SECONDS = 60
-PROVIDER_IMAGE_MAX_SIDE = 2048
+DEFAULT_METERS_PER_PIXEL = float(os.getenv("DEFAULT_METERS_PER_PIXEL", "0.02"))
+DEFAULT_WALL_HEIGHT = float(os.getenv("DEFAULT_WALL_HEIGHT", "3.0"))
+DEFAULT_WALL_THICKNESS = float(os.getenv("DEFAULT_WALL_THICKNESS", "0.2"))
 
 
-def _live_sam_ready():
-    return is_mock_sam_enabled() or is_sam_replay_enabled() or get_baseten_config()["is_configured"]
+class ProviderError(RuntimeError):
+    SAFE_MESSAGES = {"timeout": "Room labeling timed out.", "auth": "Llama API authentication failed.",
+                     "schema": "Llama returned an unsupported label response.",
+                     "budget": "Floor plan processing exceeded its time limit.",
+                     "configuration": "Floor plan processing could not use the supplied settings.",
+                     "down": "Room labeling is unavailable."}
+    def __init__(self, category, detail=""):
+        self.safe_message = self.SAFE_MESSAGES.get(category, self.SAFE_MESSAGES["down"])
+        super().__init__(detail or self.safe_message)
+
+
+def segmentation_ready():
+    return True
+
+
+def labeling_ready():
+    return is_labeling_configured()
 
 
 def _processing_mode():
-    if is_mock_sam_enabled():
+    if os.getenv("MOCK_MODE", "0").strip().lower() in {"1", "true", "yes", "on"}:
         return "MOCK"
-    if is_sam_replay_enabled():
-        return "REPLAY"
-    return "LIVE" if get_baseten_config()["is_configured"] else "OFFLINE"
+    return "LOCAL"
 
 
 def _rate_limit_upload(ip_address):
@@ -165,30 +173,7 @@ def _offline_scene_answer(question, facts):
         return f"The mapped rooms total approximately {total:.1f} m². This is an estimate from detected polygons."
     if "door" in normalized and ("how many" in normalized or "count" in normalized):
         return f"The scene contains {len(facts['doors'])} detected doors."
-    return "Offline scene lookup can answer room, floor, area, and door-count questions. Configure Modal Muse Spark for open-ended questions."
-
-
-def _downscale_for_provider(image_bytes):
-    """Return PNG bytes reduced to a bounded provider dimension plus its size."""
-    with Image.open(io.BytesIO(image_bytes)) as source:
-        image = source.convert("RGB")
-    width, height = image.size
-    longest_side = max(width, height)
-    if longest_side <= PROVIDER_IMAGE_MAX_SIDE:
-        return image_bytes, (width, height)
-    ratio = PROVIDER_IMAGE_MAX_SIDE / longest_side
-    size = (max(1, round(width * ratio)), max(1, round(height * ratio)))
-    resized = image.resize(size, Image.Resampling.LANCZOS)
-    output = io.BytesIO()
-    resized.save(output, format="PNG", optimize=True)
-    return output.getvalue(), size
-
-
-def _restore_mask_sizes(masks, from_size, to_size):
-    if from_size == to_size:
-        return masks
-    target_width, target_height = to_size
-    return [cv2.resize(mask, (target_width, target_height), interpolation=cv2.INTER_NEAREST) for mask in masks]
+    return "Offline scene lookup can answer room, floor, area, and door-count questions."
 
 
 def validate_scene_contract(scene):
@@ -246,19 +231,17 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
             image_bytes = sample_file.read()
         with Image.open(io.BytesIO(image_bytes)) as sample_image:
             image_size = sample_image.size
-        filename = "mock_sample_floorplan.png"
-    provider_bytes, provider_size = _downscale_for_provider(image_bytes)
-    provider_image_url = "data:image/png;base64," + base64.b64encode(provider_bytes).decode("ascii")
+        filename = "sample_plan_mock.png"
     image_url = "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
     img_w, img_h = image_size
     warnings = []
     if processing_mode == "MOCK":
         warnings.append("MOCK MODE: generated from prepared sample geometry; uploaded pixels were not analyzed by AI.")
-    elif processing_mode == "REPLAY":
-        warnings.append("REPLAY MODE: stored SAM responses were used; no live SAM request was made.")
+    else:
+        warnings.append("Local OpenCV heuristic segmentation was used; results are estimates best suited to clean, high-contrast plans.")
 
     progress("Detecting rooms, walls, doors, and windows", 30)
-    job_budget = max(10.0, float(os.environ.get("SAM_JOB_TIMEOUT_SECONDS", "180")))
+    job_budget = 180.0
     deadline = time.monotonic() + job_budget
 
     def ensure_budget(stage):
@@ -266,14 +249,17 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
             raise ProviderError("budget", f"The job time budget expired during {stage}.")
 
     concepts = ("room", "wall", "door", "window")
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="sam-concept")
+    try:
+        prepared_image = prepare_segmentation(image_bytes, image_size)
+    except (ValueError, cv2.error) as exc:
+        raise ProviderError("configuration", str(exc)) from exc
+
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="local-segmentation")
     futures = {
         executor.submit(
-            query_sam_concept,
-            provider_image_url,
+            segment_prepared_concept,
+            prepared_image,
             concept,
-            provider_size,
-            max(1.0, deadline - time.monotonic()),
         ): concept
         for concept in concepts
     }
@@ -291,9 +277,9 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
     for future in done:
         concept = futures[future]
         try:
-            masks_by_concept[concept] = _restore_mask_sizes(future.result(), provider_size, image_size)
+            masks_by_concept[concept] = future.result()
         except Exception as exc:
-            logger.exception("SAM %s segmentation failed", concept)
+            logger.exception("Local %s segmentation failed", concept)
             if concept == "room":
                 room_failure = exc
             else:
@@ -322,6 +308,12 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
     wall_masks = masks_by_concept["wall"]
     door_masks = masks_by_concept["door"]
     window_masks = masks_by_concept["window"]
+    if not wall_masks:
+        warnings.append("Local wall segmentation returned no reliable masks; walls will be approximated from room outlines.")
+    if not door_masks:
+        warnings.append("No reliable door masks were found; door-based scale calibration may use the manual scale instead.")
+    if not window_masks:
+        warnings.append("No reliable window masks were found; windows may be omitted from the scene.")
 
     scale_method = "manual"
     if calibrate_scale:
@@ -353,10 +345,17 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
     progress("Classifying rooms", 79)
     try:
         ensure_budget("room geometry processing")
-        remaining_budget = deadline - time.monotonic()
-        if remaining_budget <= 0:
-            raise ProviderError("budget", "The processing deadline expired before room labeling.")
-        labels = label_rooms(image_url, rooms_data, warnings=warnings, timeout=remaining_budget)
+        if processing_mode == "MOCK":
+            labels = {}
+        elif labeling_ready():
+            labels = label_rooms(image_url, rooms_data, timeout=max(1, deadline - time.monotonic()))
+            if not labels:
+                category = last_error_category() or "bad_response"
+                safe_categories = {"timeout": "timeout", "auth": "authentication failed", "bad_response": "bad response", "unavailable": "provider unavailable"}
+                warnings.append(f"Llama labeling {safe_categories.get(category, 'provider unavailable')}; generic room labels are shown.")
+        else:
+            labels = {}
+            warnings.append("Llama labeling is not configured; generic room labels are shown.")
     except Exception as exc:
         logger.exception("Room classification failed")
         labels = {}
@@ -406,6 +405,8 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
         "meta": {
             "source": filename,
             "processingMode": processing_mode,
+            "segmentation": "opencv-heuristic",
+            "mock": processing_mode == "MOCK",
             "imageSize": [img_w, img_h],
             "metersPerPixel": meters_per_pixel,
             "scaleMethod": scale_method,
@@ -482,7 +483,7 @@ def request_too_large(_error):
 
 @app.route("/")
 def index():
-    return render_template("index.html", processing_ready=_live_sam_ready(), processing_mode=_processing_mode())
+    return render_template("index.html", processing_ready=True, processing_mode=_processing_mode(), labeling_ready=labeling_ready())
 
 
 @app.route("/api/health", methods=["GET"])
@@ -491,8 +492,10 @@ def health():
     return jsonify({
         "status": "online",
         "service": "FloorPlan3D",
-        "pipeline_ready": _live_sam_ready(),
-        "live_processing_ready": mode == "LIVE",
+        "pipeline_ready": True,
+        "segmentation_ready": True,
+        "labeling_ready": labeling_ready(),
+        "live_processing_ready": labeling_ready(),
         "processing_mode": mode,
     })
 
@@ -517,12 +520,6 @@ def ask_about_scene():
         return jsonify({"success": False, "error": "The current map is not valid enough to query."}), 400
 
     facts = _build_scene_facts(scene)
-    if get_modal_config()["is_configured"]:
-        try:
-            answer = ask_modal_muse_spark_about_scene(question.strip(), facts)
-            return jsonify({"success": True, "answer": answer, "provider": "Muse Spark via Modal"})
-        except Exception:
-            app.logger.exception("Muse Spark map question failed")
     answer = _offline_scene_answer(question.strip(), facts)
     return jsonify({
         "success": True,
@@ -580,11 +577,6 @@ def sample_image():
 
 @app.route("/api/upload", methods=["POST"])
 def upload_floorplan():
-    if not _live_sam_ready():
-        return jsonify({
-            "success": False,
-            "error": "Live AI processing is not configured. Use the prepared demo, or enable MOCK_SAM / REPLAY_SAM_RESPONSES for an offline pipeline run.",
-        }), 503
     retry_after = _rate_limit_upload(request.remote_addr or "unknown")
     if retry_after:
         response = jsonify({"success": False, "error": "Upload rate limit reached. Please wait before trying again."})
@@ -598,9 +590,9 @@ def upload_floorplan():
 
     try:
         image_bytes, image_size, filename = _validate_image(file)
-        mpp = _number_field("metersPerPixel", 0.02, 0.001, 0.1)
-        wall_height = _number_field("wallHeight", 3.0, 0.5, 10.0)
-        wall_thickness = _number_field("wallThickness", 0.2, 0.05, 1.0)
+        mpp = _number_field("metersPerPixel", DEFAULT_METERS_PER_PIXEL, 0.001, 0.1)
+        wall_height = _number_field("wallHeight", DEFAULT_WALL_HEIGHT, 0.5, 10.0)
+        wall_thickness = _number_field("wallThickness", DEFAULT_WALL_THICKNESS, 0.05, 1.0)
         calibrate_scale = request.form.get("calibrateScale", "true").strip().lower() in {"1", "true", "yes", "on"}
     except ValueError as exc:
         return jsonify({"success": False, "error": str(exc)}), 400

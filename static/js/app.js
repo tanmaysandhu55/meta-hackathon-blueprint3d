@@ -99,6 +99,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const areaSummaryTotal = document.getElementById("area-summary-total");
     const areaSummaryRooms = document.getElementById("area-summary-rooms");
     const mapQualityReport = document.getElementById("map-quality-report");
+    const mapQualityChecks = document.getElementById("map-quality-checks");
+    const mapQualityWarnings = document.getElementById("map-quality-warnings");
+    const btnReview2D = document.getElementById("btn-review-2d");
+    const btnReviewRoom = document.getElementById("btn-review-room");
     const editRoomName = document.getElementById("edit-room-name");
     const editRoomType = document.getElementById("edit-room-type");
     const btnSaveRoomEdit = document.getElementById("btn-save-room-edit");
@@ -132,10 +136,9 @@ document.addEventListener("DOMContentLoaded", () => {
     function setProcessingBadge(mode) {
         if (!processingModeBadge) return;
         const messages = {
-            MOCK: "MOCK MODE — SYNTHETIC SAMPLE, NOT LIVE AI",
-            REPLAY: "REPLAY MODE — STORED SAM RESPONSES, NOT LIVE AI",
+            MOCK: "MOCK MODE — PREPARED SAMPLE, NOT LIVE AI",
             DEMO: "PREPARED DEMO — NOT A LIVE AI RESULT",
-            LIVE: "LIVE AI RESULT — PROVIDER PROCESSED UPLOAD",
+            LOCAL: "LOCAL OPENCV SEGMENTATION — LABELING OPTIONAL",
         };
         if (!messages[mode]) {
             processingModeBadge.classList.add("hidden");
@@ -145,15 +148,13 @@ document.addEventListener("DOMContentLoaded", () => {
         processingModeBadge.textContent = messages[mode];
         processingModeBadge.title = mode === "MOCK"
             ? "Generated from the prepared sample plan. Uploaded image pixels were not analyzed."
-            : mode === "REPLAY"
-                ? "Generated from recorded SAM responses. No live SAM request was made."
-                : mode === "LIVE"
-                    ? "External provider inference was used for this result."
-                    : "Prepared sample data, not a live provider result.";
+            : mode === "LOCAL"
+                ? "OpenCV analyzes uploaded floor plans locally. The optional Llama API is used only for room labels."
+                : "Prepared sample data, not a live provider result.";
         processingModeBadge.classList.remove("hidden");
     }
 
-    if (["MOCK", "REPLAY"].includes(initialProcessingMode)) setProcessingBadge(initialProcessingMode);
+    if (initialProcessingMode === "MOCK") setProcessingBadge(initialProcessingMode);
 
     function showMessage(message, kind = "info") {
         if (!appMessage) return;
@@ -246,10 +247,13 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!currentSceneData) {
             areaSummaryTotal.textContent = "Load a plan to calculate areas.";
             areaSummaryRooms.replaceChildren();
-            mapQualityReport.textContent = "Map checks appear after loading a scene. These checks are not an accuracy score.";
+            mapQualityReport.textContent = "Load a plan to review its detected geometry.";
+            mapQualityChecks.replaceChildren();
+            mapQualityWarnings.replaceChildren();
             return;
         }
         const rooms = currentSceneData.rooms || [];
+        const meta = currentSceneData.meta || {};
         const totalArea = rooms.reduce((sum, room) => sum + polygonArea(room.polygon), 0);
         areaSummaryTotal.textContent = `${rooms.length} rooms · ${totalArea.toFixed(1)} m² total`;
         areaSummaryRooms.replaceChildren();
@@ -265,22 +269,75 @@ document.addEventListener("DOMContentLoaded", () => {
             areaSummaryRooms.appendChild(row);
         });
         const validRoomCount = rooms.filter(room => (room.polygon || []).length >= 3 && polygonArea(room.polygon) > 0).length;
-        const confidenceValues = rooms.map(room => Number(room.confidence)).filter(value => Number.isFinite(value) && value > 0);
-        const averageConfidence = confidenceValues.length
-            ? `${Math.round(confidenceValues.reduce((sum, value) => sum + value, 0) / confidenceValues.length * 100)}% reported mean`
-            : "no confidence values";
-        const floorCount = Math.max(1, (currentSceneData.meta.levels || []).length || (currentSceneData.meta.levelCount || 1));
+        const roomLevels = rooms.map(room => Number(room.floorIndex ?? room.level) || 0);
+        const floorCount = Math.max(1, (meta.levels || []).length, Number(meta.levelCount) || 0, ...roomLevels.map(level => level + 1));
         const connectorCount = rooms.filter(room => ["stairs", "stair", "elevator"].includes(String(room.type || "").toLowerCase())).length;
-        const warnings = currentSceneData.meta.warnings || [];
-        const checks = [`${validRoomCount}/${rooms.length} valid room polygons`, `${floorCount} floor(s)`, `${averageConfidence}`];
-        if (floorCount > 1) checks.push(`${connectorCount} stair/elevator room(s)`);
-        const note = warnings.length ? `Review ${warnings.length} scene warning(s).` : "No pipeline warnings recorded.";
-        mapQualityReport.textContent = `Map checks · ${checks.join(" · ")}. ${note} Not a ground-truth accuracy score.`;
+        const walls = currentSceneData.walls || [];
+        const doors = currentSceneData.doors || [];
+        const windows = currentSceneData.windows || [];
+        const warnings = Array.isArray(meta.warnings) ? meta.warnings : [];
+        const genericLabel = label => /^room\s+\w+$/i.test(String(label || "").trim());
+        const namedRoomCount = rooms.filter(room => room.confidence > 0 && !genericLabel(room.label)).length;
+        const scaleMethod = String(meta.scaleMethod || "");
+        const scaleNeedsReview = !scaleMethod || /fallback/i.test(scaleMethod);
+        const rows = [
+            { state: validRoomCount === rooms.length && rooms.length > 0 ? "ok" : "review", label: "Room outlines", detail: `${validRoomCount} of ${rooms.length} have a usable polygon.` },
+            { state: walls.length ? "ok" : "review", label: "Walls", detail: `${walls.length} wall region(s) in the scene.` },
+            { state: doors.length ? "ok" : "review", label: "Doors", detail: `${doors.length} detected opening(s); check the 2D overlay for alignment.` },
+            { state: windows.length ? "ok" : "review", label: "Windows", detail: `${windows.length} detected opening(s); check the 2D overlay for alignment.` },
+            { state: scaleNeedsReview ? "review" : "info", label: "Scale", detail: scaleNeedsReview ? "No verified calibration recorded. Compare with a known dimension." : `${scaleMethod}; confirm against a known dimension.` },
+            { state: floorCount < 2 || connectorCount > 0 ? "ok" : "review", label: "Floor connection", detail: floorCount < 2 ? "Single-story scene." : `${connectorCount} stair/elevator room(s) for ${floorCount} floors.` },
+            { state: namedRoomCount === rooms.length && rooms.length > 0 ? "ok" : "review", label: "Room labels", detail: `${namedRoomCount} of ${rooms.length} have non-generic labels.` },
+        ];
+        mapQualityChecks.replaceChildren();
+        rows.forEach(item => {
+            const row = document.createElement("li");
+            row.className = "flex gap-1.5";
+            const marker = document.createElement("span");
+            marker.className = item.state === "ok" ? "font-bold text-green-700" : item.state === "review" ? "font-bold text-bauhaus-red" : "font-bold text-bauhaus-blue";
+            marker.textContent = item.state === "ok" ? "✓" : item.state === "review" ? "!" : "i";
+            marker.setAttribute("aria-label", item.state === "ok" ? "Checked" : item.state === "review" ? "Review" : "Information");
+            const text = document.createElement("span");
+            text.textContent = `${item.label}: ${item.detail}`;
+            row.append(marker, text);
+            mapQualityChecks.appendChild(row);
+        });
+        mapQualityWarnings.replaceChildren();
+        const warningItems = warnings.length ? warnings : ["No pipeline warnings recorded."];
+        warningItems.forEach(warning => {
+            const row = document.createElement("li");
+            row.textContent = warnings.length ? `• ${warning}` : warning;
+            mapQualityWarnings.appendChild(row);
+        });
+        mapQualityReport.textContent = `${rooms.length} rooms · ${floorCount} floor(s) · ${totalArea.toFixed(1)} m² estimated area. These are review checks, not an accuracy score.`;
     }
+
+    btnReview2D.addEventListener("click", () => {
+        if (!currentSceneData) {
+            showMessage("Load a demo or plan before reviewing 2D detections.", "info");
+            return;
+        }
+        document.querySelector('[data-tab="2d"]').click();
+    });
+
+    btnReviewRoom.addEventListener("click", () => {
+        if (!currentSceneData || !loadedImageElement) {
+            showMessage("Load a demo or upload a plan before editing a room outline.", "info");
+            return;
+        }
+        const rooms = currentSceneData.rooms || [];
+        const room = rooms.find(item => (item.polygon || []).length < 3 || polygonHasSelfIntersection(item.polygon)) || rooms[0];
+        if (!room) {
+            showMessage("There are no room outlines available to edit.", "warning");
+            return;
+        }
+        window.onFloorPlanRoomSelected(room);
+        btnEditBoundary.click();
+    });
 
     function refreshEditedScene() {
         if (!currentSceneData) return;
-        viewer.loadScene(currentSceneData);
+        viewer.loadScene(currentSceneData, { animateBuild: false, resetCamera: false });
         jsonOutput.textContent = JSON.stringify(currentSceneData, null, 2);
         updateAreaSummary();
         populateRoomControls(currentSceneData);
@@ -298,13 +355,16 @@ document.addEventListener("DOMContentLoaded", () => {
             room.area_m2 = polygonArea(room.polygon || []);
             room.centroid = roomCentroid(room);
         });
-        viewer.loadScene(currentSceneData);
+        viewer.loadScene(currentSceneData, { animateBuild: false, resetCamera: false });
         jsonOutput.textContent = JSON.stringify(currentSceneData, null, 2);
         updateAreaSummary();
         populateRoomControls(currentSceneData);
         if (loadedImageElement) render2DSegmentationCanvas();
         const room = currentSceneData.rooms.find(item => item.id === selectedRoomId);
-        if (room) window.onFloorPlanRoomSelected(room);
+        if (room) {
+            window.onFloorPlanRoomSelected(room);
+            viewer.previewRoomBoundary(room);
+        }
     }
 
     function showRoomRoute(scene, startId, endId) {
@@ -715,6 +775,7 @@ document.addEventListener("DOMContentLoaded", () => {
         polygonEditDragIndex = null;
         boundaryEditControls.classList.remove("hidden");
         boundaryEditStatus.textContent = "Open 2D Segmentation, then drag a cyan vertex to adjust the outline.";
+        viewer.previewRoomBoundary(room);
         document.querySelector('[data-tab="2d"]').click();
         render2DSegmentationCanvas();
     });
@@ -734,7 +795,8 @@ document.addEventListener("DOMContentLoaded", () => {
         segmentationCanvas.classList.remove("polygon-edit-active");
         polygonEditDragIndex = null;
         boundaryEditControls.classList.add("hidden");
-        boundaryEditStatus.textContent = "Outline saved in the current scene. Export scene.json or GLB to keep it.";
+        viewer.clearRoomBoundaryPreview();
+        boundaryEditStatus.textContent = "Outline saved and shown on the 3D floor. The cyan edge marks the edit; detected wall solids are a separate geometry layer. Export scene.json or GLB to keep it.";
         render2DSegmentationCanvas();
     });
 
@@ -780,6 +842,7 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
         room.polygon = candidate;
+        viewer.previewRoomBoundary(room);
         boundaryEditStatus.textContent = `Moving vertex ${polygonEditDragIndex + 1} of ${room.polygon.length}.`;
         render2DSegmentationCanvas();
     });
@@ -789,7 +852,7 @@ document.addEventListener("DOMContentLoaded", () => {
         polygonEditDragIndex = null;
         const room = (currentSceneData?.rooms || []).find(item => item.id === selectedRoomId);
         if (room) {
-            boundaryEditStatus.textContent = "Outline updated. Use Undo or finish editing.";
+            boundaryEditStatus.textContent = "Outline updated on the 3D floor. The cyan edge marks the edit; detected wall solids are a separate geometry layer.";
             refreshBoundaryScene();
         }
     };
@@ -1074,12 +1137,10 @@ document.addEventListener("DOMContentLoaded", () => {
             progressStatus.textContent = "3D map ready";
             if (data.scene.meta.processingMode === "MOCK") {
                 showMessage("MOCK MODE completed from the prepared sample plan. Your uploaded image was not analyzed and no live AI inference ran.", "warning");
-            } else if (data.scene.meta.processingMode === "REPLAY") {
-                showMessage("REPLAY MODE completed from recorded SAM responses. No live SAM inference ran.", "warning");
             } else if (data.scene.meta.warnings && data.scene.meta.warnings.length) {
                 showMessage(data.scene.meta.warnings.join(" "), "warning");
             } else {
-                showMessage("LIVE AI processed this floor plan using the configured providers.");
+                showMessage("Floor plan processed locally. Room labels may be generic when Llama is not configured.");
             }
             setTimeout(() => {
                 progressContainer.classList.add("hidden");
@@ -1190,8 +1251,8 @@ document.addEventListener("DOMContentLoaded", () => {
             merged.meta.warnings.push("No stair/elevator room was detected. Stories were centered by plan bounds; no vertical connector relationship was inferred. Verify alignment before relying on cross-floor routes or measurements.");
         }
         const modes = scenes.map(scene => String(scene.meta?.processingMode || "OFFLINE").toUpperCase());
-        merged.meta.processingMode = modes.every(mode => mode === "LIVE") ? "LIVE"
-            : modes.includes("MOCK") ? "MOCK" : modes.includes("REPLAY") ? "REPLAY" : "DEMO";
+        merged.meta.processingMode = modes.includes("MOCK") ? "MOCK"
+            : modes.every(mode => mode === "DEMO") ? "DEMO" : "LOCAL";
         return merged;
     }
 
@@ -1241,9 +1302,12 @@ document.addEventListener("DOMContentLoaded", () => {
             progressBar.style.width = "100%";
             progressStatus.textContent = "Multi-floor building ready";
             const mode = scene.meta.processingMode;
-            showMessage(mode === "LIVE"
-                ? "Live model-assisted scenes combined. Floor alignment is estimated from stair/elevator regions; verify it before using measurements."
-                : `${mode} mode: at least one floor is not a live AI result. The multi-floor map is approximate; verify connector alignment.`, "warning");
+            const modeMessage = mode === "MOCK"
+                ? "MOCK MODE: at least one story uses prepared sample geometry, not uploaded-image analysis. Verify connector alignment."
+                : mode === "DEMO"
+                    ? "Prepared demo stories loaded. Verify stair alignment before relying on measurements."
+                    : "Stories were segmented locally with OpenCV. Verify stair alignment and scale before relying on measurements.";
+            showMessage(modeMessage, "warning");
             buildingUploadStatus.textContent = "Stories aligned. Check each floor in the selector and verify stair/elevator alignment.";
         } catch (error) {
             viewer.hideLoadingState();

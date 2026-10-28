@@ -176,7 +176,7 @@ def mask_to_polygons_with_holes(mask_uint8, meters_per_pixel, min_area_px=150, s
     return results
 
 
-def extract_doors(door_masks, rooms_list, meters_per_pixel, min_area_px=40):
+def extract_doors(door_masks, rooms_list, meters_per_pixel, min_area_px=25):
     """
     Extracts door center points and widths, and determines which rooms each door connects.
     
@@ -196,7 +196,11 @@ def extract_doors(door_masks, rooms_list, meters_per_pixel, min_area_px=40):
             pass
 
     for mask in door_masks:
-        cleaned = clean_mask(mask, kernel_size=3)
+        # Door symbols are often thin arcs or leaf strokes. The generic cleanup
+        # includes an opening step that erases those valid one-pixel features;
+        # close tiny gaps without eroding the marks before contour extraction.
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        cleaned = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
         contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
             continue
@@ -286,8 +290,8 @@ def extract_windows(window_masks, meters_per_pixel, min_area_px=40):
 
 def build_walls_from_rooms(rooms_list, meters_per_pixel, image_size, wall_thickness_m=0.2):
     """
-    Fallback wall generator: If SAM 3.1 returns 0 wall matches,
-    synthesizes architectural wall outlines from room boundary outlines.
+    Fallback wall generator when local wall segmentation finds no reliable regions.
+    Synthesizes architectural wall outlines from room boundary outlines.
     Ensures scene.json always has valid 3D walls!
     """
     walls = []

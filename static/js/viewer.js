@@ -41,6 +41,7 @@ class FloorPlanViewer {
         this.layerVisibility = Object.fromEntries(this.floorLayerNames.map(name => [name, true]));
         this.layerVisibility.furniture = false;
         this.selectableMeshes = [];
+        this.boundaryPreview = null;
 
         // Scene state & metadata
         this.currentSceneData = null;
@@ -213,7 +214,7 @@ class FloorPlanViewer {
      * Loads and renders a complete scene.json contract.
      * @param {Object} sceneData 
      */
-    loadScene(sceneData) {
+    loadScene(sceneData, { animateBuild = true, resetCamera = true } = {}) {
         if (!sceneData || !sceneData.meta) {
             console.error("Invalid scene.json provided:", sceneData);
             return;
@@ -261,8 +262,24 @@ class FloorPlanViewer {
         this.updateVisibleLevels();
         this.refreshSelectableMeshes();
 
+        if (!animateBuild) {
+            this.animatingMeshes.forEach(mesh => {
+                mesh.scale.y = 1;
+                if (mesh.userData.isFloorSurface && mesh.material) {
+                    mesh.material.opacity = 1;
+                    mesh.material.transparent = false;
+                    mesh.material.depthWrite = true;
+                    mesh.material.needsUpdate = true;
+                }
+                if (mesh.userData.buildRevealLabel) {
+                    mesh.userData.buildRevealLabel.userData.buildRevealProgress = 1;
+                }
+            });
+            this.animatingMeshes.length = 0;
+        }
+
         // 3. Position camera nicely around building center
-        this.resetCameraView();
+        if (resetCamera) this.resetCameraView();
     }
 
     showLoadingState() {
@@ -365,6 +382,7 @@ class FloorPlanViewer {
             if (floorGroup.parent) floorGroup.parent.remove(floorGroup);
         });
         this.floorGroups.clear();
+        this.boundaryPreview = null;
         this.wallMaterial = null;
         this.selectableMeshes = [];
         this.selectedRoomMesh = null;
@@ -442,6 +460,40 @@ class FloorPlanViewer {
 
     getFloorLayer(floorIndex, layerName) {
         return this.floorGroups.get(Number(floorIndex))?.getObjectByName(layerName) || null;
+    }
+
+    previewRoomBoundary(room) {
+        if (!room || !Array.isArray(room.polygon) || room.polygon.length < 3) return;
+        const level = this.getItemFloorIndex(room);
+        const layer = this.getFloorLayer(level, "rooms");
+        if (!layer) return;
+        if (this.boundaryPreview) {
+            this.boundaryPreview.parent?.remove(this.boundaryPreview);
+            this.boundaryPreview.geometry.dispose();
+            this.boundaryPreview.material.dispose();
+            this.boundaryPreview = null;
+        }
+        const points = room.polygon.map(([x, z]) => {
+            const world = this.toWorldCoords(x, z);
+            return new THREE.Vector3(world.x, 0.045, world.z);
+        });
+        const line = new THREE.LineLoop(
+            new THREE.BufferGeometry().setFromPoints(points),
+            new THREE.LineBasicMaterial({ color: 0x00d9e8, transparent: true, opacity: 1, depthTest: false })
+        );
+        line.name = "room-boundary-edit-preview";
+        line.renderOrder = 20;
+        line.userData = { roomId: room.id, floorIndex: level };
+        layer.add(line);
+        this.boundaryPreview = line;
+    }
+
+    clearRoomBoundaryPreview() {
+        if (!this.boundaryPreview) return;
+        this.boundaryPreview.parent?.remove(this.boundaryPreview);
+        this.boundaryPreview.geometry.dispose();
+        this.boundaryPreview.material.dispose();
+        this.boundaryPreview = null;
     }
 
     createFloorInfoPanel() {
@@ -1191,15 +1243,16 @@ class FloorPlanViewer {
             const lowerEntryPlan = this.toWorldCoords(lowerLaneX, runEnd);
             const upperExitPlan = this.toWorldCoords(upperDoorSideX, runEnd);
             const upperBounds = boundsFor(upperPoly);
-            const holeWidth = Math.min(0.92, (upperBounds.maxX - upperBounds.minX) * 0.44);
+            const holeWidth = Math.min(1.65, (upperBounds.maxX - upperBounds.minX) * 0.78);
             const holeCenterX = (upperBounds.minX + upperBounds.maxX) / 2 + laneOffset;
             const holeMinX = holeCenterX - holeWidth / 2;
             const holeMaxX = holeCenterX + holeWidth / 2;
-            const holeMinY = upperBounds.minY + Math.min(1.05, (upperBounds.maxY - upperBounds.minY) * 0.3);
-            const holeMaxY = upperBounds.maxY - Math.min(0.25, (upperBounds.maxY - upperBounds.minY) * 0.08);
+            const holeMinY = runEnd;
+            const holeMaxY = runStart;
             if (!this.generatedStairwellOpenings.has(upperRoom)) {
+                // THREE.Shape holes need the opposite winding from their outer ring.
                 this.generatedStairwellOpenings.set(upperRoom, [[
-                    [holeMinX, holeMinY], [holeMaxX, holeMinY], [holeMaxX, holeMaxY], [holeMinX, holeMaxY]
+                    [holeMinX, holeMinY], [holeMinX, holeMaxY], [holeMaxX, holeMaxY], [holeMaxX, holeMinY]
                 ]]);
             }
             this.walkthroughStairLinks.push({
@@ -1732,64 +1785,32 @@ class FloorPlanViewer {
         });
         if (pathNodes.length < 3) return;
 
-        // Keep each floor segment smooth, but make every level change a truly
-        // vertical LineCurve3 segment between the two stacked stair/elevator nodes.
+        // Keep route legs straight between doors and room centers so the visual
+        // route does not bow through walls. Floor changes remain vertical.
         const curvePath = new THREE.CurvePath();
-        let horizontalRun = [pathNodes[0].position];
-        const flushHorizontalRun = () => {
-            if (horizontalRun.length >= 3) {
-                curvePath.add(new THREE.CatmullRomCurve3(horizontalRun, false, "centripetal"));
-            } else if (horizontalRun.length === 2) {
-                curvePath.add(new THREE.LineCurve3(horizontalRun[0], horizontalRun[1]));
-            }
-        };
         for (let index = 1; index < pathNodes.length; index++) {
             const previous = pathNodes[index - 1];
             const current = pathNodes[index];
-            if (current.floorIndex !== previous.floorIndex) {
-                flushHorizontalRun();
-                curvePath.add(new THREE.LineCurve3(previous.position, current.position));
-                horizontalRun = [current.position];
-            } else {
-                horizontalRun.push(current.position);
-            }
+            curvePath.add(new THREE.LineCurve3(previous.position, current.position));
         }
-        flushHorizontalRun();
-        const geometry = new THREE.TubeGeometry(curvePath, Math.max(64, pathNodes.length * 32), 0.15, 10, false);
-        const textureCanvas = document.createElement("canvas");
-        textureCanvas.width = 128;
-        textureCanvas.height = 32;
-        const ctx = textureCanvas.getContext("2d");
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, textureCanvas.width, textureCanvas.height);
-        ctx.fillStyle = "#121212";
-        for (let x = -32; x < textureCanvas.width + 32; x += 32) {
-            ctx.beginPath();
-            ctx.moveTo(x, 0);
-            ctx.lineTo(x + 16, 0);
-            ctx.lineTo(x + 32, textureCanvas.height);
-            ctx.lineTo(x + 16, textureCanvas.height);
-            ctx.closePath();
-            ctx.fill();
-        }
-        const flowTexture = new THREE.CanvasTexture(textureCanvas);
-        flowTexture.wrapS = THREE.RepeatWrapping;
-        flowTexture.wrapT = THREE.RepeatWrapping;
-        flowTexture.repeat.set(5, 1);
+        const geometry = new THREE.TubeGeometry(curvePath, Math.max(32, pathNodes.length * 12), 0.055, 8, false);
         const material = new THREE.MeshStandardMaterial({
-            color: 0xf0c020,
-            map: flowTexture,
-            emissive: 0xf0c020,
+            color: 0x00d9e8,
+            emissive: 0x004c55,
             emissiveIntensity: 0.35,
-            roughness: 0.8,
-            metalness: 0
+            roughness: 0.45,
+            metalness: 0.05,
+            transparent: true,
+            opacity: 0.92,
+            depthWrite: false,
+            toneMapped: false
         });
         const route = new THREE.Mesh(geometry, material);
         route.castShadow = true;
         route.userData.level = Number(level) || 0;
         route.userData.floorIndex = Number(level) || 0;
         group.add(route);
-        this.activeRouteTexture = flowTexture;
+        this.activeRouteTexture = null;
     }
 
     clearRoute() {

@@ -44,7 +44,7 @@
     <!-- Pinned Three.js GLTFExporter via CDN (jsdelivr) -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js"></script>
 </head>
-<body data-processing-ready="{{ 'true' if processing_ready else 'false' }}" data-processing-mode="{{ processing_mode }}" class="h-screen flex flex-col overflow-hidden bg-bauhaus-paper font-sans antialiased text-bauhaus-ink">
+<body data-processing-ready="true" data-processing-mode="{{ processing_mode }}" data-labeling-ready="{{ 'true' if labeling_ready else 'false' }}" class="h-screen flex flex-col overflow-hidden bg-bauhaus-paper font-sans antialiased text-bauhaus-ink">
 
     <!-- Top Header Bar -->
     <header class="bauhaus-header z-20 flex h-16 shrink-0 items-center justify-between border-b-4 border-bauhaus-ink bg-bauhaus-paper px-4 text-bauhaus-ink sm:px-6">
@@ -57,7 +57,7 @@
             <div>
                 <h1 class="flex items-center gap-2 text-xl font-black uppercase tracking-tighter text-bauhaus-ink sm:text-2xl">
                     FloorPlan3D
-                    <span class="provider-tag border-2 border-bauhaus-ink bg-white px-2 py-0.5 text-xs font-bold uppercase tracking-wide">Baseten • Fireworks • Modal</span>
+                    <span class="provider-tag border-2 border-bauhaus-ink bg-white px-2 py-0.5 text-xs font-bold uppercase tracking-wide">Local OpenCV • Optional Llama Labels</span>
                 </h1>
             </div>
         </div>
@@ -65,7 +65,7 @@
         <div class="flex items-center gap-2">
         <div id="processing-mode-badge" class="hidden rounded-none border-2 border-bauhaus-ink bg-bauhaus-yellow px-3 py-1.5 text-xs font-black uppercase tracking-wider" role="status" aria-live="polite"></div>
         <div class="status-badge border-2 border-bauhaus-ink px-3 py-1.5 text-xs font-bold uppercase tracking-wider {% if processing_mode == 'LIVE' %}is-live{% else %}is-offline{% endif %}">
-            {% if processing_mode == 'MOCK' %}Mock pipeline ready{% elif processing_mode == 'REPLAY' %}Replay pipeline ready{% elif processing_mode == 'LIVE' %}Live processing configured{% else %}Offline demo mode{% endif %}
+            {% if processing_mode == 'MOCK' %}MOCK MODE{% else %}Local segmentation · {% if labeling_ready %}Llama labels on{% else %}Generic labels{% endif %}{% endif %}
         </div>
         </div>
     </header>
@@ -93,19 +93,33 @@
                 <section id="area-summary-panel" class="bauhaus-card geo-blue space-y-2 rounded-none border-2 border-bauhaus-ink bg-white p-4" aria-labelledby="area-summary-title">
                     <h2 id="area-summary-title" class="text-xs font-semibold uppercase tracking-wider">Area Summary</h2>
                     <p id="area-summary-total" class="font-mono text-sm">Load a plan to calculate areas.</p>
-                    <div id="map-quality-report" class="rounded-none border border-bauhaus-muted bg-bauhaus-muted p-2 text-[11px] leading-relaxed" role="status" aria-live="polite">Map checks appear after loading a scene. These checks are not an accuracy score.</div>
+                    <div class="space-y-2 rounded-none border border-bauhaus-muted bg-bauhaus-muted p-2 text-[11px] leading-relaxed">
+                        <div id="map-quality-report" role="status" aria-live="polite">Readiness checks appear after loading a scene. They are structural checks, not an accuracy score.</div>
+                        <ul id="map-quality-checks" class="space-y-1" aria-label="Plan review checklist"></ul>
+                        <ul id="map-quality-warnings" class="space-y-1 text-bauhaus-red" aria-label="Items to review"></ul>
+                        <div class="flex flex-wrap gap-2 pt-1">
+                            <button id="btn-review-2d" type="button" class="rounded-none border border-bauhaus-ink bg-white px-2 py-1 text-[10px] font-semibold hover:bg-bauhaus-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Review 2D detections</button>
+                            <button id="btn-review-room" type="button" class="rounded-none border border-bauhaus-ink bg-white px-2 py-1 text-[10px] font-semibold hover:bg-bauhaus-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Edit a room outline</button>
+                        </div>
+                    </div>
                     <details>
                         <summary class="cursor-pointer text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Per-room areas</summary>
                         <ul id="area-summary-rooms" class="mt-2 max-h-48 space-y-1 overflow-y-auto text-xs"></ul>
                     </details>
                 </section>
 
-                {% if not processing_ready %}
-                <div class="bauhaus-warning rounded-none border-2 border-bauhaus-ink bg-bauhaus-yellow p-3 text-xs leading-relaxed text-bauhaus-ink">
-                    <strong class="block mb-1">Live AI is not configured yet</strong>
-                    Use the built-in demo for now. When your keys arrive, add the SAM key and endpoint settings to <code>.env</code>, then restart the app to enable live uploads.
-                </div>
-                {% endif %}
+                <details class="bauhaus-card rounded-none border-2 border-bauhaus-ink bg-white p-4" open>
+                    <summary class="cursor-pointer text-xs font-semibold uppercase tracking-wider focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Quick judge walkthrough</summary>
+                    <ol class="mt-2 list-decimal space-y-1 pl-4 text-[11px] leading-relaxed">
+                        <li>Load the one-story demo, then compare its 2D detections with the original plan.</li>
+                        <li>Use the review checklist; edit a room outline if it does not match.</li>
+                        <li>Load the two-story demo and inspect the story selector and stairs.</li>
+                        <li>Show a route, area summary, and export. Explain estimates and warnings.</li>
+                    </ol>
+                    <p class="mt-2 text-[10px] text-bauhaus-ink">Both demos and the review flow work without API keys.</p>
+                </details>
+
+                {% if not labeling_ready %}<div class="bauhaus-warning rounded-none border-2 border-bauhaus-ink bg-bauhaus-yellow p-3 text-xs leading-relaxed text-bauhaus-ink"><strong class="block mb-1">Local segmentation ready</strong>Uploads work without a key. Room names use generic labels until optional Llama labeling is configured.</div>{% endif %}
 
                 <div id="app-message" role="status" aria-live="polite" class="hidden rounded-none border p-3 text-xs leading-relaxed"></div>
 
@@ -216,14 +230,14 @@
                         <input id="map-assistant-question" type="text" maxlength="500" placeholder="Where is the computer lab?" class="w-full rounded-none border border-bauhaus-ink bg-white px-2 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-bauhaus-red" required>
                         <button id="map-assistant-submit" type="submit" class="w-full rounded-none bg-bauhaus-blue px-3 py-2 text-xs font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Ask map assistant</button>
                     </form>
-                    <p id="map-assistant-provider" class="text-[10px] font-mono text-bauhaus-ink" aria-live="polite">Muse Spark when configured; offline lookup otherwise.</p>
+                    <p id="map-assistant-provider" class="text-[10px] font-mono text-bauhaus-ink" aria-live="polite">Offline scene lookup (no model call).</p>
                     <p id="map-assistant-answer" class="hidden rounded-none border border-bauhaus-muted bg-bauhaus-muted p-2 text-xs leading-relaxed" role="status" aria-live="polite"></p>
                 </section>
 
                 <!-- 4. Generate Button & Progress -->
                 <div>
                     <button id="btn-generate" type="button" disabled class="flex w-full items-center justify-center gap-2 rounded-none border border-bauhaus-ink bg-bauhaus-red px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-[4px_4px_0px_0px_#121212] transition-colors duration-150 ease-in-out hover:bg-bauhaus-red active:scale-95 disabled:cursor-not-allowed disabled:opacity-40">
-                        <span>{% if processing_mode == 'MOCK' %}🧪 Run Mock Pipeline{% elif processing_mode == 'REPLAY' %}📼 Run SAM Replay{% elif processing_ready %}🚀 Process with AI{% else %}🔒 Live AI unavailable{% endif %}</span>
+                        <span>{% if processing_mode == 'MOCK' %}🧪 Run Mock Pipeline{% else %}⚙️ Process locally{% endif %}</span>
                     </button>
 
                     <!-- Progress Bar -->
@@ -471,7 +485,7 @@
     </div>
 
     <!-- Application Controller JS -->
-    <script src="/static/js/viewer.js"></script>
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/viewer.js?v=20261028-route-polish"></script>
+    <script src="/static/js/app.js?v=20261028-route-polish"></script>
 </body>
 </html>

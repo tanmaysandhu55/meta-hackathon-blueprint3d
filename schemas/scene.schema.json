@@ -19,7 +19,7 @@
         "wallThickness": { "type": "number", "exclusiveMinimum": 0 },
         "floorHeight": { "type": "number", "exclusiveMinimum": 0 },
         "levelCount": { "type": "integer", "minimum": 1 },
-        "processingMode": { "enum": ["DEMO", "MOCK", "REPLAY", "LIVE"] },
+        "processingMode": { "enum": ["DEMO", "MOCK", "LOCAL"] },
         "levels": {
           "type": "array",
           "items": {
