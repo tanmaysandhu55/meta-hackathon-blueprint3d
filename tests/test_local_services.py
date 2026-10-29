@@ -6,8 +6,8 @@ import numpy as np
 from PIL import Image
 
 from geometry_processor import extract_doors, mask_to_polygons_with_holes
-import meta_model_service
-from meta_model_service import validate_room_labels
+import baseten_service
+from baseten_service import validate_room_labels
 from segmentation_service import prepare_segmentation, segment_concept, segment_prepared_concept
 
 
@@ -80,8 +80,8 @@ def test_room_label_validation_handles_text_and_rejects_unknown_ids():
 
 
 def test_muse_retries_transient_server_error(monkeypatch):
-    monkeypatch.setenv("META_API_KEY", "test-only")
-    monkeypatch.setenv("MUSE_MODEL", "test-model")
+    monkeypatch.setenv("BASETEN_API_KEY", "test-only")
+    monkeypatch.setenv("BASETEN_MUSE_MODEL", "meta-models/muse-spark-open-1026")
     attempts = []
 
     class TransientError(Exception):
@@ -107,34 +107,67 @@ def test_muse_retries_transient_server_error(monkeypatch):
                 choices = [Choice()]
             return Result()
 
-    monkeypatch.setattr(meta_model_service, "OpenAI", Client)
-    monkeypatch.setattr(meta_model_service.time, "sleep", lambda _delay: None)
-    assert meta_model_service.label_rooms(_image_data_url(), [{"id": "r1"}])
+    monkeypatch.setattr(baseten_service, "OpenAI", Client)
+    monkeypatch.setattr(baseten_service.time, "sleep", lambda _delay: None)
+    assert baseten_service.label_rooms(_image_data_url(), [{"id": "r1"}])
     assert len(attempts) == 3
 
 
 def test_muse_image_payload_is_downscaled_to_2048_pixels():
-    resized_url = meta_model_service._image_data_url(_image_data_url((2400, 1000)))
+    resized_url = baseten_service._image_data_url(_image_data_url((2400, 1000)))
     _, encoded = resized_url.split(",", 1)
     with Image.open(io.BytesIO(base64.b64decode(encoded))) as image:
         assert max(image.size) == 2048
 
 
 def test_invalid_muse_image_uses_generic_label_fallback(monkeypatch):
-    monkeypatch.setenv("META_API_KEY", "test-only")
-    monkeypatch.setenv("MUSE_MODEL", "test-model")
+    monkeypatch.setenv("BASETEN_API_KEY", "test-only")
+    monkeypatch.setenv("BASETEN_MUSE_MODEL", "meta-models/muse-spark-open-1026")
     monkeypatch.setattr(
-        meta_model_service,
+        baseten_service,
         "OpenAI",
         lambda **_kwargs: (_ for _ in ()).throw(AssertionError("API client must not be created")),
     )
-    assert meta_model_service.label_rooms("not an image", [{"id": "r1"}]) == {}
-    assert meta_model_service.last_error_category() == "bad_response"
+    assert baseten_service.label_rooms("not an image", [{"id": "r1"}]) == {}
+    assert baseten_service.last_error_category() == "bad_response"
+
+
+def test_baseten_map_answer_uses_grounded_facts_and_exact_hackathon_model(monkeypatch):
+    monkeypatch.setenv("BASETEN_API_KEY", "test-only")
+    seen = []
+
+    class Client:
+        def __init__(self, **kwargs):
+            seen.append(("client", kwargs))
+            self.chat = self
+            self.completions = self
+
+        def with_options(self, **_kwargs):
+            return self
+
+        def create(self, **kwargs):
+            seen.append(("request", kwargs))
+            class Message:
+                content = "The Computer Lab is on Level 1."
+            class Choice:
+                message = Message()
+            class Result:
+                choices = [Choice()]
+            return Result()
+
+    monkeypatch.setattr(baseten_service, "OpenAI", Client)
+    result = baseten_service.answer_scene_question("Where is the Computer Lab?", {"rooms": [{"label": "Computer Lab"}]})
+
+    assert result == "The Computer Lab is on Level 1."
+    assert next(item[1]["base_url"] for item in seen if item[0] == "client") == "https://inference.baseten.co/v1"
+    request = next(item[1] for item in seen if item[0] == "request")
+    assert request["model"] == "meta-models/muse-spark-open-1026"
+    assert "Scene facts" in request["messages"][1]["content"]
 
 
 def test_repository_has_no_removed_provider_references():
     root = Path(__file__).parents[1]
-    needles = ("base" + "ten", "mo" + "dal", "fire" + "works")
+    needles = ("mo" + "dal", "fire" + "works")
     for path in root.rglob("*"):
         if not path.is_file() or any(part in {".git", ".venv", "__pycache__", ".pytest_cache"} for part in path.parts):
             continue

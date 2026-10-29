@@ -76,7 +76,7 @@ def test_upload_job_completes_using_mock_pipeline_without_keys(client, monkeypat
 def test_upload_job_completes_locally_without_meta_key(client, monkeypatch):
     monkeypatch.setenv("MOCK_MODE", "0")
     monkeypatch.setenv("META_API_KEY", "")
-    monkeypatch.setenv("MUSE_MODEL", "")
+    monkeypatch.setenv("BASETEN_API_KEY", "")
     sample = app_module.SAMPLE_IMG_PATH
     with open(sample, "rb") as source:
         response = client.post("/api/upload", data={"file": (io.BytesIO(source.read()), "sample.png"), "calibrateScale": "false"}, content_type="multipart/form-data")
@@ -115,8 +115,9 @@ def test_mock_health_is_ready_but_never_claims_live_processing(client, monkeypat
 ])
 def test_prepared_demos_load_without_provider_keys(client, monkeypatch, route, expected_floors):
     monkeypatch.setenv("META_API_KEY", "")
+    monkeypatch.setenv("BASETEN_API_KEY", "")
     monkeypatch.setenv("SAM_MODEL", "")
-    monkeypatch.setenv("MUSE_MODEL", "")
+    monkeypatch.setenv("BASETEN_MUSE_MODEL", "")
 
     response = client.get(route)
 
@@ -130,8 +131,9 @@ def test_prepared_demos_load_without_provider_keys(client, monkeypatch, route, e
 
 def test_health_reports_local_fallback_without_meta_key(client, monkeypatch):
     monkeypatch.setenv("META_API_KEY", "")
+    monkeypatch.setenv("BASETEN_API_KEY", "")
     monkeypatch.setenv("SAM_MODEL", "")
-    monkeypatch.setenv("MUSE_MODEL", "")
+    monkeypatch.setenv("BASETEN_MUSE_MODEL", "")
 
     health = client.get("/api/health").get_json()
 
@@ -144,6 +146,7 @@ def test_health_reports_local_fallback_without_meta_key(client, monkeypatch):
 
 def test_media_endpoints_are_disabled_cleanly_without_meta_key(client, monkeypatch):
     monkeypatch.setenv("META_API_KEY", "")
+    monkeypatch.setenv("BASETEN_API_KEY", "")
     monkeypatch.setenv("MUSE_IMAGE_MODEL", "muse-image-1.0")
     monkeypatch.setenv("MUSE_VOICE_MODEL", "muse-voice-transcribe-1.0")
 
@@ -173,6 +176,7 @@ def test_media_endpoints_use_safe_mocked_provider_results(client, monkeypatch):
 
 
 def test_scene_question_uses_explicit_offline_lookup(client, monkeypatch):
+    monkeypatch.setenv("BASETEN_API_KEY", "")
     scene = app_module.get_sample_scene_json()
     response = client.post("/api/scene/ask", json={"question": "Where is the Computer Lab?", "scene": scene})
 
@@ -181,6 +185,18 @@ def test_scene_question_uses_explicit_offline_lookup(client, monkeypatch):
     assert payload["provider"] == "Offline scene lookup (no model call)"
     assert "Computer Lab" in payload["answer"]
     assert "m²" in payload["answer"]
+
+
+def test_scene_question_uses_baseten_when_configured(client, monkeypatch):
+    monkeypatch.setenv("BASETEN_API_KEY", "test-only")
+    monkeypatch.setattr(app_module, "answer_scene_question", lambda question, facts: "AI: the lab is on Level 1.")
+    scene = app_module.get_sample_scene_json()
+
+    response = client.post("/api/scene/ask", json={"question": "Where is the lab?", "scene": scene})
+
+    assert response.status_code == 200
+    assert response.get_json()["provider"] == "Baseten Muse Spark Open (scene-grounded)"
+    assert "Level 1" in response.get_json()["answer"]
 
 
 def test_scene_question_rejects_missing_or_invalid_inputs(client):

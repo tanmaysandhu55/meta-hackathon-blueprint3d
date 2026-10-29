@@ -6,11 +6,11 @@ Start the Flask app and open the local page. Follow the sidebar's **Quick judge 
 
 Before presenting, run `python scripts/evaluate_local_segmentation.py` to check the bundled sample against coarse offline regression guardrails. It does not establish accuracy on arbitrary uploaded plans.
 
-For an uploaded-plan demo, use a clean, high-contrast plan. Without an API key, segmentation uses local OpenCV heuristics and room labels remain generic. With a key, SAM 3.1 segments the image and Muse Spark can suggest room labels; failed SAM concepts fall back to OpenCV. Do not describe prepared demos or local fallback output as model output.
+For an uploaded-plan demo, use a clean, high-contrast plan. Without keys, segmentation uses local OpenCV heuristics and room labels remain generic. A Baseten key enables Muse Spark Open labels and map answers. A separate Meta key enables SAM 3.1; failed SAM concepts fall back to OpenCV. Do not describe prepared demos or local fallback output as model output.
 
 ## Meta model setup
 
-When ready, set `META_API_KEY` in `.env`, keep the model IDs and `META_API_BASE_URL` from `.env.example`, then restart the app. One Meta key enables SAM segmentation, Muse Spark room labels, Muse Image draft generation, and Muse Voice transcription, subject to account access. Live model access remains unverified until tested with your account.
+Set `BASETEN_API_KEY` to the key from your Baseten email and keep `BASETEN_API_BASE_URL` and `BASETEN_MUSE_MODEL` from `.env.example`, then restart. This key enables Muse Spark Open labels and scene-grounded map answers. SAM, Muse Image, and Voice Transcribe need a separate Meta Model API key; without it, local OpenCV and offline map lookup still work.
 
 ## Limitations
 

@@ -18,11 +18,11 @@ flowchart LR
     K[Text prompt] --> L[Optional Muse Image draft]
     L --> B
     M[WAV question] --> N[Optional Muse Voice transcription]
-    N --> O[Offline map assistant]
+    N --> O[Baseten AI or offline map assistant]
     J[Prepared demo scenes] --> I
 ```
 
-With `META_API_KEY` configured, the app sends four parallel image prompts to Meta SAM 3.1 and decodes its pixel masks into scene geometry. If SAM is not configured or a concept request fails, the corresponding concept falls back to local OpenCV heuristics. Muse Spark optionally suggests room labels through the same Meta key. Without a key, uploads still work locally with generic labels. Prepared demos never call either model. The map assistant remains a deterministic local scene lookup.
+With `META_API_KEY` configured, the app can send four parallel image prompts to Meta SAM 3.1; failed concepts fall back to local OpenCV. A Baseten key enables Muse Spark Open for room labels and scene-grounded map questions. Without either key, uploads and the deterministic map lookup still work locally. Prepared demos never call providers.
 
 ## Run on Windows
 
@@ -50,14 +50,22 @@ Both prepared demos, upload processing, local heuristic segmentation, generic ro
 
 ## Optional Meta models
 
-All hosted models use one Meta Model API key. SAM 3.1 segments uploads; Muse Spark suggests room labels; Muse Image can generate a draft floor-plan image from a text description; Muse Voice Transcribe converts a WAV question to text for the map assistant. The generated plan is a visual draft and its dimensions/walls are not guaranteed. Voice transcription currently accepts mono, 16-bit PCM WAV at 16 or 24 kHz, up to 10 minutes. The model IDs are configurable in `.env` and default to `sam-3.1`, `muse-spark-1.3`, `muse-image-1.0`, and `muse-voice-transcribe-1.0`, with base URL `https://api.meta.ai/v1`. When your account has access:
+Baseten provides the `meta-models/muse-spark-open-1026` model through `https://inference.baseten.co/v1`. Its `BASETEN_API_KEY` enables room labeling and an AI map assistant grounded in the loaded scene. Set these values in `.env`:
+
+```env
+BASETEN_API_KEY=your_key_here
+BASETEN_API_BASE_URL=https://inference.baseten.co/v1
+BASETEN_MUSE_MODEL=meta-models/muse-spark-open-1026
+```
+
+SAM 3.1, Muse Image, and Muse Voice are separate Meta Model API services and still require `META_API_KEY`; the Baseten key does not authenticate those endpoints. Without that Meta key the project uses OpenCV segmentation, and the image/voice features remain unavailable. Muse Image outputs are visual drafts, not verified architectural plans. Voice transcription accepts mono, 16-bit PCM WAV at 16 or 24 kHz, up to 10 minutes. To enable optional Meta-hosted features, add a separate `META_API_KEY` and keep the model IDs from `.env.example`:
 
 1. Open .env in the project folder.
-2. Set `META_API_KEY` to your key from the Meta Model API dashboard.
-3. Keep the base URL and model IDs from `.env.example` unless Meta provides different values for your account.
+2. Set `META_API_KEY` only if you have Meta Model API access for SAM, Muse Image, or Muse Voice.
+3. Set the exact model IDs provided by your Meta dashboard.
 4. Restart Flask. The page badge and `/api/health` show whether SAM and Muse are configured.
 
-SAM uses the Responses API and Meta's official `meta-sam-parser` package. Muse Spark uses Chat Completions for room labels. Muse Image uses image generation. Voice Transcribe uses Meta's multipart transcription endpoint. See [SAM segmentation](https://dev.meta.ai/docs/sam/overview), [Muse image generation](https://dev.meta.ai/docs/cookbook/image-generation-basics), and [Muse speech-to-text](https://dev.meta.ai/docs/speech-to-text). Configured settings do not prove your account can access the models; test with your key when available. SAM failures fall back per concept to OpenCV; Muse Spark failures use generic room labels. Credentials and raw provider responses are not returned to the browser.
+SAM uses Meta's Responses API and official parser. Muse Spark Open uses the OpenAI-compatible Baseten endpoint. Muse Image and Voice Transcribe are optional Meta services. See [Baseten's inference quickstart](https://docs.baseten.co/inference/overview), [Meta SAM docs](https://dev.meta.ai/docs/sam/overview), [Muse image generation](https://dev.meta.ai/docs/cookbook/image-generation-basics), and [Muse speech-to-text](https://dev.meta.ai/docs/speech-to-text). Account access is unverified until tested with your credentials. Provider failures fall back safely where available; credentials and raw provider responses are not returned to the browser.
 
 ## Limitations
 

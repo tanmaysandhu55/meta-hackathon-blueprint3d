@@ -20,7 +20,7 @@ from jsonschema import Draft202012Validator
 from PIL import Image, UnidentifiedImageError
 from werkzeug.utils import secure_filename
 
-from meta_model_service import label_rooms, is_labeling_configured, last_error_category
+from baseten_service import answer_scene_question, label_rooms, is_labeling_configured, last_error_category
 from meta_sam_service import is_sam_configured, query_sam_concept
 from meta_media_service import generate_floorplan, image_generation_ready, transcribe_audio, voice_transcription_ready
 from demo_data import generate_sample_floorplan_image, get_sample_mask_overlays, get_sample_scene_json, get_two_story_sample_scene_json
@@ -571,11 +571,14 @@ def ask_about_scene():
         return jsonify({"success": False, "error": "The current map is not valid enough to query."}), 400
 
     facts = _build_scene_facts(scene)
-    answer = _offline_scene_answer(question.strip(), facts)
+    answer = answer_scene_question(question.strip(), facts) if labeling_ready() else None
+    provider = "Baseten Muse Spark Open (scene-grounded)" if answer else "Offline scene lookup (no model call)"
+    if not answer:
+        answer = _offline_scene_answer(question.strip(), facts)
     return jsonify({
         "success": True,
         "answer": answer,
-        "provider": "Offline scene lookup (no model call)",
+        "provider": provider,
     })
 
 

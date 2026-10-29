@@ -57,7 +57,7 @@
             <div>
                 <h1 class="flex items-center gap-2 text-xl font-black uppercase tracking-tighter text-bauhaus-ink sm:text-2xl">
                     FloorPlan3D
-                    <span class="provider-tag border-2 border-bauhaus-ink bg-white px-2 py-0.5 text-xs font-bold uppercase tracking-wide">Meta SAM 3.1 • Muse Spark • OpenCV fallback</span>
+                    <span class="provider-tag border-2 border-bauhaus-ink bg-white px-2 py-0.5 text-xs font-bold uppercase tracking-wide">Meta SAM 3.1 • Baseten Muse Spark Open • OpenCV fallback</span>
                 </h1>
             </div>
         </div>
@@ -119,7 +119,7 @@
                     <p class="mt-2 text-[10px] text-bauhaus-ink">Both demos and the review flow work without API keys.</p>
                 </details>
 
-                {% if not sam_ready or not labeling_ready %}<div class="bauhaus-warning rounded-none border-2 border-bauhaus-ink bg-bauhaus-yellow p-3 text-xs leading-relaxed text-bauhaus-ink"><strong class="block mb-1">{% if sam_ready %}SAM segmentation ready{% else %}Local segmentation ready{% endif %}</strong>{% if sam_ready %}SAM 3.1 will segment uploads.{% else %}Uploads use local OpenCV until a Meta API key is added.{% endif %} {% if not labeling_ready %}Room labels will be generic until Meta model access is configured.{% endif %}</div>{% endif %}
+                {% if not sam_ready or not labeling_ready %}<div class="bauhaus-warning rounded-none border-2 border-bauhaus-ink bg-bauhaus-yellow p-3 text-xs leading-relaxed text-bauhaus-ink"><strong class="block mb-1">{% if sam_ready %}SAM segmentation ready{% else %}Local segmentation ready{% endif %}</strong>{% if sam_ready %}SAM 3.1 will segment uploads.{% else %}Uploads use local OpenCV until a separate Meta API key is configured.{% endif %} {% if not labeling_ready %}Room labels use generic names until the Baseten key is configured.{% endif %}</div>{% endif %}
 
                 <div id="app-message" role="status" aria-live="polite" class="hidden rounded-none border p-3 text-xs leading-relaxed"></div>
 
@@ -245,7 +245,7 @@
                         <button id="btn-transcribe-map" type="button" class="w-full rounded-none border border-bauhaus-ink bg-white px-3 py-2 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red" {% if not voice_transcription_ready %}disabled{% endif %}>Transcribe question</button>
                         <p id="map-transcription-status" class="text-[10px]" aria-live="polite">{% if voice_transcription_ready %}Muse Voice Transcribe is ready.{% else %}Voice transcription needs META_API_KEY.{% endif %}</p>
                     </div>
-                    <p id="map-assistant-provider" class="text-[10px] font-mono text-bauhaus-ink" aria-live="polite">Offline scene lookup (no model call).</p>
+                    <p id="map-assistant-provider" class="text-[10px] font-mono text-bauhaus-ink" aria-live="polite">{% if labeling_ready %}Baseten Muse Spark Open{% else %}Offline scene lookup (no model call){% endif %}</p>
                     <p id="map-assistant-answer" class="hidden rounded-none border border-bauhaus-muted bg-bauhaus-muted p-2 text-xs leading-relaxed" role="status" aria-live="polite"></p>
                 </section>
 

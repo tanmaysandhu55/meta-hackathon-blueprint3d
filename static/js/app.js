@@ -156,7 +156,7 @@ document.addEventListener("DOMContentLoaded", () => {
         processingModeBadge.title = mode === "MOCK"
             ? "Generated from the prepared sample plan. Uploaded image pixels were not analyzed."
             : mode === "LOCAL"
-                ? "OpenCV analyzes plans locally; Meta SAM 3.1 can segment uploads, and Muse Spark can suggest room labels."
+                ? "OpenCV analyzes plans locally; Meta SAM 3.1 can segment uploads, and Baseten-hosted Muse Spark Open can suggest room labels."
                 : mode === "LIVE"
                     ? "At least one segmentation concept was processed by Meta SAM 3.1. Check scene warnings for local fallback concepts."
                 : "Prepared sample data, not a live provider result.";

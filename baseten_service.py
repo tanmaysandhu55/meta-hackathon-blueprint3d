@@ -1,4 +1,4 @@
-"""Optional room labeling through Meta Muse Spark."""
+"""Room labeling and grounded map answers through Baseten-hosted Muse Spark Open."""
 import base64
 import json
 import logging
@@ -19,8 +19,8 @@ ALLOWED_TYPES = {"room", "classroom", "lab", "corridor", "stairs", "elevator", "
 
 def _configured():
     return bool(
-        os.getenv("META_API_KEY", "").strip()
-        and os.getenv("MUSE_MODEL", "muse-spark-1.3").strip()
+        os.getenv("BASETEN_API_KEY", "").strip()
+        and os.getenv("BASETEN_MUSE_MODEL", "meta-models/muse-spark-open-1026").strip()
     )
 
 
@@ -93,8 +93,8 @@ def label_rooms(b64_data_url, room_candidates, timeout=45):
         return {}
 
     client = OpenAI(
-        api_key=os.environ["META_API_KEY"].strip(),
-        base_url=os.getenv("META_API_BASE_URL", "https://api.meta.ai/v1").strip(),
+        api_key=os.environ["BASETEN_API_KEY"].strip(),
+        base_url=os.getenv("BASETEN_API_BASE_URL", "https://inference.baseten.co/v1").strip(),
         timeout=timeout,
         max_retries=0,
     )
@@ -117,8 +117,8 @@ def label_rooms(b64_data_url, room_candidates, timeout=45):
             return {}
         try:
             response = client.with_options(timeout=remaining).chat.completions.create(
-                model=os.getenv("MUSE_MODEL", "muse-spark-1.3").strip(), messages=messages,
-                temperature=0.1, max_completion_tokens=1600,
+                model=os.getenv("BASETEN_MUSE_MODEL", "meta-models/muse-spark-open-1026").strip(), messages=messages,
+                temperature=0.1, max_tokens=1600,
             )
             result = validate_room_labels(response.choices[0].message.content or "", room_candidates)
             if not result:
@@ -135,3 +135,56 @@ def label_rooms(b64_data_url, room_candidates, timeout=45):
                 return {}
             time.sleep(delay)
     return {}
+
+
+def answer_scene_question(question, scene_facts, timeout=30):
+    """Answer a map question using only the compact facts from the loaded scene."""
+    _error_state.category = None
+    if not _configured():
+        return None
+    deadline = time.monotonic() + timeout
+    try:
+        client = OpenAI(
+            api_key=os.environ["BASETEN_API_KEY"].strip(),
+            base_url=os.getenv("BASETEN_API_BASE_URL", "https://inference.baseten.co/v1").strip(),
+            timeout=timeout,
+            max_retries=0,
+        )
+    except Exception as exc:
+        _error_state.category = "configuration"
+        logger.warning("Baseten map client could not be configured (%s)", type(exc).__name__)
+        return None
+    system = (
+        "You are a floor-plan assistant. Answer only from the supplied scene facts. "
+        "Do not invent rooms, dimensions, routes, or safety claims. If facts do not answer the question, say so. "
+        "Describe all areas as estimates. Keep the answer concise."
+    )
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": "Scene facts (JSON): " + json.dumps(scene_facts, ensure_ascii=False) + "\nQuestion: " + question},
+    ]
+    for attempt in range(3):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            _error_state.category = "timeout"
+            return None
+        try:
+            response = client.with_options(timeout=remaining).chat.completions.create(
+                model=os.getenv("BASETEN_MUSE_MODEL", "meta-models/muse-spark-open-1026").strip(),
+                messages=messages,
+                temperature=0.1,
+                max_tokens=300,
+            )
+            answer = response.choices[0].message.content
+            return answer.strip()[:1200] if isinstance(answer, str) and answer.strip() else None
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            category = "auth" if status in (401, 403) else "timeout" if isinstance(exc, APITimeoutError) else "bad_response" if status in (400, 404, 422) else "unavailable"
+            _error_state.category = category
+            retryable = isinstance(exc, (APIConnectionError, APITimeoutError)) or (status is not None and status >= 500)
+            logger.warning("Baseten map answer failed (category=%s): %s", category, type(exc).__name__)
+            delay = 0.4 * (2 ** attempt)
+            if not retryable or attempt == 2 or time.monotonic() + delay >= deadline:
+                return None
+            time.sleep(delay)
+    return None
