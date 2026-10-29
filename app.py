@@ -32,6 +32,7 @@ from geometry_processor import (
     mask_to_polygons_with_holes,
 )
 from segmentation_service import prepare_segmentation, segment_prepared_concept
+from usage_tracker import get_provider_usage
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -183,6 +184,90 @@ def _offline_scene_answer(question, facts):
     if "door" in normalized and ("how many" in normalized or "count" in normalized):
         return f"The scene contains {len(facts['doors'])} detected doors."
     return "Offline scene lookup can answer room, floor, area, and door-count questions."
+
+
+def _extract_route_request(question, facts):
+    """Resolve an explicit natural-language route request against known room names."""
+    normalized = " ".join(question.casefold().split())
+    route_intent = any(term in normalized for term in (
+        "route", "navigate", "way from", "get from", "go from", "directions", "between"
+    ))
+    if not route_intent:
+        return None
+
+    matches = []
+    for room in facts["rooms"]:
+        candidates = [room["label"], room["id"]]
+        positions = [normalized.find(value.casefold()) for value in candidates if value]
+        positions = [position for position in positions if position >= 0]
+        if positions:
+            matches.append((min(positions), room))
+    matches.sort(key=lambda item: item[0])
+    unique = []
+    seen = set()
+    for _, room in matches:
+        if room["id"] not in seen:
+            unique.append(room)
+            seen.add(room["id"])
+    if len(unique) < 2:
+        return None
+    start, end = unique[0], unique[1]
+    return {
+        "startId": start["id"], "endId": end["id"],
+        "startLabel": start["label"] or start["id"],
+        "endLabel": end["label"] or end["id"],
+    }
+
+
+def _scene_review_facts(scene, facts):
+    rooms = scene.get("rooms", [])
+    walls = scene.get("walls", [])
+    doors = scene.get("doors", [])
+    windows = scene.get("windows", [])
+    meta = scene.get("meta", {})
+    valid_rooms = sum(1 for room in rooms if len(room.get("polygon", [])) >= 3)
+    connectors = [room for room in rooms if str(room.get("type", "")).lower() in {"stairs", "stair", "elevator"}]
+    floor_ids = {int(room.get("floorIndex", room.get("level", 0)) or 0) for room in rooms}
+    scale_method = str(meta.get("scaleMethod", "")).lower()
+    interactive_scale = "interactive" in scale_method
+    generic_label = lambda value: not value or value.strip().lower().startswith("room ")
+    named_rooms = sum(1 for room in rooms if not generic_label(str(room.get("label", ""))))
+    findings = [
+        {"status": "check" if not rooms or valid_rooms < len(rooms) else "ok", "title": "Room outlines", "detail": f"{valid_rooms} of {len(rooms)} rooms have polygons with at least three points."},
+        {"status": "check" if not walls else "ok", "title": "Wall geometry", "detail": f"{len(walls)} wall region(s) are present." if walls else "No wall regions are recorded."},
+        {"status": "check" if not doors else "ok", "title": "Door openings", "detail": f"{len(doors)} door opening(s) are recorded; compare them with the source plan."},
+        {"status": "check" if len(floor_ids) > 1 and not connectors else "ok", "title": "Floor connection", "detail": f"{len(connectors)} stair/elevator room(s) are recorded across {len(floor_ids) or 1} floor(s)."},
+        {"status": "check" if not interactive_scale or "fallback" in scale_method else "ok", "title": "Scale", "detail": "Scale is an estimate; verify it against a known dimension." if not interactive_scale else "Interactive scale calibration is recorded; still verify against a known dimension."},
+        {"status": "check" if named_rooms < len(rooms) else "ok", "title": "Room labels", "detail": f"{named_rooms} of {len(rooms)} rooms have specific labels."},
+        {"status": "info", "title": "Windows", "detail": f"{len(windows)} window opening(s) are recorded."},
+    ]
+    warnings = [str(item)[:240] for item in meta.get("warnings", [])[:12] if isinstance(item, str)]
+    return {
+        "room_count": len(rooms), "valid_room_count": valid_rooms,
+        "floor_count": len(floor_ids) or len(facts["levels"]) or 1,
+        "total_area_m2": round(sum(room["area_m2"] for room in facts["rooms"]), 2),
+        "door_count": len(doors), "window_count": len(windows), "wall_count": len(walls),
+        "findings": findings, "warnings": warnings,
+    }
+
+
+def _offline_scene_insight(kind, review, facts):
+    if kind == "summary":
+        area = review["total_area_m2"]
+        by_floor = defaultdict(int)
+        for room in facts["rooms"]:
+            by_floor[room["floor"] + 1] += 1
+        floors = ", ".join(f"Level {floor}: {count} room(s)" for floor, count in sorted(by_floor.items())) or "No rooms recorded"
+        return (f"This scene contains {review['room_count']} rooms across {review['floor_count']} floor(s), "
+                f"with approximately {area:.1f} m² of mapped room area. It records {review['door_count']} doors, "
+                f"{review['window_count']} windows, and {review['wall_count']} wall regions. {floors}. "
+                "Areas and geometry are estimates; verify them against the source plan.")
+    needs_review = [item["title"] for item in review["findings"] if item["status"] == "check"]
+    next_steps = ", ".join(needs_review) if needs_review else "compare the geometry and scale with the source plan"
+    return (f"Structural review: {review['valid_room_count']} of {review['room_count']} room outlines are usable; "
+            f"{review['door_count']} doors and {review['window_count']} windows are recorded across "
+            f"{review['floor_count']} floor(s). Review {next_steps}. This is a geometry checklist, not a "
+            "building-code, construction, or safety assessment.")
 
 
 def validate_scene_contract(scene):
@@ -551,6 +636,11 @@ def health():
     })
 
 
+@app.route("/api/usage", methods=["GET"])
+def provider_usage():
+    return jsonify({"success": True, "provider": "Baseten", "usage": get_provider_usage()})
+
+
 @app.route("/api/scene/ask", methods=["POST"])
 def ask_about_scene():
     payload = request.get_json(silent=True) or {}
@@ -571,8 +661,16 @@ def ask_about_scene():
         return jsonify({"success": False, "error": "The current map is not valid enough to query."}), 400
 
     facts = _build_scene_facts(scene)
+    route = _extract_route_request(question.strip(), facts)
+    if route:
+        return jsonify({
+            "success": True,
+            "answer": f"Finding the door-aware route from {route['startLabel']} to {route['endLabel']} using the current scene.",
+            "provider": "Scene route planner (current geometry)",
+            "route": route,
+        })
     answer = answer_scene_question(question.strip(), facts) if labeling_ready() else None
-    provider = "Baseten Muse Spark Open (scene-grounded)" if answer else "Offline scene lookup (no model call)"
+    provider = "Baseten Muse Spark Open (scene-grounded)" if answer else "Offline scene lookup (Baseten returned no usable answer)"
     if not answer:
         answer = _offline_scene_answer(question.strip(), facts)
     return jsonify({
@@ -580,6 +678,40 @@ def ask_about_scene():
         "answer": answer,
         "provider": provider,
     })
+
+
+@app.route("/api/scene/insight", methods=["POST"])
+def scene_insight():
+    payload = request.get_json(silent=True) or {}
+    kind = payload.get("kind")
+    scene = payload.get("scene")
+    if kind not in {"review", "summary"}:
+        return jsonify({"success": False, "error": "Choose review or summary."}), 400
+    if not isinstance(scene, dict):
+        return jsonify({"success": False, "error": "Load a floor-plan scene first."}), 400
+    retry_after = _rate_limit_question(request.remote_addr or "unknown")
+    if retry_after:
+        response = jsonify({"success": False, "error": "Map assistant rate limit reached. Wait before asking again."})
+        response.headers["Retry-After"] = str(retry_after)
+        return response, 429
+    try:
+        validate_scene_contract(scene)
+    except RuntimeError:
+        return jsonify({"success": False, "error": "The current map is not valid enough to review."}), 400
+
+    facts = _build_scene_facts(scene)
+    review = _scene_review_facts(scene, facts)
+    kind_prompt = (
+        "Write a short structural review from these computed findings only. Prioritize items marked check. "
+        "Do not invent defects or make code, construction, or safety claims. Areas are estimates."
+        if kind == "review" else
+        "Write a concise building summary from these computed scene facts only. Include floor and room counts, "
+        "estimated area, and detected geometry counts. Do not invent facts; state that measurements are estimates."
+    )
+    ai_answer = answer_scene_question(kind_prompt + "\nComputed review facts: " + json.dumps(review, ensure_ascii=False), facts) if labeling_ready() else None
+    answer = ai_answer or _offline_scene_insight(kind, review, facts)
+    provider = "Baseten Muse Spark Open (scene-grounded)" if ai_answer else "Offline scene analysis (Baseten returned no usable answer)"
+    return jsonify({"success": True, "kind": kind, "answer": answer, "provider": provider, "review": review})
 
 
 @app.route("/api/sample", methods=["GET"])

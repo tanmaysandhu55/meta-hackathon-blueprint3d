@@ -1,6 +1,7 @@
 # Environment variables (NEVER commit secrets/API keys to GitHub)
 .env
 recorded_sam_responses/
+local_data/
 FloorPlan3D-project*.zip
 
 # Python bytecode

@@ -98,9 +98,12 @@
                         <ul id="map-quality-checks" class="space-y-1" aria-label="Plan review checklist"></ul>
                         <ul id="map-quality-warnings" class="space-y-1 text-bauhaus-red" aria-label="Items to review"></ul>
                         <div class="flex flex-wrap gap-2 pt-1">
+                            <button id="btn-ai-plan-review" type="button" class="rounded-none bg-bauhaus-blue px-2 py-1 text-[10px] font-semibold text-white hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">AI plan review</button>
+                            <button id="btn-building-summary" type="button" class="rounded-none border border-bauhaus-ink bg-white px-2 py-1 text-[10px] font-semibold hover:bg-bauhaus-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Summarize building</button>
                             <button id="btn-review-2d" type="button" class="rounded-none border border-bauhaus-ink bg-white px-2 py-1 text-[10px] font-semibold hover:bg-bauhaus-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Review 2D detections</button>
                             <button id="btn-review-room" type="button" class="rounded-none border border-bauhaus-ink bg-white px-2 py-1 text-[10px] font-semibold hover:bg-bauhaus-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Edit a room outline</button>
                         </div>
+                        <div id="scene-insight-result" class="hidden border-t border-bauhaus-ink pt-2 text-xs leading-relaxed" role="status" aria-live="polite"></div>
                     </div>
                     <details>
                         <summary class="cursor-pointer text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Per-room areas</summary>
@@ -233,7 +236,7 @@
 
                 <section class="bauhaus-card geo-blue space-y-3 rounded-none border-2 border-bauhaus-ink bg-white p-4" aria-labelledby="map-assistant-title">
                     <h2 id="map-assistant-title" class="text-xs font-semibold uppercase tracking-wider">Ask this map</h2>
-                    <p class="text-[11px] text-bauhaus-ink">Ask about room names, levels, areas, and detected connections. Answers use the current scene.</p>
+                    <p class="text-[11px] text-bauhaus-ink">Ask about rooms, levels, areas, or request a route, such as “route from the lobby to the computer lab.” Answers use the current scene.</p>
                     <form id="map-assistant-form" class="space-y-2">
                         <label for="map-assistant-question" class="sr-only">Question about this floor plan</label>
                         <input id="map-assistant-question" type="text" maxlength="500" placeholder="Where is the computer lab?" class="w-full rounded-none border border-bauhaus-ink bg-white px-2 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-bauhaus-red" required>

@@ -11,6 +11,7 @@ from io import BytesIO
 from openai import OpenAI
 from openai import APIConnectionError, APITimeoutError
 from PIL import Image
+from usage_tracker import record_provider_usage
 
 logger = logging.getLogger(__name__)
 _error_state = threading.local()
@@ -118,8 +119,9 @@ def label_rooms(b64_data_url, room_candidates, timeout=45):
         try:
             response = client.with_options(timeout=remaining).chat.completions.create(
                 model=os.getenv("BASETEN_MUSE_MODEL", "meta-models/muse-spark-open-1026").strip(), messages=messages,
-                temperature=0.1, max_tokens=1600,
+                temperature=0.1, max_tokens=4096,
             )
+            record_provider_usage(response, "room_labeling")
             result = validate_room_labels(response.choices[0].message.content or "", room_candidates)
             if not result:
                 logger.warning("Muse room-label response had an unsupported JSON shape")
@@ -173,10 +175,16 @@ def answer_scene_question(question, scene_facts, timeout=30):
                 model=os.getenv("BASETEN_MUSE_MODEL", "meta-models/muse-spark-open-1026").strip(),
                 messages=messages,
                 temperature=0.1,
-                max_tokens=300,
+                max_tokens=4096,
             )
-            answer = response.choices[0].message.content
-            return answer.strip()[:1200] if isinstance(answer, str) and answer.strip() else None
+            record_provider_usage(response, "map_assistant")
+            choice = response.choices[0]
+            answer = choice.message.content
+            if getattr(choice, "finish_reason", None) == "length" or not isinstance(answer, str) or not answer.strip():
+                _error_state.category = "bad_response"
+                logger.warning("Baseten map answer was truncated or empty (finish_reason=%s, category=bad_response)", getattr(choice, "finish_reason", "unknown"))
+                return None
+            return answer.strip()[:1200]
         except Exception as exc:
             status = getattr(exc, "status_code", None)
             category = "auth" if status in (401, 403) else "timeout" if isinstance(exc, APITimeoutError) else "bad_response" if status in (400, 404, 422) else "unavailable"

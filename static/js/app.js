@@ -86,6 +86,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const mapAssistantSubmit = document.getElementById("map-assistant-submit");
     const mapAssistantProvider = document.getElementById("map-assistant-provider");
     const mapAssistantAnswer = document.getElementById("map-assistant-answer");
+    const btnAiPlanReview = document.getElementById("btn-ai-plan-review");
+    const btnBuildingSummary = document.getElementById("btn-building-summary");
+    const sceneInsightResult = document.getElementById("scene-insight-result");
     const museImagePrompt = document.getElementById("muse-image-prompt");
     const btnMuseImage = document.getElementById("btn-muse-image");
     const museImageStatus = document.getElementById("muse-image-status");
@@ -528,6 +531,59 @@ document.addEventListener("DOMContentLoaded", () => {
         showRoomRoute(currentSceneData, routeFrom.value, routeTo.value);
     });
 
+    async function requestSceneInsight(kind, button) {
+        if (!currentSceneData) {
+            sceneInsightResult.textContent = "Load a demo or process a plan first.";
+            sceneInsightResult.classList.remove("hidden");
+            return;
+        }
+        const originalText = button.textContent;
+        button.disabled = true;
+        button.textContent = kind === "review" ? "Reviewing…" : "Summarizing…";
+        sceneInsightResult.textContent = "Checking the current scene…";
+        sceneInsightResult.classList.remove("hidden");
+        try {
+            const response = await fetch("/api/scene/insight", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ kind, scene: currentSceneData }),
+            });
+            const result = await response.json();
+            if (!response.ok || !result.success) throw new Error(result.error || "Scene analysis failed.");
+            sceneInsightResult.replaceChildren();
+            const provider = document.createElement("p");
+            provider.className = "mb-1 font-mono text-[10px]";
+            provider.textContent = result.provider;
+            const answer = document.createElement("p");
+            answer.textContent = result.answer;
+            sceneInsightResult.append(provider, answer);
+            if (kind === "review" && Array.isArray(result.review?.findings)) {
+                const checklist = document.createElement("ul");
+                checklist.className = "mt-2 space-y-1 border-t border-bauhaus-ink pt-2";
+                result.review.findings.forEach(item => {
+                    const row = document.createElement("li");
+                    row.textContent = `${item.status === "check" ? "! Review" : item.status === "ok" ? "✓ Checked" : "i Info"}: ${item.title} — ${item.detail}`;
+                    checklist.appendChild(row);
+                });
+                sceneInsightResult.appendChild(checklist);
+                (result.review.warnings || []).forEach(warning => {
+                    const row = document.createElement("p");
+                    row.className = "mt-1 text-bauhaus-red";
+                    row.textContent = `Warning: ${warning}`;
+                    sceneInsightResult.appendChild(row);
+                });
+            }
+        } catch (error) {
+            sceneInsightResult.textContent = error.message || "Scene analysis failed.";
+        } finally {
+            button.disabled = false;
+            button.textContent = originalText;
+        }
+    }
+
+    btnAiPlanReview.addEventListener("click", () => requestSceneInsight("review", btnAiPlanReview));
+    btnBuildingSummary.addEventListener("click", () => requestSceneInsight("summary", btnBuildingSummary));
+
     mapAssistantForm.addEventListener("submit", async event => {
         event.preventDefault();
         if (!currentSceneData) {
@@ -546,6 +602,11 @@ document.addEventListener("DOMContentLoaded", () => {
             });
             const result = await response.json();
             if (!response.ok || !result.success) throw new Error(result.error || "Could not query this map.");
+            if (result.route) {
+                routeFrom.value = result.route.startId;
+                routeTo.value = result.route.endId;
+                showRoomRoute(currentSceneData, result.route.startId, result.route.endId);
+            }
             mapAssistantAnswer.textContent = result.answer;
             mapAssistantProvider.textContent = result.provider;
         } catch (error) {

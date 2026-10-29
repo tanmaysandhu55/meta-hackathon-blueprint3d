@@ -162,6 +162,7 @@ def test_baseten_map_answer_uses_grounded_facts_and_exact_hackathon_model(monkey
     assert next(item[1]["base_url"] for item in seen if item[0] == "client") == "https://inference.baseten.co/v1"
     request = next(item[1] for item in seen if item[0] == "request")
     assert request["model"] == "meta-models/muse-spark-open-1026"
+    assert request["max_tokens"] == 4096
     assert "Scene facts" in request["messages"][1]["content"]
 
 

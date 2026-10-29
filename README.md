@@ -58,6 +58,8 @@ BASETEN_API_BASE_URL=https://inference.baseten.co/v1
 BASETEN_MUSE_MODEL=meta-models/muse-spark-open-1026
 ```
 
+Baseten token counts are recorded for successful provider responses in the local, gitignored `local_data/baseten_usage.json` file. The current totals are also available from the local `/api/usage` endpoint. This tracking starts after the updated app is restarted and cannot recover usage from earlier requests; it is not a balance or cost estimate.
+
 SAM 3.1, Muse Image, and Muse Voice are separate Meta Model API services and still require `META_API_KEY`; the Baseten key does not authenticate those endpoints. Without that Meta key the project uses OpenCV segmentation, and the image/voice features remain unavailable. Muse Image outputs are visual drafts, not verified architectural plans. Voice transcription accepts mono, 16-bit PCM WAV at 16 or 24 kHz, up to 10 minutes. To enable optional Meta-hosted features, add a separate `META_API_KEY` and keep the model IDs from `.env.example`:
 
 1. Open .env in the project folder.
@@ -79,4 +81,4 @@ To check local segmentation and geometry against the bundled sample plan without
 
 ## Demo review flow
 
-Use the sidebar's **Quick judge walkthrough** to rehearse the key features. The **Area Summary** review checklist reports structural details such as usable room outlines, detected wall/opening regions, scale calibration status, floor connectors, labels, and pipeline warnings. **Review 2D detections** opens the overlay; **Edit a room outline** selects a room and starts the boundary editor. Review all detected geometry and verify scale against a known dimension before relying on measurements.
+Use the sidebar's **Quick judge walkthrough** to rehearse the key features. The **Area Summary** includes an AI plan review and a one-click building summary; both use the current scene facts and still work offline with deterministic text. The map assistant can answer scene questions and resolve explicit requests such as “route from East Lobby to Computer Lab” into the existing door/stairs route planner. The **Review 2D detections** button opens the overlay; **Edit a room outline** selects a room and starts the boundary editor. Review all detected geometry and verify scale against a known dimension before relying on measurements. AI text is grounded in detected scene data but is not a building-code, construction, or safety assessment.

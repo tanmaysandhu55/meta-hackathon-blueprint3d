@@ -97,6 +97,8 @@ def test_upload_job_completes_locally_without_meta_key(client, monkeypatch):
 
 def test_mock_health_is_ready_but_never_claims_live_processing(client, monkeypatch):
     monkeypatch.setenv("MOCK_MODE", "1")
+    monkeypatch.setenv("BASETEN_API_KEY", "")
+    monkeypatch.setenv("META_API_KEY", "")
 
     health = client.get("/api/health").get_json()
     page = client.get("/").get_data(as_text=True)
@@ -182,7 +184,7 @@ def test_scene_question_uses_explicit_offline_lookup(client, monkeypatch):
 
     assert response.status_code == 200
     payload = response.get_json()
-    assert payload["provider"] == "Offline scene lookup (no model call)"
+    assert payload["provider"] == "Offline scene lookup (Baseten returned no usable answer)"
     assert "Computer Lab" in payload["answer"]
     assert "m²" in payload["answer"]
 
@@ -197,6 +199,48 @@ def test_scene_question_uses_baseten_when_configured(client, monkeypatch):
     assert response.status_code == 200
     assert response.get_json()["provider"] == "Baseten Muse Spark Open (scene-grounded)"
     assert "Level 1" in response.get_json()["answer"]
+
+
+def test_scene_question_turns_named_route_into_current_scene_route(client, monkeypatch):
+    monkeypatch.setenv("BASETEN_API_KEY", "")
+    scene = app_module.get_sample_scene_json()
+    response = client.post("/api/scene/ask", json={
+        "question": "Route from East Lobby to Computer Lab",
+        "scene": scene,
+    })
+
+    assert response.status_code == 200
+    result = response.get_json()
+    assert result["route"]["startLabel"] == "East Lobby"
+    assert result["route"]["endLabel"] == "Computer Lab"
+    assert result["provider"] == "Scene route planner (current geometry)"
+
+
+def test_scene_insights_work_without_a_provider_key(client, monkeypatch):
+    monkeypatch.setenv("BASETEN_API_KEY", "")
+    scene = app_module.get_two_story_sample_scene_json()
+
+    review = client.post("/api/scene/insight", json={"kind": "review", "scene": scene})
+    summary = client.post("/api/scene/insight", json={"kind": "summary", "scene": scene})
+
+    assert review.status_code == 200
+    assert summary.status_code == 200
+    assert review.get_json()["provider"] == "Offline scene analysis (Baseten returned no usable answer)"
+    assert "Structural review" in review.get_json()["answer"]
+    assert "2 floor(s)" in summary.get_json()["answer"]
+    assert review.get_json()["review"]["room_count"] == len(scene["rooms"])
+
+
+def test_scene_insight_uses_grounded_model_when_configured(client, monkeypatch):
+    monkeypatch.setenv("BASETEN_API_KEY", "test-only")
+    monkeypatch.setattr(app_module, "answer_scene_question", lambda _question, _facts: "Grounded scene review.")
+    scene = app_module.get_sample_scene_json()
+
+    response = client.post("/api/scene/insight", json={"kind": "review", "scene": scene})
+
+    assert response.status_code == 200
+    assert response.get_json()["provider"] == "Baseten Muse Spark Open (scene-grounded)"
+    assert response.get_json()["answer"] == "Grounded scene review."
 
 
 def test_scene_question_rejects_missing_or_invalid_inputs(client):
