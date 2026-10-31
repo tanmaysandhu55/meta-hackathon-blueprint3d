@@ -74,7 +74,9 @@ def generate_sample_floorplan_image(output_path=None):
         # East lobby to stairwell
         {"center": (625, 420), "size": 44, "wall_orient": "V", "swing": (625, 398, 669, 442), "start": 0, "end": 90},
         # Main entrance on West Wall
-        {"center": (50, 330),  "size": 44, "wall_orient": "V", "swing": (50, 308, 94, 352), "start": 0, "end": 90},
+        {"center": (50, 308),  "size": 44, "wall_orient": "V", "swing": (50, 286, 94, 330), "start": 0, "end": 90},
+        # Main entrance on South Wall (East Lobby exit)
+        {"center": (568, 550), "size": 50, "wall_orient": "H", "swing": (568, 500, 618, 550), "start": 180, "end": 270},
     ]
 
     for d in door_clearances:
@@ -213,9 +215,10 @@ def get_sample_mask_overlays(image_size=(800, 600)):
             {"id": "d2", "box": [532, 290, 568, 310], "color": "rgba(245, 158, 11, 0.7)"},
             {"id": "d3", "box": [144, 350, 176, 370], "color": "rgba(245, 158, 11, 0.7)"},
             {"id": "d4", "box": [373, 350, 407, 370], "color": "rgba(245, 158, 11, 0.7)"},
-            {"id": "d5", "box": [40, 308, 60, 352], "color": "rgba(245, 158, 11, 0.7)"},
+            {"id": "d5", "box": [40, 286, 60, 330], "color": "rgba(245, 158, 11, 0.7)"},
             {"id": "d6", "box": [615, 398, 635, 442], "color": "rgba(245, 158, 11, 0.7)"},
             {"id": "d7", "box": [545, 350, 590, 370], "color": "rgba(245, 158, 11, 0.7)"},
+            {"id": "d8", "box": [543, 540, 593, 560], "color": "rgba(245, 158, 11, 0.7)"},
         ],
         "window": [
             {"id": "win1", "box": [180, 44, 260, 56], "color": "rgba(56, 189, 248, 0.7)"},

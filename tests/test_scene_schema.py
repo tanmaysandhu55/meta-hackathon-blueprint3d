@@ -19,3 +19,28 @@ def test_scene_contract_rejects_invalid_polygon():
 
     with pytest.raises(RuntimeError, match="rooms.0.polygon"):
         validate_scene_contract(scene)
+
+
+def test_sample_scene_has_genuine_exterior_exits():
+    scene = get_sample_scene_json()
+    doors = scene.get("doors", [])
+    exterior_doors = [d for d in doors if "outside" in d.get("connects", [])]
+    assert len(exterior_doors) >= 2, "Expected at least 2 exterior exit doors"
+
+    # Verify West corridor exit d5
+    d5 = next((d for d in doors if d["id"] == "d5"), None)
+    assert d5 is not None
+    assert "outside" in d5["connects"]
+    assert "r3" in d5["connects"]
+
+    # Verify East lobby main entrance exit d8
+    d8 = next((d for d in doors if d["id"] == "d8"), None)
+    assert d8 is not None
+    assert "outside" in d8["connects"]
+    assert "r6" in d8["connects"]
+
+    # Verify wall opening for d8 on south perimeter
+    walls = scene.get("walls", [])
+    wall_ids = {w["id"] for w in walls}
+    assert "south_center_east_a" in wall_ids
+    assert "south_center_east_b" in wall_ids

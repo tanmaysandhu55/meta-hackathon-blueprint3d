@@ -14,16 +14,17 @@ from PIL import Image
 logger = logging.getLogger(__name__)
 
 CONCEPT_PROMPTS = {
-    "room": "individual rooms in a 2D architectural floor plan",
-    "wall": "walls in a 2D architectural floor plan",
-    "door": "door openings in a 2D architectural floor plan",
-    "window": "windows in a 2D architectural floor plan",
+    "room": "rooms",
+    "wall": "walls",
+    "door": "doors",
+    "window": "windows",
 }
 
 
 def is_sam_configured():
+    api_key = os.getenv("META_API_KEY", "").strip() or os.getenv("MODEL_API_KEY", "").strip()
     return bool(
-        os.getenv("META_API_KEY", "").strip()
+        api_key
         and os.getenv("SAM_MODEL", "sam-3.1").strip()
     )
 
@@ -93,9 +94,10 @@ def query_sam_concept(image_bytes, concept, image_size, timeout=75):
     prompt = CONCEPT_PROMPTS[concept]
     size, data_url = _prepare_image(image_bytes)
     deadline = time.monotonic() + timeout
+    api_key = os.getenv("META_API_KEY", "").strip() or os.getenv("MODEL_API_KEY", "").strip()
     client = OpenAI(
-        api_key=os.environ["META_API_KEY"].strip(),
-        base_url=os.getenv("META_API_BASE_URL", "https://api.meta.ai/v1").strip(),
+        api_key=api_key,
+        base_url=os.getenv("META_API_BASE_URL", os.getenv("MODEL_BASE_URL", "https://api.meta.ai/v1")).strip(),
         timeout=timeout,
         max_retries=0,
     )
@@ -105,15 +107,35 @@ def query_sam_concept(image_bytes, concept, image_size, timeout=75):
         if remaining <= 0:
             raise TimeoutError("SAM request exceeded its processing time budget.")
         try:
-            response = client.with_options(timeout=remaining).responses.create(
-                model=model,
-                input=[{"type": "message", "role": "user", "content": [
-                    {"type": "input_text", "text": prompt},
-                    {"type": "input_image", "image_url": data_url},
-                ]}],
-                metadata={"mask_encoding": "one_bit", "include_confidence": "true"},
-            )
-            masks = _decode_masks(response.output_text or "", size)
+            output_text = ""
+            stream_fn = getattr(client.responses, "stream", None)
+            if callable(stream_fn):
+                try:
+                    with client.with_options(timeout=remaining).responses.stream(
+                        model=model,
+                        input=[{"type": "message", "role": "user", "content": [
+                            {"type": "input_text", "text": prompt},
+                            {"type": "input_image", "image_url": data_url},
+                        ]}],
+                        metadata={"mask_encoding": "one_bit", "include_confidence": "true"},
+                    ) as stream:
+                        for event in stream:
+                            if getattr(event, "type", None) == "response.output_text.delta":
+                                output_text += getattr(event, "delta", "")
+                except Exception as stream_exc:
+                    logger.debug("SAM streaming failed, trying create: %s", stream_exc)
+                    output_text = ""
+            if not output_text:
+                response = client.with_options(timeout=remaining).responses.create(
+                    model=model,
+                    input=[{"type": "message", "role": "user", "content": [
+                        {"type": "input_text", "text": prompt},
+                        {"type": "input_image", "image_url": data_url},
+                    ]}],
+                    metadata={"mask_encoding": "one_bit", "include_confidence": "true"},
+                )
+                output_text = getattr(response, "output_text", "") or ""
+            masks = _decode_masks(output_text, size)
             if not masks:
                 raise ValueError("SAM returned no masks for this prompt.")
             original_size = tuple(map(int, image_size))

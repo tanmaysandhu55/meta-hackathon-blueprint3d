@@ -23,7 +23,8 @@
     { "id": "east_south", "polygon": [[14.8, 4.6], [15.0, 4.6], [15.0, 11.0], [14.8, 11.0]] },
     { "id": "south_west", "polygon": [[1.0, 10.8], [2.6, 10.8], [2.6, 11.0], [1.0, 11.0]] },
     { "id": "south_center_west", "polygon": [[3.8, 10.8], [7.2, 10.8], [7.2, 11.0], [3.8, 11.0]] },
-    { "id": "south_center_east", "polygon": [[8.8, 10.8], [15.0, 10.8], [15.0, 11.0], [8.8, 11.0]] },
+    { "id": "south_center_east_a", "polygon": [[8.8, 10.8], [10.85, 10.8], [10.85, 11.0], [8.8, 11.0]] },
+    { "id": "south_center_east_b", "polygon": [[11.85, 10.8], [15.0, 10.8], [15.0, 11.0], [11.85, 11.0]] },
     { "id": "west_north", "polygon": [[1.0, 1.0], [1.2, 1.0], [1.2, 5.72], [1.0, 5.72]] },
     { "id": "west_south", "polygon": [[1.0, 6.6], [1.2, 6.6], [1.2, 11.0], [1.0, 11.0]] },
     { "id": "class_lab_divider", "polygon": [[7.3, 1.0], [7.5, 1.0], [7.5, 6.0], [7.3, 6.0]] },
@@ -45,9 +46,10 @@
     { "id": "d2", "center": [11.0, 6.0], "width": 0.72, "connects": ["r2", "r3"] },
     { "id": "d3", "center": [3.2, 7.2], "width": 0.64, "connects": ["r4", "r3"] },
     { "id": "d4", "center": [7.8, 7.2], "width": 0.68, "connects": ["r5", "r3"] },
-    { "id": "d5", "center": [1.0, 6.6], "width": 0.88, "connects": ["r3", "outside"] },
+    { "id": "d5", "center": [1.1, 6.16], "width": 0.88, "connects": ["r3", "outside"] },
     { "id": "d6", "center": [12.5, 8.4], "width": 0.9, "connects": ["r6", "r7"] },
-    { "id": "d7", "center": [11.35, 7.2], "width": 0.9, "connects": ["r3", "r6"] }
+    { "id": "d7", "center": [11.35, 7.2], "width": 0.9, "connects": ["r3", "r6"] },
+    { "id": "d8", "center": [11.35, 10.9], "width": 1.0, "connects": ["r6", "outside"] }
   ],
   "windows": [
     { "id": "win1", "center": [4.4, 1.0], "width": 1.6 },

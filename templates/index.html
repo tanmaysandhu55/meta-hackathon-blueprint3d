@@ -85,6 +85,9 @@
                     <button id="btn-load-two-story-demo" type="button" class="mt-2 flex w-full items-center justify-center gap-2 rounded-none border border-bauhaus-ink bg-transparent px-4 py-2 text-sm font-medium text-bauhaus-ink transition-colors duration-150 ease-in-out hover:border-bauhaus-red hover:bg-bauhaus-muted hover:text-bauhaus-ink active:scale-95">
                         <span>🏢 Load Two-Story Demo</span>
                     </button>
+                    <button id="btn-sidebar-evac" type="button" class="mt-2 flex w-full items-center justify-center gap-2 rounded-none border border-bauhaus-ink bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow transition-colors duration-150 ease-in-out hover:bg-emerald-700 active:scale-95">
+                        <span>🚨 Simulate Life-Safety Evacuation</span>
+                    </button>
                     <p class="text-[11px] text-bauhaus-ink text-center mt-1.5">
                         Prepared one- and two-story examples work without API keys or inference.
                     </p>
@@ -403,6 +406,15 @@
                     <button id="btn-cutaway" title="Cut walls to 1.1m to view room interiors" class="viewport-control rounded-none px-2.5 py-1 text-bauhaus-ink transition-colors duration-150 ease-in-out">
                         Cutaway View
                     </button>
+                    <button id="btn-toggle-sunlight" title="Time of Day & Sunlight Simulation" class="viewport-control rounded-none px-2.5 py-1 text-bauhaus-ink transition-colors duration-150 ease-in-out">
+                        ☀️ Sun & Night
+                    </button>
+                    <button id="btn-toggle-blueprint" title="Project 2D Blueprint under 3D model" class="viewport-control rounded-none px-2.5 py-1 text-bauhaus-ink transition-colors duration-150 ease-in-out">
+                        📐 Blueprint
+                    </button>
+                    <button id="btn-toggle-evacuation" title="Simulate Life-Safety Emergency Evacuation" class="flex items-center gap-1 rounded-none border border-bauhaus-ink bg-emerald-600 px-2.5 py-1 font-medium text-white shadow-sm transition-colors duration-150 ease-in-out hover:bg-emerald-700 active:scale-95">
+                        <span>🚨 Evacuation</span>
+                    </button>
                     <button id="btn-export-glb" title="Download 3D building as .GLB file" class="flex items-center gap-1 rounded-none border border-bauhaus-ink bg-bauhaus-red px-2.5 py-1 font-medium text-white shadow-sm transition-colors duration-150 ease-in-out hover:bg-bauhaus-red active:scale-95">
                         <span>📦 Export .GLB</span>
                     </button>
@@ -430,10 +442,99 @@
                             </div>
                             <button type="button" data-walk-interact aria-label="Open nearby door or use stairs">Interact · E</button>
                         </div>
+                        <div class="walkthrough-quick-actions flex items-center justify-center gap-2 mt-2">
+                            <button id="btn-walk-outside" type="button" class="px-2.5 py-1 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded border border-white/20 shadow transition-colors flex items-center gap-1" title="Step outside the building to inspect the house from outside">👀 View Outside</button>
+                            <button id="btn-walk-inside" type="button" class="px-2.5 py-1 text-xs font-semibold bg-slate-700 hover:bg-slate-600 text-white rounded border border-white/20 shadow transition-colors flex items-center gap-1" title="Return inside to the entrance lobby">🏠 Go Inside</button>
+                        </div>
                     </section>
 
                     <div id="measurement-panel" class="glass-panel absolute right-4 top-4 hidden rounded-none border-2 border-bauhaus-ink bg-white p-3 text-xs" role="status" aria-live="polite">
                         <div class="flex items-center gap-3"><span id="measurement-status">Click a first point to measure.</span><button id="btn-clear-measurement" type="button" aria-label="Clear current measurement" class="border border-bauhaus-ink px-2 py-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Clear</button></div>
+                    </div>
+
+                    <!-- Sunlight & Night Simulation Floating Panel -->
+                    <div id="sunlight-panel" class="glass-panel absolute right-4 top-16 hidden rounded-none border-2 border-bauhaus-ink bg-white p-3 text-xs shadow-2xl z-20 space-y-2.5 w-64">
+                        <div class="flex items-center justify-between border-b border-bauhaus-ink pb-1">
+                            <span class="font-bold uppercase tracking-wider text-[11px] flex items-center gap-1">
+                                <span id="sun-icon">☀️</span> Sunlight & Shadows
+                            </span>
+                            <button id="btn-close-sunlight" type="button" class="text-xs px-1.5 py-0.5 border border-bauhaus-ink hover:bg-bauhaus-yellow">✕</button>
+                        </div>
+                        <div class="space-y-1">
+                            <div class="flex justify-between text-[11px]">
+                                <span>Time of Day</span>
+                                <span id="label-sun-time" class="font-mono font-bold text-bauhaus-blue">1:00 PM</span>
+                            </div>
+                            <input id="input-sun-time" type="range" min="6" max="22" step="0.5" value="13" class="w-full cursor-pointer accent-bauhaus-red">
+                            <div class="flex justify-between text-[9px] text-gray-500">
+                                <span>6 AM (Dawn)</span>
+                                <span>12 PM (Noon)</span>
+                                <span>10 PM (Night)</span>
+                            </div>
+                        </div>
+                        <div class="flex gap-2 pt-1">
+                            <button id="btn-preset-day" type="button" class="flex-1 py-1 text-[10px] font-bold border border-bauhaus-ink bg-bauhaus-yellow hover:opacity-90">☀️ Day (1 PM)</button>
+                            <button id="btn-preset-night" type="button" class="flex-1 py-1 text-[10px] font-bold border border-bauhaus-ink bg-slate-800 text-white hover:bg-slate-900">🌙 Night Mode</button>
+                        </div>
+                        <p id="sunlight-status" class="text-[10px] text-gray-600 italic">Interior room ceiling lights turn on automatically at night.</p>
+                    </div>
+
+                    <!-- 2D Blueprint Underlay Floating Panel -->
+                    <div id="blueprint-panel" class="glass-panel absolute right-4 top-16 hidden rounded-none border-2 border-bauhaus-ink bg-white p-3 text-xs shadow-2xl z-20 space-y-2.5 w-64">
+                        <div class="flex items-center justify-between border-b border-bauhaus-ink pb-1">
+                            <span class="font-bold uppercase tracking-wider text-[11px] flex items-center gap-1">
+                                📐 2D Blueprint Underlay
+                            </span>
+                            <button id="btn-close-blueprint" type="button" class="text-xs px-1.5 py-0.5 border border-bauhaus-ink hover:bg-bauhaus-yellow">✕</button>
+                        </div>
+                        <p class="text-[10px] text-gray-600">Projects the source blueprint image onto the ground plane to verify 3D alignment.</p>
+                        <div class="space-y-1">
+                            <div class="flex justify-between text-[11px]">
+                                <span>Underlay Opacity</span>
+                                <span id="label-blueprint-opacity" class="font-mono font-bold text-bauhaus-blue">0% (Off)</span>
+                            </div>
+                            <input id="input-blueprint-opacity" type="range" min="0" max="100" step="5" value="0" class="w-full cursor-pointer accent-bauhaus-red">
+                        </div>
+                        <div class="flex gap-2">
+                            <button id="btn-blueprint-zero" type="button" class="flex-1 py-1 text-[10px] border border-bauhaus-ink bg-white hover:bg-bauhaus-muted">Hide</button>
+                            <button id="btn-blueprint-half" type="button" class="flex-1 py-1 text-[10px] border border-bauhaus-ink bg-white hover:bg-bauhaus-muted">50% Blend</button>
+                            <button id="btn-blueprint-full" type="button" class="flex-1 py-1 text-[10px] border border-bauhaus-ink bg-white hover:bg-bauhaus-muted">100% Solid</button>
+                        </div>
+                    </div>
+
+                    <!-- Emergency Evacuation Simulator Audit Card -->
+                    <div id="evacuation-card" class="glass-panel absolute left-4 top-4 hidden rounded-none border-2 border-bauhaus-ink bg-white p-3.5 text-xs shadow-2xl z-20 space-y-2 w-80">
+                        <div class="flex items-center justify-between border-b-2 border-emerald-600 pb-1.5">
+                            <span class="font-bold uppercase tracking-wider text-xs text-emerald-700 flex items-center gap-1.5">
+                                🚨 Life-Safety Egress Simulation
+                            </span>
+                            <button id="btn-close-evacuation" type="button" class="text-xs px-2 py-0.5 border border-bauhaus-ink bg-bauhaus-red text-white hover:opacity-90">✕ Stop</button>
+                        </div>
+                        <div class="space-y-1 text-[11px]">
+                            <div class="flex justify-between">
+                                <span class="text-gray-600">Designated Exits:</span>
+                                <strong id="evac-exit-count" class="font-mono text-emerald-700">2 Exits</strong>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-600">Evacuation Routes:</span>
+                                <strong id="evac-room-count" class="font-mono text-emerald-700">All Rooms Connected</strong>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-600">Max Travel Distance:</span>
+                                <strong id="evac-max-dist" class="font-mono text-bauhaus-blue">13.6 m</strong>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-600">Average Egress:</span>
+                                <strong id="evac-avg-dist" class="font-mono text-bauhaus-blue">8.4 m</strong>
+                            </div>
+                            <div class="flex justify-between border-t border-gray-200 pt-1">
+                                <span class="text-gray-600">NFPA 101 Compliance:</span>
+                                <strong id="evac-compliance" class="font-mono text-emerald-700">Grade A (100% Compliant)</strong>
+                            </div>
+                        </div>
+                        <p class="text-[10px] text-gray-500 italic border-t border-gray-100 pt-1">
+                            Green arrows trace shortest exit pathways through detected doors. Glowing beacons mark discharge points.
+                        </p>
                     </div>
 
                     <!-- Overlay Legend & Controls Guide -->

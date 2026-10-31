@@ -824,6 +824,19 @@ document.addEventListener("DOMContentLoaded", () => {
         btnWalkthrough.textContent = enabled ? "Exit Walkthrough" : "Walkthrough";
     };
     viewer.onWalkthroughStoryViewChange = value => { levelFilter.value = value; };
+
+    const btnWalkOutside = document.getElementById("btn-walk-outside");
+    const btnWalkInside = document.getElementById("btn-walk-inside");
+    if (btnWalkOutside) {
+        btnWalkOutside.addEventListener("click", () => {
+            if (viewer) viewer.walkOutside();
+        });
+    }
+    if (btnWalkInside) {
+        btnWalkInside.addEventListener("click", () => {
+            if (viewer) viewer.walkInside();
+        });
+    }
     btnMeasure.addEventListener("click", () => {
         const enabled = viewer.toggleMeasurementMode();
         btnMeasure.setAttribute("aria-pressed", String(enabled));
@@ -1487,6 +1500,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // 1. Render in Three.js
         viewer.loadScene(data.scene);
+        if (data.imageUrl && data.scene && data.scene.meta) {
+            viewer.setBlueprintImage(data.imageUrl, data.scene.meta.imageSize, data.scene.meta.metersPerPixel);
+        }
 
         // 2. Populate scene.json viewer
         jsonOutput.textContent = JSON.stringify(data.scene, null, 2);
@@ -1756,5 +1772,157 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (btnDownloadGlbTab) {
         btnDownloadGlbTab.addEventListener("click", triggerGlbExport);
+    }
+
+    // -------------------------------------------------------------
+    // 1. Dynamic Sunlight & Night-Mode Light Simulation
+    // -------------------------------------------------------------
+    const btnToggleSunlight = document.getElementById("btn-toggle-sunlight");
+    const sunlightPanel = document.getElementById("sunlight-panel");
+    const btnCloseSunlight = document.getElementById("btn-close-sunlight");
+    const inputSunTime = document.getElementById("input-sun-time");
+    const labelSunTime = document.getElementById("label-sun-time");
+    const sunIcon = document.getElementById("sun-icon");
+    const btnPresetDay = document.getElementById("btn-preset-day");
+    const btnPresetNight = document.getElementById("btn-preset-night");
+
+    function formatTimeLabel(hour) {
+        const h = Math.floor(hour);
+        const m = Math.round((hour - h) * 60);
+        const mStr = m === 0 ? "00" : (m < 10 ? "0" + m : m);
+        const ampm = h >= 12 ? "PM" : "AM";
+        const h12 = h % 12 === 0 ? 12 : h % 12;
+        return `${h12}:${mStr} ${ampm}`;
+    }
+
+    function updateSunlightUI(hour) {
+        if (labelSunTime) labelSunTime.textContent = formatTimeLabel(hour);
+        if (inputSunTime) inputSunTime.value = hour;
+        if (sunIcon) {
+            if (hour >= 20 || hour < 6.5) sunIcon.textContent = "🌙";
+            else if (hour >= 18) sunIcon.textContent = "🌇";
+            else if (hour < 8) sunIcon.textContent = "🌅";
+            else sunIcon.textContent = "☀️";
+        }
+        viewer.setTimeOfDay(hour);
+    }
+
+    if (btnToggleSunlight && sunlightPanel) {
+        btnToggleSunlight.addEventListener("click", () => {
+            sunlightPanel.classList.toggle("hidden");
+            if (blueprintPanel) blueprintPanel.classList.add("hidden");
+        });
+    }
+    if (btnCloseSunlight && sunlightPanel) {
+        btnCloseSunlight.addEventListener("click", () => sunlightPanel.classList.add("hidden"));
+    }
+    if (inputSunTime) {
+        inputSunTime.addEventListener("input", e => updateSunlightUI(parseFloat(e.target.value)));
+    }
+    if (btnPresetDay) {
+        btnPresetDay.addEventListener("click", () => updateSunlightUI(13.0));
+    }
+    if (btnPresetNight) {
+        btnPresetNight.addEventListener("click", () => updateSunlightUI(21.0));
+    }
+
+    // -------------------------------------------------------------
+    // 2. 2D Blueprint Underlay Projection
+    // -------------------------------------------------------------
+    const btnToggleBlueprint = document.getElementById("btn-toggle-blueprint");
+    const blueprintPanel = document.getElementById("blueprint-panel");
+    const btnCloseBlueprint = document.getElementById("btn-close-blueprint");
+    const inputBlueprintOpacity = document.getElementById("input-blueprint-opacity");
+    const labelBlueprintOpacity = document.getElementById("label-blueprint-opacity");
+    const btnBlueprintZero = document.getElementById("btn-blueprint-zero");
+    const btnBlueprintHalf = document.getElementById("btn-blueprint-half");
+    const btnBlueprintFull = document.getElementById("btn-blueprint-full");
+
+    function updateBlueprintOpacityUI(val) {
+        const opacity = val / 100.0;
+        if (inputBlueprintOpacity) inputBlueprintOpacity.value = val;
+        if (labelBlueprintOpacity) {
+            labelBlueprintOpacity.textContent = val === 0 ? "0% (Off)" : `${val}%`;
+        }
+        viewer.setBlueprintOpacity(opacity);
+    }
+
+    if (btnToggleBlueprint && blueprintPanel) {
+        btnToggleBlueprint.addEventListener("click", () => {
+            blueprintPanel.classList.toggle("hidden");
+            if (sunlightPanel) sunlightPanel.classList.add("hidden");
+        });
+    }
+    if (btnCloseBlueprint && blueprintPanel) {
+        btnCloseBlueprint.addEventListener("click", () => blueprintPanel.classList.add("hidden"));
+    }
+    if (inputBlueprintOpacity) {
+        inputBlueprintOpacity.addEventListener("input", e => updateBlueprintOpacityUI(parseInt(e.target.value, 10)));
+    }
+    if (btnBlueprintZero) {
+        btnBlueprintZero.addEventListener("click", () => updateBlueprintOpacityUI(0));
+    }
+    if (btnBlueprintHalf) {
+        btnBlueprintHalf.addEventListener("click", () => updateBlueprintOpacityUI(50));
+    }
+    if (btnBlueprintFull) {
+        btnBlueprintFull.addEventListener("click", () => updateBlueprintOpacityUI(100));
+    }
+
+    // -------------------------------------------------------------
+    // 3. Emergency Evacuation Life-Safety Simulator
+    // -------------------------------------------------------------
+    const btnToggleEvacuation = document.getElementById("btn-toggle-evacuation");
+    const btnSidebarEvac = document.getElementById("btn-sidebar-evac");
+    const evacuationCard = document.getElementById("evacuation-card");
+    const btnCloseEvacuation = document.getElementById("btn-close-evacuation");
+    const evacExitCount = document.getElementById("evac-exit-count");
+    const evacRoomCount = document.getElementById("evac-room-count");
+    const evacMaxDist = document.getElementById("evac-max-dist");
+    const evacAvgDist = document.getElementById("evac-avg-dist");
+    const evacCompliance = document.getElementById("evac-compliance");
+
+    function runEvacuationSimulation() {
+        if (!currentSceneData) {
+            showMessage("Load a floor plan or demo scene first to simulate evacuation routes.", "warning");
+            return;
+        }
+        const tab3d = document.querySelector('[data-tab="3d"]');
+        if (tab3d) tab3d.click();
+
+        const report = viewer.simulateEvacuation();
+        if (report && report.success) {
+            if (evacExitCount) evacExitCount.textContent = `${report.exitCount} Exit Discharge${report.exitCount > 1 ? "s" : ""}`;
+            if (evacRoomCount) evacRoomCount.textContent = `${report.roomCount} of ${report.totalRooms} Rooms Connected`;
+            if (evacMaxDist) evacMaxDist.textContent = `${report.maxDistance} m`;
+            if (evacAvgDist) evacAvgDist.textContent = `${report.avgDistance} m`;
+            if (evacCompliance) evacCompliance.textContent = report.compliance;
+            if (evacuationCard) evacuationCard.classList.remove("hidden");
+            showMessage("🚨 Emergency evacuation simulation active. Glowing paths show shortest egress to exterior exits.", "info");
+        } else {
+            showMessage("Could not compute evacuation paths: check door connectivity in the scene.", "warning");
+        }
+    }
+
+    function stopEvacuationSimulation() {
+        viewer.clearEvacuation();
+        if (evacuationCard) evacuationCard.classList.add("hidden");
+        clearMessage();
+    }
+
+    if (btnToggleEvacuation) {
+        btnToggleEvacuation.addEventListener("click", () => {
+            if (viewer.evacuationActive) {
+                stopEvacuationSimulation();
+            } else {
+                runEvacuationSimulation();
+            }
+        });
+    }
+    if (btnSidebarEvac) {
+        btnSidebarEvac.addEventListener("click", runEvacuationSimulation);
+    }
+    if (btnCloseEvacuation) {
+        btnCloseEvacuation.addEventListener("click", stopEvacuationSimulation);
     }
 });
