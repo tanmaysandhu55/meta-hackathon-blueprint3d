@@ -50,6 +50,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Layer checkboxes
     const chkWalls = document.getElementById("chk-walls");
     const chkFloors = document.getElementById("chk-floors");
+    const chkRoof = document.getElementById("chk-roof");
     const chkLabels = document.getElementById("chk-labels");
     const chkOpenings = document.getElementById("chk-openings");
     const chkGrid = document.getElementById("chk-grid");
@@ -809,7 +810,8 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     chkWalls.addEventListener("change", (e) => viewer.toggleLayer("walls", e.target.checked));
-    chkFloors.addEventListener("change", (e) => viewer.toggleLayer("rooms", e.target.checked));
+    if (chkFloors) chkFloors.addEventListener("change", (e) => viewer.toggleLayer("rooms", e.target.checked));
+    if (chkRoof) chkRoof.addEventListener("change", (e) => viewer.toggleLayer("roof", e.target.checked));
     chkLabels.addEventListener("change", (e) => viewer.toggleLayer("labels", e.target.checked));
     chkOpenings.addEventListener("change", (e) => {
         viewer.toggleLayer("doors", e.target.checked);
