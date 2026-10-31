@@ -86,7 +86,7 @@
                         <span>🏢 Load Two-Story Demo</span>
                     </button>
                     <button id="btn-sidebar-evac" type="button" class="mt-2 flex w-full items-center justify-center gap-2 rounded-none border border-bauhaus-ink bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow transition-colors duration-150 ease-in-out hover:bg-emerald-700 active:scale-95">
-                        <span>🚨 Simulate Life-Safety Evacuation</span>
+                        <span>Preview Egress Connectivity</span>
                     </button>
                     <p class="text-[11px] text-bauhaus-ink text-center mt-1.5">
                         Prepared one- and two-story examples work without API keys or inference.
@@ -412,7 +412,7 @@
                     <button id="btn-toggle-blueprint" title="Project 2D Blueprint under 3D model" class="viewport-control rounded-none px-2.5 py-1 text-bauhaus-ink transition-colors duration-150 ease-in-out">
                         📐 Blueprint
                     </button>
-                    <button id="btn-toggle-evacuation" title="Simulate Life-Safety Emergency Evacuation" class="flex items-center gap-1 rounded-none border border-bauhaus-ink bg-emerald-600 px-2.5 py-1 font-medium text-white shadow-sm transition-colors duration-150 ease-in-out hover:bg-emerald-700 active:scale-95">
+                    <button id="btn-toggle-evacuation" title="Preview routes through detected door and stair connections; not a safety assessment" class="flex items-center gap-1 rounded-none border border-bauhaus-ink bg-emerald-600 px-2.5 py-1 font-medium text-white shadow-sm transition-colors duration-150 ease-in-out hover:bg-emerald-700 active:scale-95">
                         <span>🚨 Evacuation</span>
                     </button>
                     <button id="btn-export-glb" title="Download 3D building as .GLB file" class="flex items-center gap-1 rounded-none border border-bauhaus-ink bg-bauhaus-red px-2.5 py-1 font-medium text-white shadow-sm transition-colors duration-150 ease-in-out hover:bg-bauhaus-red active:scale-95">
@@ -506,7 +506,7 @@
                     <div id="evacuation-card" class="glass-panel absolute left-4 top-4 hidden rounded-none border-2 border-bauhaus-ink bg-white p-3.5 text-xs shadow-2xl z-20 space-y-2 w-80">
                         <div class="flex items-center justify-between border-b-2 border-emerald-600 pb-1.5">
                             <span class="font-bold uppercase tracking-wider text-xs text-emerald-700 flex items-center gap-1.5">
-                                🚨 Life-Safety Egress Simulation
+                                Egress Connectivity Preview
                             </span>
                             <button id="btn-close-evacuation" type="button" class="text-xs px-2 py-0.5 border border-bauhaus-ink bg-bauhaus-red text-white hover:opacity-90">✕ Stop</button>
                         </div>
@@ -528,12 +528,12 @@
                                 <strong id="evac-avg-dist" class="font-mono text-bauhaus-blue">8.4 m</strong>
                             </div>
                             <div class="flex justify-between border-t border-gray-200 pt-1">
-                                <span class="text-gray-600">NFPA 101 Compliance:</span>
-                                <strong id="evac-compliance" class="font-mono text-emerald-700">Grade A (100% Compliant)</strong>
+                                <span class="text-gray-600">Safety / code assessment:</span>
+                                <strong id="evac-compliance" class="font-mono text-bauhaus-red">Not assessed</strong>
                             </div>
                         </div>
                         <p class="text-[10px] text-gray-500 italic border-t border-gray-100 pt-1">
-                            Green arrows trace shortest exit pathways through detected doors. Glowing beacons mark discharge points.
+                            Routes and lengths are geometry estimates only. Exit candidates may be inferred. Not for evacuation planning, code compliance, construction, or safety decisions.
                         </p>
                     </div>
 

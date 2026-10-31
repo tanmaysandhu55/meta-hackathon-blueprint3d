@@ -1892,13 +1892,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const report = viewer.simulateEvacuation();
         if (report && report.success) {
-            if (evacExitCount) evacExitCount.textContent = `${report.exitCount} Exit Discharge${report.exitCount > 1 ? "s" : ""}`;
+            if (evacExitCount) evacExitCount.textContent = `${report.exitCount} candidate exit(s) · ${report.exitSource}`;
             if (evacRoomCount) evacRoomCount.textContent = `${report.roomCount} of ${report.totalRooms} Rooms Connected`;
             if (evacMaxDist) evacMaxDist.textContent = `${report.maxDistance} m`;
             if (evacAvgDist) evacAvgDist.textContent = `${report.avgDistance} m`;
-            if (evacCompliance) evacCompliance.textContent = report.compliance;
+            if (evacCompliance) evacCompliance.textContent = "Not assessed";
             if (evacuationCard) evacuationCard.classList.remove("hidden");
-            showMessage("🚨 Emergency evacuation simulation active. Glowing paths show shortest egress to exterior exits.", "info");
+            showMessage("Egress connectivity preview active. It shows graph routes and estimated lengths only; it does not assess evacuation safety or code compliance.", "info");
         } else {
             showMessage("Could not compute evacuation paths: check door connectivity in the scene.", "warning");
         }

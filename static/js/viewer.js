@@ -2048,6 +2048,7 @@ class FloorPlanViewer {
             const connects = Array.isArray(d.connects) ? d.connects : [];
             return connects.includes("outside");
         });
+        const hasExplicitExits = exitDoors.length > 0;
 
         if (!exitDoors.length) {
             const bounds = this.bounds || { minX: 0, maxX: 20, minY: 0, maxY: 15 };
@@ -2097,6 +2098,29 @@ class FloorPlanViewer {
                     graph.get(dNode).push({ to: rNode, cost: dist, door: d });
                 }
             });
+        });
+
+        // Link matching stair/elevator rooms on adjacent stories in the preview graph.
+        const connectorsByType = new Map();
+        rooms.forEach(room => {
+            const type = String(room.type || "").toLowerCase();
+            if (!(type.includes("stair") || type === "elevator")) return;
+            const key = type.includes("stair") ? "stairs" : "elevator";
+            if (!connectorsByType.has(key)) connectorsByType.set(key, []);
+            connectorsByType.get(key).push(room);
+        });
+        connectorsByType.forEach(connectors => {
+            connectors.sort((a, b) => this.getItemFloorIndex(a) - this.getItemFloorIndex(b));
+            for (let index = 1; index < connectors.length; index++) {
+                const lower = connectors[index - 1], upper = connectors[index];
+                const lowerLevel = this.getItemFloorIndex(lower), upperLevel = this.getItemFloorIndex(upper);
+                if (lowerLevel === upperLevel) continue;
+                const lowerCenter = roomCentroids.get(lower.id), upperCenter = roomCentroids.get(upper.id);
+                const distance = Math.hypot(lowerCenter[0] - upperCenter[0], lowerCenter[1] - upperCenter[1])
+                    + Math.abs(this.getLevelElevation(upperLevel) - this.getLevelElevation(lowerLevel));
+                graph.get(`room:${lower.id}`).push({ to: `room:${upper.id}`, cost: distance });
+                graph.get(`room:${upper.id}`).push({ to: `room:${lower.id}`, cost: distance });
+            }
         });
 
         // 3. For each room, find shortest path to the closest exit door
@@ -2187,7 +2211,6 @@ class FloorPlanViewer {
                     curr = prev.get(curr);
                 }
 
-                const floorIndex = this.getItemFloorIndex(room);
                 const pathPoints = [];
                 pathNodes.forEach(node => {
                     if (node.startsWith("room:")) {
@@ -2195,14 +2218,17 @@ class FloorPlanViewer {
                         const pt = roomCentroids.get(rId);
                         if (pt) {
                             const w = this.toWorldCoords(pt[0], pt[1]);
-                            pathPoints.push(new THREE.Vector3(w.x, this.getLevelElevation(floorIndex) + 0.08, w.z));
+                            const pathRoom = rooms.find(item => item.id === rId);
+                            const level = pathRoom ? this.getItemFloorIndex(pathRoom) : 0;
+                            pathPoints.push(new THREE.Vector3(w.x, this.getLevelElevation(level) + 0.08, w.z));
                         }
                     } else if (node.startsWith("door:")) {
                         const dId = node.replace("door:", "");
                         const d = doors.find(item => item.id === dId);
                         if (d && d.center) {
                             const w = this.toWorldCoords(d.center[0], d.center[1]);
-                            pathPoints.push(new THREE.Vector3(w.x, this.getLevelElevation(floorIndex) + 0.08, w.z));
+                            const level = this.getItemFloorIndex(d);
+                            pathPoints.push(new THREE.Vector3(w.x, this.getLevelElevation(level) + 0.08, w.z));
                         }
                     }
                 });
@@ -2255,7 +2281,7 @@ class FloorPlanViewer {
             sCtx.font = "bold 44px 'Segoe UI', system-ui, sans-serif";
             sCtx.textAlign = "center";
             sCtx.textBaseline = "middle";
-            sCtx.fillText("EXIT ➔", 128, 48);
+            sCtx.fillText(hasExplicitExits ? "EXIT ➔" : "EXIT?", 128, 48);
 
             const signTex = new THREE.CanvasTexture(signCanvas);
             const signFaceMat = new THREE.MeshStandardMaterial({
@@ -2352,8 +2378,8 @@ class FloorPlanViewer {
             totalRooms: rooms.length,
             maxDistance: maxTravelDist.toFixed(1),
             avgDistance: (totalTravelDist / Math.max(1, routedRoomsCount)).toFixed(1),
-            compliance: maxTravelDist <= 60 ? "Grade A (100% Compliant)" : "Grade B (Exit added)",
-            grade: "NFPA 101 Life Safety Code"
+            exitSource: hasExplicitExits ? "Scene-marked exterior openings" : "Perimeter candidates inferred; verify",
+            note: "Graph connectivity and estimated route lengths only; not an evacuation, code-compliance, or safety assessment."
         };
     }
 
