@@ -1,16 +1,16 @@
-/* FloorPlan3D Bauhaus system: color, geometry and hard-edged functional hierarchy. */
+/* FloorPlan3D Design System: Single Source of Truth mappings */
 :root {
     color-scheme: light;
-    --bauhaus-paper: #f0f0f0;
-    --bauhaus-white: #ffffff;
-    --bauhaus-ink: #121212;
-    --bauhaus-red: #d02020;
-    --bauhaus-blue: #1040c0;
-    --bauhaus-yellow: #f0c020;
-    --bauhaus-muted: #e0e0e0;
-    --bauhaus-border: 2px solid var(--bauhaus-ink);
-    --bauhaus-shadow-sm: 4px 4px 0 var(--bauhaus-ink);
-    --bauhaus-shadow-lg: 8px 8px 0 var(--bauhaus-ink);
+    --bauhaus-paper: var(--ground);
+    --bauhaus-white: var(--ground);
+    --bauhaus-ink: var(--ink);
+    --bauhaus-red: var(--pigment);
+    --bauhaus-blue: var(--ink);
+    --bauhaus-yellow: var(--ground-2);
+    --bauhaus-muted: var(--ground-2);
+    --bauhaus-border: 1px solid var(--hair);
+    --bauhaus-shadow-sm: none;
+    --bauhaus-shadow-lg: none;
 }
 
 *,
@@ -61,17 +61,16 @@ body > header.bauhaus-header {
 }
 
 .status-badge {
-    box-shadow: var(--bauhaus-shadow-sm);
+    box-shadow: none;
+    border: 1px solid var(--hair) !important;
+    background: transparent !important;
+    color: var(--ink-2) !important;
 }
 
-.status-badge.is-live {
-    background: var(--bauhaus-blue);
-    color: var(--bauhaus-white);
-}
-
+.status-badge.is-live,
 .status-badge.is-offline {
-    background: var(--bauhaus-yellow);
-    color: var(--bauhaus-ink);
+    background: transparent !important;
+    color: var(--ink-2) !important;
 }
 
 .bauhaus-mark {
@@ -596,7 +595,7 @@ input:focus-visible {
 
 /* Keep keyboard and touch use visible and comfortable in the 3D canvas. */
 :focus-visible {
-    outline: 3px solid #f04438;
+    outline: 2px solid var(--pigment);
     outline-offset: 2px;
 }
 
@@ -609,8 +608,9 @@ input:focus-visible {
 }
 
 .calibration-active {
-    background: #f0c020 !important;
-    color: #161616 !important;
+    background: var(--ground-2) !important;
+    color: var(--ink) !important;
+    border: 1px solid var(--ink) !important;
 }
 
 .walkthrough-active #threejs-canvas-container canvas {
@@ -624,12 +624,11 @@ input:focus-visible {
     z-index: 20;
     max-width: min(22rem, calc(100% - 2rem));
     padding: 0.75rem;
-    border: 1px solid rgba(148, 163, 184, 0.4);
-    border-radius: 0.75rem;
-    background: rgba(15, 23, 42, 0.84);
-    color: #e2e8f0;
-    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
-    backdrop-filter: blur(12px);
+    border: 1px solid var(--hair);
+    border-radius: 0;
+    background: var(--ground);
+    color: var(--ink);
+    box-shadow: none;
     pointer-events: none;
 }
 
@@ -637,6 +636,7 @@ input:focus-visible {
     margin: 0;
     font-size: 0.75rem;
     line-height: 1.4;
+    color: var(--ink-2);
 }
 
 .walkthrough-touch-controls {
@@ -659,10 +659,10 @@ input:focus-visible {
 .walkthrough-touch-controls [data-walk-interact] {
     min-width: 2.7rem;
     min-height: 2.7rem;
-    border: 1px solid rgba(148, 163, 184, 0.55);
-    border-radius: 0.6rem;
-    background: rgba(30, 41, 59, 0.94);
-    color: #f8fafc;
+    border: 1px solid var(--ink);
+    border-radius: 0;
+    background: var(--ground);
+    color: var(--ink);
     font-size: 1.1rem;
     touch-action: none;
     user-select: none;
@@ -670,13 +670,14 @@ input:focus-visible {
 
 .walkthrough-dpad button:focus-visible,
 .walkthrough-touch-controls [data-walk-interact]:focus-visible {
-    outline: 2px solid #22d3ee;
+    outline: 2px solid var(--pigment);
     outline-offset: 2px;
 }
 
 .walkthrough-dpad button:active,
 .walkthrough-touch-controls [data-walk-interact]:active {
-    background: #4f46e5;
+    background: var(--ink);
+    color: var(--ground);
 }
 
 .walkthrough-dpad button:nth-child(1) { grid-column: 2; grid-row: 1; }

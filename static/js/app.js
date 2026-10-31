@@ -203,6 +203,7 @@ document.addEventListener("DOMContentLoaded", () => {
             routeStatus.textContent = "At least two rooms are needed for a route.";
         }
         viewer.clearRoute();
+        btnShowRoute.classList.remove("is-active");
     }
 
     function roomCentroid(room) {
@@ -384,6 +385,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!rooms.has(startId) || !rooms.has(endId) || startId === endId) {
             routeStatus.textContent = "Choose two different rooms.";
             viewer.clearRoute();
+        btnShowRoute.classList.remove("is-active");
             return;
         }
 
@@ -488,6 +490,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!previous.has(endNode)) {
             routeStatus.textContent = "No route found: the detected doors do not connect these rooms.";
             viewer.clearRoute();
+        btnShowRoute.classList.remove("is-active");
             return;
         }
         const path = [];
@@ -511,6 +514,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const floorChanges = coordinates.filter((point, index) => index > 0
             && point.floorIndex !== coordinates[index - 1].floorIndex).length;
         viewer.drawRoute(coordinates);
+        btnShowRoute.classList.add("is-active");
         routeStatus.textContent = `Route shown through ${doorCount} door${doorCount === 1 ? "" : "s"} and ${floorChanges} floor change${floorChanges === 1 ? "" : "s"}.`;
     }
 

@@ -1,0 +1,1117 @@
+/* ==========================================================================
+   FloorPlan3D — Editorial Studio Design System
+   SuperDesign Reference Implementation
+   Palette: Ground #E7E3DA | Ground-2 #DCD7CB | Ink #1A1917 | Ink-2 #4A4741
+            Muted #6E6A61 | Pigment #9B3418 (Type, rules, markers only — NEVER fill)
+            Hairlines rgba(26,25,23,0.16)
+   Typography: Instrument Serif (Display) | Azeret Mono (Labels & Body)
+   Rules: Border-radius 0 everywhere. No gradients, glows, bento grids.
+   ========================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Azeret+Mono:ital,wght@0,300..700;1,300..700&family=Instrument+Serif:ital@0;1&display=swap');
+
+/* TO CHANGE COLORS & FONTS:
+   Modify the tokens below (--ground, --ground-2, --ink, --ink-2, --muted, --pigment, --hair)
+   and font family definitions (--font-serif, --font-mono).
+   All UI elements, borders, buttons, and panels automatically update from these values. */
+:root {
+  --ground: #E7E3DA;
+  --ground-2: #DCD7CB;
+  --ink: #1A1917;
+  --ink-2: #4A4741;
+  --muted: #6E6A61;
+  --pigment: #9B3418;
+  --hair: rgba(26, 25, 23, 0.16);
+
+  /* Semantic aliases for layout compatibility */
+  --secondary-ground: var(--ground-2);
+  --secondary-ink: var(--ink-2);
+  --hairline: var(--hair);
+  --hairline-strong: rgba(26, 25, 23, 0.32);
+
+  --font-display: 'Instrument Serif', Georgia, serif;
+  --font-mono: 'Azeret Mono', monospace, ui-monospace;
+
+  --nav-height: 60px;
+}
+
+/* Base resets & typography */
+html, body {
+  background-color: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  letter-spacing: normal;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+
+/* Allow drop shadow ONLY on the hero cut-out subject */
+.hero-subject-img {
+  filter: drop-shadow(0 28px 36px rgba(26, 25, 23, 0.22));
+}
+
+/* Headings in Instrument Serif */
+h1, h2, h3, h4, .display-serif {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: -0.015em;
+  margin: 0;
+  color: var(--ink);
+}
+
+/* Emphasized italic phrase in pigment */
+em, .pigment-italic {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 400;
+  color: var(--pigment);
+}
+
+/* Monospaced Labels */
+.mono-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+}
+
+.mono-caption {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--secondary-ink);
+}
+
+.mono-body {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--secondary-ink);
+}
+
+/* Square Buttons (No border radius, strict pigment rules) */
+.btn-studio-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--ink);
+  color: var(--ground);
+  border: 1px solid var(--ink);
+  padding: 12px 24px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  text-decoration: none;
+}
+.btn-studio-primary:hover {
+  background-color: var(--secondary-ink);
+  border-color: var(--secondary-ink);
+  color: var(--ground);
+}
+
+.btn-studio-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-color: transparent;
+  color: var(--ink);
+  border: 1px solid var(--ink);
+  padding: 12px 24px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  text-decoration: none;
+}
+.btn-studio-secondary:hover {
+  background-color: var(--secondary-ground);
+  color: var(--ink);
+  border-color: var(--ink);
+}
+
+.btn-studio-nav {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-color: transparent;
+  color: var(--ink);
+  border: 1px solid var(--ink);
+  padding: 8px 16px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-decoration: none;
+}
+.btn-studio-nav:hover {
+  background-color: var(--ink);
+  color: var(--ground);
+}
+
+/* Hairline borders */
+.border-hairline-b {
+  border-bottom: 1px solid var(--hairline);
+}
+.border-hairline-t {
+  border-top: 1px solid var(--hairline);
+}
+.border-hairline {
+  border: 1px solid var(--hairline);
+}
+
+/* ==========================================================================
+   Section 1: Fixed Navigation Bar
+   ========================================================================== */
+.studio-nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--nav-height);
+  background-color: rgba(231, 227, 218, 0.88);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--hairline);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 clamp(16px, 4vw, 48px);
+}
+
+.nav-wordmark {
+  font-family: var(--font-display);
+  font-size: 21px;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+  text-decoration: none;
+  display: flex;
+  align-items: baseline;
+}
+.nav-wordmark .period {
+  color: var(--pigment);
+}
+
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: clamp(16px, 2.5vw, 36px);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.nav-link {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--secondary-ink);
+  text-decoration: none;
+  position: relative;
+  padding: 4px 0;
+  transition: color 0.15s ease;
+}
+.nav-link:hover {
+  color: var(--ink);
+}
+.nav-link::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 0%;
+  height: 1px;
+  background-color: var(--pigment);
+  transition: width 0.2s ease;
+}
+.nav-link:hover::after {
+  width: 100%;
+}
+
+/* ==========================================================================
+   Section 2: Hero Section
+   ========================================================================== */
+.studio-hero {
+  position: relative;
+  min-height: calc(100vh - var(--nav-height));
+  margin-top: var(--nav-height);
+  background-color: var(--secondary-ground);
+  overflow: hidden;
+  isolation: isolate;
+  display: flex;
+  align-items: center;
+  padding: clamp(32px, 6vh, 80px) clamp(16px, 4vw, 64px);
+}
+
+.hero-copy-stack {
+  position: relative;
+  z-index: 20;
+  max-width: 44vw;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(16px, 2.5vh, 28px);
+}
+
+.hero-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.hero-eyebrow::before {
+  content: '';
+  display: inline-block;
+  width: 24px;
+  height: 1px;
+  background-color: var(--pigment);
+}
+
+.hero-headline {
+  font-size: clamp(34px, 4.2vw, 64px);
+  line-height: 1.04;
+  color: var(--ink);
+}
+
+.hero-lede {
+  max-width: 38ch;
+  color: var(--secondary-ink);
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding-top: 8px;
+}
+
+.hero-corner-caption {
+  position: absolute;
+  bottom: 24px;
+  left: clamp(16px, 4vw, 64px);
+  z-index: 20;
+}
+
+/* Hero Split Wordmark & Bracketing Subject */
+.hero-visual-stage {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 44vw;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 10;
+}
+
+.hero-wordmark-upper {
+  position: absolute;
+  bottom: calc(50% - 0.12em);
+  right: clamp(12px, 4vw, 48px);
+  font-family: var(--font-display);
+  font-size: clamp(44px, 15vw, 240px);
+  line-height: 0.82;
+  color: var(--ink);
+  text-transform: uppercase;
+  z-index: 10;
+  user-select: none;
+  pointer-events: none;
+  transform: translate3d(0, 0, 0);
+  transition: transform 0.05s linear;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  will-change: transform;
+}
+
+.hero-wordmark-lower {
+  position: absolute;
+  top: calc(50% - 0.12em);
+  right: clamp(12px, 4vw, 48px);
+  font-family: var(--font-display);
+  font-size: clamp(44px, 15vw, 240px);
+  line-height: 0.82;
+  color: var(--ink);
+  text-transform: uppercase;
+  z-index: 1;
+  user-select: none;
+  pointer-events: none;
+  transform: translate3d(0, 0, 0);
+  transition: transform 0.05s linear;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  will-change: transform;
+}
+
+.hero-subject-wrapper {
+  position: absolute;
+  top: 50%;
+  right: clamp(20px, 6vw, 84px);
+  transform: translate3d(0, -50%, 0);
+  z-index: 5;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.05s linear;
+  will-change: transform;
+}
+
+.hero-subject-img {
+  /* Sized by HEIGHT (~62vh) with width:auto and max-width, bounding box contained inside hero */
+  height: clamp(240px, 62vh, 620px);
+  width: auto;
+  max-width: 48vw;
+  max-height: calc(100vh - var(--nav-height) - 48px);
+  display: block;
+  object-fit: contain;
+  filter: drop-shadow(0 20px 32px rgba(26, 25, 23, 0.22));
+}
+
+/* ==========================================================================
+   Section 3: Section Drawing ("A plan, drawn to scale")
+   ========================================================================== */
+.studio-section {
+  padding: clamp(60px, 10vh, 120px) clamp(16px, 4vw, 64px);
+  border-bottom: 1px solid var(--hairline);
+  background-color: var(--ground);
+}
+
+.drawing-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.35fr;
+  gap: clamp(32px, 5vw, 80px);
+  align-items: start;
+}
+
+.drawing-left-col {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.section-headline {
+  font-size: clamp(28px, 3.2vw, 44px);
+  line-height: 1.1;
+}
+
+.definition-list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--hairline);
+  margin-top: 16px;
+}
+
+.def-row {
+  display: grid;
+  grid-template-columns: 1.2fr 2fr 1fr;
+  align-items: baseline;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--hairline);
+  gap: 16px;
+}
+
+.def-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--pigment);
+}
+
+.def-desc {
+  font-size: 11.5px;
+  color: var(--secondary-ink);
+}
+
+.def-value {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.drawing-svg-stage {
+  border: 1px solid var(--hairline);
+  background-color: var(--ground);
+  padding: 24px;
+  position: relative;
+  min-height: 380px;
+  display: flex;
+  flex-direction: column;
+}
+
+.drawing-svg-container {
+  width: 100%;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.drawing-svg-container svg {
+  width: 100%;
+  height: auto;
+  max-height: 360px;
+}
+
+.drawing-scale-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--hairline);
+  padding-top: 12px;
+  margin-top: 12px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* ==========================================================================
+   Section 4: Pinned Study ("Orbit study")
+   ========================================================================== */
+.pinned-study-wrapper {
+  position: relative;
+  height: 240vh; /* Scroll length for tracking orbit */
+  background-color: var(--secondary-ground);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.pinned-stage {
+  position: sticky;
+  top: var(--nav-height);
+  height: calc(100vh - var(--nav-height));
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: clamp(24px, 4vh, 48px) clamp(16px, 4vw, 64px);
+  overflow: hidden;
+}
+
+.study-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  border-bottom: 1px solid var(--hairline);
+  padding-bottom: 16px;
+}
+
+.study-formula {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.1em;
+}
+
+.study-canvas-area {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.orbit-svg {
+  width: 100%;
+  max-width: 640px;
+  height: clamp(260px, 45vh, 460px);
+}
+
+.study-readouts {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  border-top: 1px solid var(--hairline);
+  padding-top: 16px;
+  gap: 16px;
+}
+
+.readout-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.readout-num {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* ==========================================================================
+   Section 5: Material and Practice (Method)
+   ========================================================================== */
+.method-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.6fr;
+  gap: clamp(32px, 5vw, 80px);
+}
+
+.method-rows {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--hairline);
+}
+
+.method-row {
+  display: grid;
+  grid-template-columns: 1.3fr 2.5fr 1.4fr;
+  align-items: baseline;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--hairline);
+  gap: 16px;
+}
+
+.method-pigment-tag {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  color: var(--pigment);
+}
+
+.method-desc {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--secondary-ink);
+}
+
+.method-class {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ==========================================================================
+   Section 6: Table of Work ("Plans processed")
+   ========================================================================== */
+.table-wrapper {
+  width: 100%;
+  margin-top: 32px;
+  overflow-x: auto;
+}
+
+.studio-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.studio-table th {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--ink);
+}
+
+.studio-table td {
+  padding: 18px 16px;
+  border-bottom: 1px solid var(--hairline);
+  vertical-align: middle;
+}
+
+.studio-table tr.clickable-row {
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.studio-table tr.clickable-row:hover {
+  background-color: var(--secondary-ground);
+}
+
+.project-name {
+  font-family: var(--font-display);
+  font-size: clamp(16px, 1.6vw, 22px);
+  color: var(--ink);
+}
+
+.project-meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--secondary-ink);
+}
+
+.table-action-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--ink);
+  border: 1px solid var(--ink);
+  padding: 4px 10px;
+}
+.studio-table tr.clickable-row:hover .table-action-pill {
+  background-color: var(--ink);
+  color: var(--ground);
+}
+
+/* ==========================================================================
+   Section 7: Close
+   ========================================================================== */
+.studio-close {
+  background-color: var(--secondary-ground);
+  padding: clamp(64px, 12vh, 140px) clamp(16px, 4vw, 64px) 0 clamp(16px, 4vw, 64px);
+  position: relative;
+  overflow: hidden;
+}
+
+.close-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 32px;
+  flex-wrap: wrap;
+  padding-bottom: 48px;
+}
+
+.close-copy {
+  max-width: 48ch;
+}
+
+.close-wordmark-container {
+  width: 100%;
+  overflow: hidden;
+  border-top: 1px solid var(--hairline);
+  padding-top: 24px;
+}
+
+.close-wordmark {
+  font-family: var(--font-display);
+  font-size: clamp(80px, 20vw, 300px);
+  line-height: 0.82;
+  color: var(--ink);
+  text-transform: uppercase;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  user-select: none;
+  transform: translateY(0.17em); /* Page edge crops it per spec */
+  margin: 0;
+}
+
+/* Footer strip */
+.studio-footer-strip {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid var(--hairline);
+  padding: 16px clamp(16px, 4vw, 64px);
+  background-color: var(--ground);
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+/* ==========================================================================
+   View Switching & Application Layout Styling
+   ========================================================================== */
+#landing-view {
+  display: block;
+  min-height: 100vh;
+}
+
+#landing-view.view-hidden {
+  display: none !important;
+}
+
+#app-view {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background-color: var(--ground);
+}
+
+#app-view.view-hidden {
+  display: none !important;
+}
+
+/* ==========================================================================
+   App View Restyle: Single Source of Truth
+   Colors: --ground, --ground-2, --ink, --ink-2, --muted, --pigment, --hair
+   ========================================================================== */
+
+/* App Scrollbars */
+#app-view * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--muted) var(--ground);
+}
+#app-view *::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+#app-view *::-webkit-scrollbar-track {
+  background: var(--ground);
+}
+#app-view *::-webkit-scrollbar-thumb {
+  background: var(--muted);
+  border-radius: 0 !important;
+}
+
+/* App Header */
+.app-studio-header {
+  height: 60px !important;
+  background-color: rgba(231, 227, 218, 0.88) !important;
+  backdrop-filter: blur(14px) !important;
+  -webkit-backdrop-filter: blur(14px) !important;
+  border-bottom: 1px solid var(--hair) !important;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  z-index: 30;
+  flex-shrink: 0;
+}
+
+.app-back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--ink);
+  text-decoration: none;
+  padding: 8px 16px;
+  border: 1px solid var(--ink);
+  background-color: var(--ground);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.app-back-link:hover {
+  background-color: var(--ink) !important;
+  color: var(--ground) !important;
+}
+
+/* App Status Badges */
+#app-view .status-badge,
+#app-view #processing-mode-badge {
+  background: transparent !important;
+  border: 1px solid var(--hair) !important;
+  color: var(--ink-2) !important;
+  font-family: var(--font-mono) !important;
+  font-size: 10.5px !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.12em !important;
+  padding: 4px 10px !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  display: inline-flex !important;
+  align-items: center !important;
+}
+
+#app-view .status-badge::before,
+#app-view #processing-mode-badge::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background-color: var(--pigment);
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+
+/* Sidebar & Panels */
+.studio-sidebar {
+  background-color: var(--ground) !important;
+  border-right: 1px solid var(--hair) !important;
+  color: var(--ink) !important;
+}
+
+.studio-card,
+#app-view .bauhaus-card {
+  background-color: var(--ground) !important;
+  border: 1px solid var(--hair) !important;
+  box-shadow: none !important;
+  color: var(--ink) !important;
+}
+
+#app-view .studio-toolbar,
+#app-view .bauhaus-toolbar {
+  background-color: var(--ground) !important;
+  border-bottom: 1px solid var(--hair) !important;
+  color: var(--ink) !important;
+}
+
+/* Form Controls (Inputs, Selects, Textareas) */
+#app-view input[type="text"],
+#app-view input[type="number"],
+#app-view select,
+#app-view textarea {
+  background-color: var(--ground-2) !important;
+  border: 1px solid var(--hair) !important;
+  color: var(--ink) !important;
+  font-family: var(--font-mono) !important;
+  border-radius: 0 !important;
+  padding: 6px 10px !important;
+}
+#app-view input[type="text"]:focus,
+#app-view input[type="number"]:focus,
+#app-view select:focus,
+#app-view textarea:focus {
+  outline: 2px solid var(--pigment) !important;
+  border-color: var(--pigment) !important;
+}
+
+/* Range Sliders */
+#app-view input[type="range"] {
+  accent-color: var(--pigment) !important;
+}
+#app-view input[type="range"]::-webkit-slider-runnable-track {
+  background: var(--ink) !important;
+  height: 2px !important;
+}
+#app-view input[type="range"]::-webkit-slider-thumb {
+  background: var(--pigment) !important;
+  border: 1px solid var(--ink) !important;
+  border-radius: 0 !important;
+  width: 12px !important;
+  height: 12px !important;
+}
+
+/* Checkboxes */
+#app-view input[type="checkbox"] {
+  accent-color: var(--pigment) !important;
+  border: 1px solid var(--ink) !important;
+  border-radius: 0 !important;
+}
+
+/* Buttons in App View */
+#app-view button {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  font-family: var(--font-mono) !important;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease !important;
+}
+
+/* Primary Button: Load hackathon demo plan */
+#app-view #btn-load-demo {
+  background-color: var(--ink) !important;
+  color: var(--ground) !important;
+  border: 1px solid var(--ink) !important;
+}
+#app-view #btn-load-demo:hover {
+  background-color: var(--ink-2) !important;
+  color: var(--ground) !important;
+}
+
+/* Secondary Action Buttons */
+#app-view #btn-load-two-story-demo,
+#app-view #btn-sidebar-evac,
+#app-view #btn-show-route,
+#app-view #btn-export-glb,
+#app-view #btn-download-glb-tab,
+#app-view #btn-download-json,
+#app-view #btn-copy-json,
+#app-view .viewport-control,
+#app-view #btn-toggle-evacuation,
+#app-view #btn-generate {
+  background-color: var(--ground) !important;
+  color: var(--ink) !important;
+  border: 1px solid var(--ink) !important;
+}
+
+#app-view #btn-generate:not(:disabled) {
+  background-color: var(--ink) !important;
+  color: var(--ground) !important;
+  border: 1px solid var(--ink) !important;
+}
+
+/* Hover: Invert to ink fill with bone text */
+#app-view button:hover:not(:disabled) {
+  background-color: var(--ink) !important;
+  color: var(--ground) !important;
+}
+
+/* Focus ring: 2px pigment outline */
+#app-view button:focus-visible,
+#app-view input:focus-visible,
+#app-view select:focus-visible {
+  outline: 2px solid var(--pigment) !important;
+}
+
+/* Disabled buttons */
+#app-view button:disabled {
+  color: var(--muted) !important;
+  border-color: var(--hair) !important;
+  background-color: var(--ground-2) !important;
+  cursor: not-allowed !important;
+}
+
+/* Active Door-based route button */
+#app-view #btn-show-route.is-active {
+  background-color: var(--ink) !important;
+  color: var(--ground) !important;
+}
+
+/* Viewport Navigation Tabs */
+#app-view .nav-tab-btn {
+  background: transparent !important;
+  color: var(--muted) !important;
+  border: none !important;
+  border-bottom: 2px solid transparent !important;
+  padding: 8px 16px !important;
+}
+#app-view .nav-tab-btn.active {
+  color: var(--ink) !important;
+  border-bottom: 2px solid var(--pigment) !important;
+}
+#app-view .nav-tab-btn:hover:not(.active) {
+  color: var(--ink) !important;
+}
+
+/* Active viewport mode buttons */
+#app-view .viewport-control.is-active {
+  border-bottom: 2px solid var(--pigment) !important;
+}
+
+/* Area Summary Checklist Colors */
+#app-view #map-quality-checks li {
+  color: var(--ink-2) !important;
+}
+#app-view #map-quality-warnings,
+#app-view #map-quality-warnings li {
+  color: var(--pigment) !important;
+  background: transparent !important;
+}
+
+/* Drop Zone */
+#app-view #drop-zone {
+  background-color: var(--ground-2) !important;
+  border: 1px dashed var(--ink) !important;
+}
+
+/* Floating HUDs and Panels */
+#app-view #measurement-panel,
+#app-view #sunlight-panel,
+#app-view #blueprint-panel,
+#app-view #evacuation-card,
+#app-view #walkthrough-hud,
+#app-view .legend-panel {
+  background-color: var(--ground) !important;
+  border: 1px solid var(--hair) !important;
+  color: var(--ink) !important;
+  box-shadow: none !important;
+}
+
+/* Room Types Legend Swatches */
+.room-legend-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--hair);
+  margin-right: 6px;
+  vertical-align: middle;
+  border-radius: 0 !important;
+}
+
+/* 2D & JSON Tabs */
+#app-view #tab-2d {
+  background-color: var(--ground-2) !important;
+}
+#app-view #tab-json {
+  background-color: var(--ground) !important;
+}
+#app-view #tab-json pre {
+  background-color: var(--ground-2) !important;
+  border: 1px solid var(--hair) !important;
+  color: var(--ink) !important;
+}
+
+/* ==========================================================================
+   Motion and Transitions (Respecting prefers-reduced-motion)
+   ========================================================================== */
+@media (prefers-reduced-motion: no-preference) {
+  .reveal-node {
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1), transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .reveal-node.is-revealed {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Responsive adjustments */
+@media (max-width: 900px) {
+  .hero-copy-stack {
+    max-width: 44vw;
+  }
+  .hero-headline {
+    font-size: clamp(18px, 4vw, 36px);
+  }
+  .hero-lede {
+    font-size: 10.5px;
+    line-height: 1.45;
+  }
+  .hero-actions .btn-studio-primary,
+  .hero-actions .btn-studio-secondary {
+    padding: 8px 12px;
+    font-size: 9.5px;
+    letter-spacing: 0.12em;
+  }
+  .hero-wordmark-upper,
+  .hero-wordmark-lower {
+    font-size: clamp(28px, 10vw, 80px);
+  }
+  .hero-subject-img {
+    height: clamp(160px, 42vh, 320px);
+    max-width: 50vw;
+  }
+  .drawing-grid,
+  .method-grid {
+    grid-template-columns: 1fr;
+    gap: 32px;
+  }
+  .study-readouts {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .def-row,
+  .method-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .def-value,
+  .method-class {
+    text-align: left;
+  }
+}

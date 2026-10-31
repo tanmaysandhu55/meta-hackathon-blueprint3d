@@ -1,0 +1,44 @@
+[
+  {
+    "id": "sample-academic",
+    "name": "Academic Wing Floor 1",
+    "file": "samples/sample_scene.json",
+    "apiUrl": "/api/sample",
+    "rooms": 7,
+    "doors": 8,
+    "windows": 5,
+    "scale": "0.020 m/px",
+    "method": "SAM 3.1",
+    "classification": "Educational Facility",
+    "status": "Verified",
+    "levelCount": 1
+  },
+  {
+    "id": "sample-two-story",
+    "name": "Academic Complex (2-Story)",
+    "file": "demo:two-story",
+    "apiUrl": "/api/sample/two-story",
+    "rooms": 14,
+    "doors": 16,
+    "windows": 10,
+    "scale": "0.020 m/px",
+    "method": "SAM 3.1",
+    "classification": "Multi-Story Institutional",
+    "status": "Verified",
+    "levelCount": 2
+  },
+  {
+    "id": "sample-opencv-suite",
+    "name": "Studio Annex & Restrooms",
+    "file": "samples/sample_scene.json",
+    "apiUrl": "/api/sample",
+    "rooms": 7,
+    "doors": 8,
+    "windows": 5,
+    "scale": "0.020 m/px",
+    "method": "OpenCV",
+    "classification": "Commercial Office",
+    "status": "Calibrated",
+    "levelCount": 1
+  }
+]

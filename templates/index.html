@@ -3,10 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FloorPlan3D - 2D Floor Plan to Navigable 3D Map</title>
+    <title>FloorPlan3D — 2D Floor Plan to Navigable 3D Map</title>
+    
+    <!-- Google Fonts: Instrument Serif (Display) & Azeret Mono (Labels/Body) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Azeret+Mono:ital,wght@0,300..700;1,300..700&family=Instrument+Serif:ital@0;1&family=Outfit:wght@400;500;700;900&display=swap" rel="stylesheet">
     
     <!-- Pinned Tailwind CSS via CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -16,24 +18,27 @@
                 extend: {
                     colors: {
                         bauhaus: {
-                            paper: '#F0F0F0',
-                            ink: '#121212',
-                            red: '#D02020',
-                            blue: '#1040C0',
-                            yellow: '#F0C020',
-                            muted: '#E0E0E0'
+                            paper: '#E7E3DA',
+                            ink: '#1A1917',
+                            red: '#9B3418',
+                            blue: '#4A4741',
+                            yellow: '#DCD7CB',
+                            muted: '#DCD7CB'
                         }
                     },
                     fontFamily: {
-                        sans: ['Outfit', 'system-ui', 'sans-serif']
+                        sans: ['"Azeret Mono"', 'monospace'],
+                        mono: ['"Azeret Mono"', 'monospace'],
+                        serif: ['"Instrument Serif"', 'Georgia', 'serif']
                     }
                 }
             }
         }
     </script>
 
-    <!-- Custom CSS -->
+    <!-- Custom CSS & Editorial Studio System -->
     <link rel="stylesheet" href="/static/css/custom.css">
+    <link rel="stylesheet" href="/static/css/styles.css?v=20261031-editorial">
 
     <!-- Pinned Three.js r128 via CDN (cdnjs) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -44,567 +49,809 @@
     <!-- Pinned Three.js GLTFExporter via CDN (jsdelivr) -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js"></script>
 </head>
-<body data-processing-ready="true" data-processing-mode="{{ processing_mode }}" data-labeling-ready="{{ 'true' if labeling_ready else 'false' }}" class="h-screen flex flex-col overflow-hidden bg-bauhaus-paper font-sans antialiased text-bauhaus-ink">
+<body data-processing-ready="true" data-processing-mode="{{ processing_mode }}" data-labeling-ready="{{ 'true' if labeling_ready else 'false' }}">
 
-    <!-- Top Header Bar -->
-    <header class="bauhaus-header z-20 flex h-16 shrink-0 items-center justify-between border-b-4 border-bauhaus-ink bg-bauhaus-paper px-4 text-bauhaus-ink sm:px-6">
-        <div class="flex items-center space-x-3">
-            <div class="bauhaus-mark" aria-hidden="true">
-                <span class="mark-circle"></span>
-                <span class="mark-square"></span>
-                <span class="mark-triangle"></span>
-            </div>
+    <!-- ======================================================================
+         1. EDITORIAL STUDIO LANDING VIEW (7 SECTIONS)
+         ====================================================================== -->
+    <div id="landing-view">
+
+        <!-- 1. NAVIGATION -->
+        <nav class="studio-nav" aria-label="Studio Navigation">
+            <a href="#landing-view" class="nav-wordmark">
+                FloorPlan3D<span class="period">.</span>
+            </a>
+            <ul class="nav-links">
+                <li><a href="#drawing-section" class="nav-link">Drawing</a></li>
+                <li><a href="#study-section" class="nav-link">Study</a></li>
+                <li><a href="#method-section" class="nav-link">Method</a></li>
+                <li><a href="#plans-section" class="nav-link">Plans</a></li>
+                <li><a href="#try-it-section" class="nav-link">Try it</a></li>
+            </ul>
             <div>
-                <h1 class="flex items-center gap-2 text-xl font-black uppercase tracking-tighter text-bauhaus-ink sm:text-2xl">
-                    FloorPlan3D
-                    <span class="provider-tag border-2 border-bauhaus-ink bg-white px-2 py-0.5 text-xs font-bold uppercase tracking-wide">Meta SAM 3.1 • Baseten Muse Spark Open • OpenCV fallback</span>
-                </h1>
+                <button type="button" class="btn-studio-nav" data-action="open-app-upload">Upload a plan</button>
             </div>
-        </div>
+        </nav>
 
-        <div class="flex items-center gap-2">
-        <div id="processing-mode-badge" class="hidden rounded-none border-2 border-bauhaus-ink bg-bauhaus-yellow px-3 py-1.5 text-xs font-black uppercase tracking-wider" role="status" aria-live="polite"></div>
-        <div class="status-badge border-2 border-bauhaus-ink px-3 py-1.5 text-xs font-bold uppercase tracking-wider {% if processing_mode == 'LIVE' %}is-live{% else %}is-offline{% endif %}">
-            {% if processing_mode == 'MOCK' %}MOCK MODE{% else %}{% if sam_ready %}SAM 3.1 segmentation{% else %}Local OpenCV segmentation{% endif %} · {% if labeling_ready %}Muse labels on{% else %}Generic labels{% endif %}{% endif %}
-        </div>
-        </div>
-    </header>
+        <!-- 2. HERO -->
+        <header class="studio-hero">
+            <div class="hero-copy-stack">
+                <div class="hero-eyebrow mono-label">2D PLAN TO 3D MAP</div>
+                <h1 class="hero-headline">
+                    From blueprint to <em>building</em>, in seconds.
+                </h1>
+                <p class="hero-lede mono-body">
+                    Meta SAM 3.1 isolates architectural boundaries, Shapely constructs verified metric polygons, and Three.js renders an interactive, navigable spatial twin.
+                </p>
+                <div class="hero-actions">
+                    <button type="button" class="btn-studio-primary" data-action="open-app-upload">Upload a plan</button>
+                    <button type="button" class="btn-studio-secondary" data-action="open-app-sample">Try sample plan</button>
+                </div>
+            </div>
 
-    <!-- Main App Layout: Sidebar (Left) + Viewport Tabs (Right) -->
-    <div class="flex min-h-0 flex-1 overflow-hidden">
+            <!-- Corner caption in mono -->
+            <div class="hero-corner-caption mono-caption">
+                SAM 3.1 / MUSE SPARK / THREE.JS
+            </div>
 
-        <!-- Left Sidebar: Controls & Upload -->
-        <aside aria-label="Floor plan controls" class="h-full min-h-0 w-80 max-w-[45vw] shrink-0 overflow-y-auto overscroll-contain border-r-4 border-bauhaus-ink bg-bauhaus-paper xl:w-96">
-            <div class="space-y-5 p-4 pb-10 sm:p-5 sm:pb-10">
+            <!-- Split Wordmark Bracketing the Cut-Out Subject -->
+            <div class="hero-visual-stage" aria-hidden="true">
+                <div class="hero-wordmark-upper">FLOOR</div>
+                <div class="hero-subject-wrapper">
+                    <img src="/static/hero.png" width="880" height="640" alt="3D Architectural Cutaway Model" class="hero-subject-img">
+                </div>
+                <div class="hero-wordmark-lower">PLAN 3D</div>
+            </div>
+        </header>
 
-                <!-- 1. Quick Hackathon Demo Action -->
-                <div>
-                    <button id="btn-load-demo" type="button" class="flex w-full items-center justify-center gap-2 rounded-none border border-bauhaus-ink bg-bauhaus-red px-4 py-2.5 text-sm font-medium text-white shadow-lg shadow-[4px_4px_0px_0px_#121212] transition-colors duration-150 ease-in-out hover:bg-bauhaus-red active:scale-95">
-                        <span>⚡ Load Hackathon Demo Plan</span>
-                    </button>
-                    <button id="btn-load-two-story-demo" type="button" class="mt-2 flex w-full items-center justify-center gap-2 rounded-none border border-bauhaus-ink bg-transparent px-4 py-2 text-sm font-medium text-bauhaus-ink transition-colors duration-150 ease-in-out hover:border-bauhaus-red hover:bg-bauhaus-muted hover:text-bauhaus-ink active:scale-95">
-                        <span>🏢 Load Two-Story Demo</span>
-                    </button>
-                    <button id="btn-sidebar-evac" type="button" class="mt-2 flex w-full items-center justify-center gap-2 rounded-none border border-bauhaus-ink bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow transition-colors duration-150 ease-in-out hover:bg-emerald-700 active:scale-95">
-                        <span>Preview Egress Connectivity</span>
-                    </button>
-                    <p class="text-[11px] text-bauhaus-ink text-center mt-1.5">
-                        Prepared one- and two-story examples work without API keys or inference.
+        <!-- 3. SECTION DRAWING ("A plan, drawn to scale") -->
+        <section id="drawing-section" class="studio-section">
+            <div class="drawing-grid">
+                <div class="drawing-left-col reveal-node">
+                    <div class="mono-label">Geometric Specification</div>
+                    <h2 class="section-headline">A plan, drawn to <em>scale</em>.</h2>
+                    <p class="mono-body">
+                        Metric vector geometry extracted from architectural blueprints. Every wall polygon, doorway opening, and room boundary maintains dimensional accuracy in real meters.
+                    </p>
+                    
+                    <div class="definition-list">
+                        <div class="def-row">
+                            <span class="def-label">Door width</span>
+                            <span class="def-desc">Standard accessibility clear opening</span>
+                            <span class="def-value">0.9 m</span>
+                        </div>
+                        <div class="def-row">
+                            <span class="def-label">Wall height</span>
+                            <span class="def-desc">Floor slab to ceiling partition</span>
+                            <span class="def-value">3.0 m</span>
+                        </div>
+                        <div class="def-row">
+                            <span class="def-label">Wall thickness</span>
+                            <span class="def-desc">Double gypsum on structural frame</span>
+                            <span class="def-value">0.2 m</span>
+                        </div>
+                        <div class="def-row">
+                            <span class="def-label">Eye height</span>
+                            <span class="def-desc">First-person walkthrough horizon</span>
+                            <span class="def-value">1.7 m</span>
+                        </div>
+                        <div class="def-row">
+                            <span class="def-label">Scale source</span>
+                            <span class="def-desc">Median detected door opening</span>
+                            <span class="def-value">0.020 m/px</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="drawing-svg-stage reveal-node">
+                    <div class="mono-label" style="margin-bottom: 12px;">Real-Scale SVG Projection</div>
+                    <div id="drawing-svg-mount" class="drawing-svg-container">
+                        <!-- SVG injected dynamically by landing.js -->
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 4. PINNED STUDY ("Orbit study") -->
+        <section id="study-section" class="pinned-study-wrapper">
+            <div class="pinned-stage">
+                <div class="study-header">
+                    <div>
+                        <div class="mono-label">Interactive Kinematics</div>
+                        <h2 class="section-headline" style="font-size: clamp(24px, 2.8vw, 36px);">Orbit <em>study</em>.</h2>
+                    </div>
+                    <div class="study-formula">
+                        CAMERA AZIMUTH = PROGRESS × 270° · RADIUS R = 1.6 × DIAG
+                    </div>
+                </div>
+
+                <div class="study-canvas-area">
+                    <svg class="orbit-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
+                        <!-- Background architectural concentric rings -->
+                        <circle cx="50" cy="50" r="38" fill="none" stroke="rgba(26,25,23,0.14)" stroke-width="0.8" stroke-dasharray="1.5, 1.5" />
+                        <circle cx="50" cy="50" r="26" fill="none" stroke="rgba(26,25,23,0.08)" stroke-width="0.6" />
+                        <line x1="12" y1="50" x2="88" y2="50" stroke="rgba(26,25,23,0.10)" stroke-width="0.5" />
+                        <line x1="50" y1="12" x2="50" y2="88" stroke="rgba(26,25,23,0.10)" stroke-width="0.5" />
+                        
+                        <!-- Center floorplan footprint simplified outline -->
+                        <rect x="42" y="44" width="16" height="12" fill="var(--ground)" stroke="var(--ink)" stroke-width="1.0" />
+                        <rect x="44" y="46" width="6" height="4" fill="none" stroke="rgba(26,25,23,0.4)" stroke-width="0.4" />
+                        <rect x="50" y="46" width="6" height="4" fill="none" stroke="rgba(26,25,23,0.4)" stroke-width="0.4" />
+                        <circle cx="50" cy="50" r="1.0" fill="#9B3418" />
+
+                        <!-- Active camera orbit ray -->
+                        <line id="study-orbit-ray" x1="50%" y1="50%" x2="88%" y2="50%" stroke="#9B3418" stroke-width="0.8" stroke-dasharray="1, 1" />
+                        <!-- Traveling Camera marker dot -->
+                        <circle id="study-camera-marker" cx="88%" cy="50%" r="2.6" fill="#9B3418" stroke="#1A1917" stroke-width="0.6" />
+                    </svg>
+                </div>
+
+                <div class="study-readouts">
+                    <div class="readout-cell">
+                        <span class="mono-caption">Scroll Progress</span>
+                        <span id="readout-progress" class="readout-num">0%</span>
+                    </div>
+                    <div class="readout-cell">
+                        <span class="mono-caption">Camera Azimuth</span>
+                        <span id="readout-azimuth" class="readout-num">0.0°</span>
+                    </div>
+                    <div class="readout-cell">
+                        <span class="mono-caption">Orbit Radius R</span>
+                        <span id="readout-radius" class="readout-num">24.28 m</span>
+                    </div>
+                    <div class="readout-cell">
+                        <span class="mono-caption">Camera (X, Z)</span>
+                        <span id="readout-coords" class="readout-num">(32.28, 6.00) m</span>
+                    </div>
+                    <div class="readout-cell">
+                        <span class="mono-caption">Field of View</span>
+                        <span class="readout-num">45.0°</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 5. MATERIAL AND PRACTICE (METHOD) -->
+        <section id="method-section" class="studio-section">
+            <div class="method-grid">
+                <div class="reveal-node">
+                    <div class="mono-label">Pipeline Architecture</div>
+                    <h2 class="section-headline">Material & <em>practice</em>.</h2>
+                    <p class="mono-body" style="margin-top: 16px;">
+                        From raw blueprint pixels to an architectural spatial twin. Four deterministic layers convert raster plans into validated geometric contracts without external CAD dependencies.
                     </p>
                 </div>
 
-                <section id="area-summary-panel" class="bauhaus-card geo-blue space-y-2 rounded-none border-2 border-bauhaus-ink bg-white p-4" aria-labelledby="area-summary-title">
-                    <h2 id="area-summary-title" class="text-xs font-semibold uppercase tracking-wider">Area Summary</h2>
-                    <p id="area-summary-total" class="font-mono text-sm">Load a plan to calculate areas.</p>
-                    <div class="space-y-2 rounded-none border border-bauhaus-muted bg-bauhaus-muted p-2 text-[11px] leading-relaxed">
-                        <div id="map-quality-report" role="status" aria-live="polite">Readiness checks appear after loading a scene. They are structural checks, not an accuracy score.</div>
-                        <ul id="map-quality-checks" class="space-y-1" aria-label="Plan review checklist"></ul>
-                        <ul id="map-quality-warnings" class="space-y-1 text-bauhaus-red" aria-label="Items to review"></ul>
-                        <div class="flex flex-wrap gap-2 pt-1">
-                            <button id="btn-ai-plan-review" type="button" class="rounded-none bg-bauhaus-blue px-2 py-1 text-[10px] font-semibold text-white hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">AI plan review</button>
-                            <button id="btn-building-summary" type="button" class="rounded-none border border-bauhaus-ink bg-white px-2 py-1 text-[10px] font-semibold hover:bg-bauhaus-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Summarize building</button>
-                            <button id="btn-review-2d" type="button" class="rounded-none border border-bauhaus-ink bg-white px-2 py-1 text-[10px] font-semibold hover:bg-bauhaus-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Review 2D detections</button>
-                            <button id="btn-review-room" type="button" class="rounded-none border border-bauhaus-ink bg-white px-2 py-1 text-[10px] font-semibold hover:bg-bauhaus-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Edit a room outline</button>
-                        </div>
-                        <div id="scene-insight-result" class="hidden border-t border-bauhaus-ink pt-2 text-xs leading-relaxed" role="status" aria-live="polite"></div>
+                <div class="method-rows reveal-node">
+                    <div class="method-row">
+                        <span class="method-pigment-tag">META SAM 3.1</span>
+                        <span class="method-desc">Segment Anything model identifies semantic mask boundaries for room boundaries, outer perimeter walls, and door openings.</span>
+                        <span class="method-class">Neural Segmentation</span>
                     </div>
-                    <details>
-                        <summary class="cursor-pointer text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Per-room areas</summary>
-                        <ul id="area-summary-rooms" class="mt-2 max-h-48 space-y-1 overflow-y-auto text-xs"></ul>
-                    </details>
-                </section>
-
-                <details class="bauhaus-card rounded-none border-2 border-bauhaus-ink bg-white p-4" open>
-                    <summary class="cursor-pointer text-xs font-semibold uppercase tracking-wider focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Quick judge walkthrough</summary>
-                    <ol class="mt-2 list-decimal space-y-1 pl-4 text-[11px] leading-relaxed">
-                        <li>Load the one-story demo, then compare its 2D detections with the original plan.</li>
-                        <li>Use the review checklist; edit a room outline if it does not match.</li>
-                        <li>Load the two-story demo and inspect the story selector and stairs.</li>
-                        <li>Show a route, area summary, and export. Explain estimates and warnings.</li>
-                    </ol>
-                    <p class="mt-2 text-[10px] text-bauhaus-ink">Both demos and the review flow work without API keys.</p>
-                </details>
-
-                {% if not sam_ready or not labeling_ready %}<div class="bauhaus-warning rounded-none border-2 border-bauhaus-ink bg-bauhaus-yellow p-3 text-xs leading-relaxed text-bauhaus-ink"><strong class="block mb-1">{% if sam_ready %}SAM segmentation ready{% else %}Local segmentation ready{% endif %}</strong>{% if sam_ready %}SAM 3.1 will segment uploads.{% else %}Uploads use local OpenCV until a separate Meta API key is configured.{% endif %} {% if not labeling_ready %}Room labels use generic names until the Baseten key is configured.{% endif %}</div>{% endif %}
-
-                <div id="app-message" role="status" aria-live="polite" class="hidden rounded-none border p-3 text-xs leading-relaxed"></div>
-
-                <!-- 2. Image Upload Card -->
-                <div class="bauhaus-card geo-red space-y-3 rounded-none border-2 border-bauhaus-ink bg-white p-4">
-                    <label class="text-xs font-semibold uppercase tracking-wider text-bauhaus-ink block">
-                        Upload 2D Floor Plan
-                    </label>
-
-                    <!-- Drop Zone -->
-                    <div id="drop-zone" class="group cursor-pointer rounded-none border border-dashed border-bauhaus-ink bg-bauhaus-muted p-4 text-center transition-colors duration-150 ease-in-out hover:border-bauhaus-red">
-                        <input id="file-input" type="file" accept="image/png, image/jpeg, image/webp" multiple class="hidden">
-                        
-                        <!-- Initial Prompt State -->
-                        <div id="drop-zone-prompt" class="space-y-2">
-                            <div class="mx-auto flex h-10 w-10 items-center justify-center rounded-none bg-bauhaus-muted text-bauhaus-ink transition-colors duration-150 group-hover:bg-bauhaus-yellow group-hover:text-bauhaus-ink">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                                </svg>
-                            </div>
-                            <p class="text-xs text-bauhaus-ink font-medium">Click to browse or drag & drop</p>
-                            <p class="text-[10px] text-bauhaus-ink">PNG, JPG, or WEBP (up to 10MB). Select multiple plans in ground-to-top order for a building.</p>
-                        </div>
-
-                        <!-- Image Preview State -->
-                        <div id="image-preview-container" class="hidden relative">
-                            <img id="image-preview" src="" alt="Floor Plan Preview" class="max-h-40 mx-auto rounded-none object-contain shadow-md">
-                            <button id="btn-remove-image" type="button" aria-label="Remove uploaded floor plan" class="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-none bg-bauhaus-red text-xs text-white shadow transition-colors hover:bg-bauhaus-red active:scale-95">
-                                ✕
-                            </button>
-                        </div>
+                    <div class="method-row">
+                        <span class="method-pigment-tag">OPENCV + SHAPELY</span>
+                        <span class="method-desc">Raster-to-vector polygon polygon extraction, Douglas-Peucker simplification, door deduction, and metric scale calibration.</span>
+                        <span class="method-class">Geometric Processing</span>
                     </div>
-                    <button id="btn-process-building" type="button" disabled class="mt-2 hidden w-full rounded-none border border-bauhaus-ink bg-bauhaus-blue px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">Process selected plans as stories</button>
-                    <p id="building-upload-status" class="hidden text-[10px] leading-relaxed" aria-live="polite"></p>
-                </div>
-
-                <section class="bauhaus-card geo-yellow space-y-2 rounded-none border-2 border-bauhaus-ink bg-white p-4" aria-labelledby="muse-image-title">
-                    <h2 id="muse-image-title" class="text-xs font-semibold uppercase tracking-wider">Create a draft with Muse Image</h2>
-                    <p class="text-[11px] text-bauhaus-ink">Describe a layout; review the generated drawing before processing. Generated plans are visual drafts, not measured designs.</p>
-                    <label for="muse-image-prompt" class="sr-only">Describe the floor plan</label>
-                    <textarea id="muse-image-prompt" maxlength="500" rows="2" placeholder="One-story home with two bedrooms, a kitchen, and central hallway" class="w-full rounded-none border border-bauhaus-ink bg-white px-2 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-bauhaus-red" {% if not image_generation_ready %}disabled{% endif %}></textarea>
-                    <button id="btn-muse-image" type="button" class="w-full rounded-none border border-bauhaus-ink bg-bauhaus-yellow px-3 py-2 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red" {% if not image_generation_ready %}disabled{% endif %}>Generate draft floor plan</button>
-                    <p id="muse-image-status" class="text-[10px]" aria-live="polite">{% if image_generation_ready %}Muse Image is ready.{% else %}Available after adding META_API_KEY.{% endif %}</p>
-                </section>
-
-                <!-- 3. Spatial Calibration Sliders -->
-                <div class="bauhaus-card geo-blue space-y-4 rounded-none border-2 border-bauhaus-ink bg-white p-4">
-                    <div class="flex items-center justify-between">
-                        <label class="text-xs font-semibold uppercase tracking-wider text-bauhaus-ink">
-                            Spatial Calibration
-                        </label>
-                        <span class="text-[10px] px-1.5 py-0.5 rounded-none bg-bauhaus-muted text-bauhaus-ink font-mono">scene.json</span>
+                    <div class="method-row">
+                        <span class="method-pigment-tag">MUSE SPARK</span>
+                        <span class="method-desc">Spatial intelligence model infers functional room labels, multi-story stair links, and egress topological paths.</span>
+                        <span class="method-class">Spatial Reasoning</span>
                     </div>
-
-                    <!-- Meters Per Pixel -->
-                    <div class="space-y-1.5">
-                        <div class="flex justify-between text-xs">
-                            <span class="text-bauhaus-ink">Scale (Meters / Pixel)</span>
-                            <span id="label-mpp" class="font-mono text-bauhaus-blue">0.020 m/px</span>
-                        </div>
-                        <input id="input-mpp" type="range" min="0.005" max="0.08" step="0.005" value="0.02" class="w-full cursor-pointer accent-bauhaus-red focus:outline-none focus:ring-1 focus:ring-bauhaus-red">
-                        <label class="flex items-center gap-2 text-[11px] text-bauhaus-ink">
-                            <input id="chk-auto-scale" type="checkbox" checked class="rounded-none border-bauhaus-ink bg-white text-bauhaus-blue focus:ring-bauhaus-red">
-                            <span>Estimate scale from detected doors (assumed 0.9 m wide)</span>
-                        </label>
-                        <div class="flex justify-between text-[10px] text-bauhaus-ink">
-                            <span>High Res (5mm/px)</span>
-                            <span>Standard (2cm/px)</span>
-                        </div>
-                    </div>
-
-                    <!-- Wall Height -->
-                    <div class="space-y-1.5">
-                        <div class="flex justify-between text-xs">
-                            <span class="text-bauhaus-ink">Wall Height</span>
-                            <span id="label-wall-height" class="font-mono text-bauhaus-blue">3.0 m</span>
-                        </div>
-                        <input id="input-wall-height" type="range" min="0.8" max="5.0" step="0.1" value="3.0" class="w-full cursor-pointer accent-bauhaus-red focus:outline-none focus:ring-1 focus:ring-bauhaus-red">
-                    </div>
-
-                    <!-- Wall Thickness -->
-                    <div class="space-y-1.5">
-                        <div class="flex justify-between text-xs">
-                            <span class="text-bauhaus-ink">Wall Thickness</span>
-                            <span id="label-wall-thickness" class="font-mono text-bauhaus-blue">0.20 m</span>
-                        </div>
-                        <input id="input-wall-thickness" type="range" min="0.1" max="0.5" step="0.02" value="0.2" class="w-full cursor-pointer accent-bauhaus-red focus:outline-none focus:ring-1 focus:ring-bauhaus-red">
+                    <div class="method-row">
+                        <span class="method-pigment-tag">THREE.JS ENGINE</span>
+                        <span class="method-desc">WebGL rendering runtime with parametric wall extrusion, first-person WASD traversal, and solar azimuth simulation.</span>
+                        <span class="method-class">WebGL Runtime</span>
                     </div>
                 </div>
+            </div>
+        </section>
 
-                <!-- Room search and door-based route -->
-                <div class="bauhaus-card geo-yellow space-y-3 rounded-none border-2 border-bauhaus-ink bg-white p-4">
-                    <label class="text-xs font-semibold uppercase tracking-wider text-bauhaus-ink block">Find and Route</label>
-                    <div class="flex gap-2">
-                        <select id="room-search" class="min-w-0 flex-1 rounded-none border border-bauhaus-ink bg-white px-2 py-2 text-xs text-bauhaus-ink focus:outline-none focus:ring-1 focus:ring-bauhaus-red">
-                            <option value="">Choose a room to focus</option>
-                        </select>
-                        <button id="btn-focus-room" type="button" class="rounded-none border border-bauhaus-ink bg-transparent px-3 text-xs text-bauhaus-ink transition-colors duration-150 hover:border-bauhaus-red hover:text-bauhaus-ink active:scale-95">Focus</button>
-                    </div>
-                    <div class="grid grid-cols-2 gap-2">
-                        <select id="route-from" aria-label="Route from room" class="min-w-0 rounded-none border border-bauhaus-ink bg-white px-2 py-2 text-xs text-bauhaus-ink focus:outline-none focus:ring-1 focus:ring-bauhaus-red">
-                            <option value="">From room</option>
-                        </select>
-                        <select id="route-to" aria-label="Route to room" class="min-w-0 rounded-none border border-bauhaus-ink bg-white px-2 py-2 text-xs text-bauhaus-ink focus:outline-none focus:ring-1 focus:ring-bauhaus-red">
-                            <option value="">To room</option>
-                        </select>
-                    </div>
-                    <button id="btn-show-route" type="button" class="w-full rounded-none bg-bauhaus-red px-3 py-2 text-xs font-semibold text-white transition-colors duration-150 ease-in-out hover:bg-bauhaus-red active:scale-95">Show door-based route</button>
-                    <p id="route-status" role="status" class="text-[11px] text-bauhaus-ink">Load a scene to search rooms and route through detected doors.</p>
+        <!-- 6. TABLE OF WORK ("Plans processed") -->
+        <section id="plans-section" class="studio-section">
+            <div class="reveal-node">
+                <div class="mono-label">Validated Benchmarks</div>
+                <h2 class="section-headline">Plans <em>processed</em>.</h2>
+                <p class="mono-body" style="margin-top: 8px;">
+                    Records from samples/index.json processed through the FloorPlan3D geometric engine. Select any row to load the interactive 3D model.
+                </p>
+            </div>
+
+            <div class="table-wrapper">
+                <table class="studio-table" aria-label="Plans processed table">
+                    <thead>
+                        <tr>
+                            <th>Plan</th>
+                            <th>Rooms</th>
+                            <th>Doors</th>
+                            <th>Scale</th>
+                            <th>Method</th>
+                            <th style="text-align:right;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="work-table-body">
+                        <!-- Rows populated by landing.js from samples/index.json -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- 7. CLOSE -->
+        <footer id="try-it-section" class="studio-close">
+            <div class="close-content">
+                <div class="close-copy reveal-node">
+                    <h2 class="section-headline" style="font-size: clamp(32px, 3.8vw, 56px);">
+                        Spatial twins from <em>two dimensions</em>.
+                    </h2>
+                    <p class="mono-caption" style="margin-top: 16px; max-width: 44ch;">
+                        Zero cloud lock-in. Evaluated on verified architectural floor plans with exportable GLB and scene.json contracts.
+                    </p>
                 </div>
+                <div class="hero-actions reveal-node">
+                    <button type="button" class="btn-studio-primary" data-action="open-app-upload">Upload a plan</button>
+                    <button type="button" class="btn-studio-secondary" data-action="open-app-sample">Try sample plan</button>
+                </div>
+            </div>
 
-                <section class="bauhaus-card geo-blue space-y-3 rounded-none border-2 border-bauhaus-ink bg-white p-4" aria-labelledby="map-assistant-title">
-                    <h2 id="map-assistant-title" class="text-xs font-semibold uppercase tracking-wider">Ask this map</h2>
-                    <p class="text-[11px] text-bauhaus-ink">Ask about rooms, levels, areas, or request a route, such as “route from the lobby to the computer lab.” Answers use the current scene.</p>
-                    <form id="map-assistant-form" class="space-y-2">
-                        <label for="map-assistant-question" class="sr-only">Question about this floor plan</label>
-                        <input id="map-assistant-question" type="text" maxlength="500" placeholder="Where is the computer lab?" class="w-full rounded-none border border-bauhaus-ink bg-white px-2 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-bauhaus-red" required>
-                        <button id="map-assistant-submit" type="submit" class="w-full rounded-none bg-bauhaus-blue px-3 py-2 text-xs font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Ask map assistant</button>
-                    </form>
-                    <div class="space-y-2 border-t border-bauhaus-muted pt-2">
-                        <label for="map-audio-input" class="block text-[11px] font-semibold">Ask by voice (WAV)</label>
-                        <input id="map-audio-input" type="file" accept="audio/wav,.wav" class="w-full text-[10px]" {% if not voice_transcription_ready %}disabled{% endif %}>
-                        <button id="btn-transcribe-map" type="button" class="w-full rounded-none border border-bauhaus-ink bg-white px-3 py-2 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red" {% if not voice_transcription_ready %}disabled{% endif %}>Transcribe question</button>
-                        <p id="map-transcription-status" class="text-[10px]" aria-live="polite">{% if voice_transcription_ready %}Muse Voice Transcribe is ready.{% else %}Voice transcription needs META_API_KEY.{% endif %}</p>
-                    </div>
-                    <p id="map-assistant-provider" class="text-[10px] font-mono text-bauhaus-ink" aria-live="polite">{% if labeling_ready %}Baseten Muse Spark Open{% else %}Offline scene lookup (no model call){% endif %}</p>
-                    <p id="map-assistant-answer" class="hidden rounded-none border border-bauhaus-muted bg-bauhaus-muted p-2 text-xs leading-relaxed" role="status" aria-live="polite"></p>
-                </section>
+            <!-- Cropped full-width wordmark bookending the hero -->
+            <div class="close-wordmark-container">
+                <h2 class="close-wordmark">FLOORPLAN3D</h2>
+            </div>
 
-                <!-- 4. Generate Button & Progress -->
-                <div>
-                    <button id="btn-generate" type="button" disabled class="flex w-full items-center justify-center gap-2 rounded-none border border-bauhaus-ink bg-bauhaus-red px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-[4px_4px_0px_0px_#121212] transition-colors duration-150 ease-in-out hover:bg-bauhaus-red active:scale-95 disabled:cursor-not-allowed disabled:opacity-40">
-                        <span>{% if processing_mode == 'MOCK' %}🧪 Run Mock Pipeline{% elif sam_ready %}✨ Process with Meta AI{% else %}⚙️ Process locally{% endif %}</span>
-                    </button>
+            <!-- Footer hairline strip -->
+            <div class="studio-footer-strip">
+                <div>FloorPlan3D Studio · Meta AI Hackathon</div>
+                <div>Instrument Serif & Azeret Mono · Square Corners · Real Meters</div>
+            </div>
+        </footer>
 
-                    <!-- Progress Bar -->
-                    <div id="progress-container" class="hidden mt-3 space-y-1.5">
-                        <div class="w-full bg-bauhaus-muted rounded-full h-2 overflow-hidden">
-                            <div id="progress-bar" class="h-2 w-0 rounded-full bg-bauhaus-yellow transition-[width] duration-300"></div>
-                        </div>
-                        <p id="progress-status" class="text-[11px] text-bauhaus-ink text-center animate-pulse-subtle">
-                            Starting AI pipeline...
+    </div>
+
+
+    <!-- ======================================================================
+         2. INTERACTIVE 3D APPLICATION VIEW (PRESERVING ALL IDS & CONTROLS)
+         ====================================================================== -->
+    <div id="app-view" class="view-hidden">
+
+        <!-- Studio App Bar with Back Button -->
+        <div class="app-studio-header">
+            <div class="flex items-center gap-3">
+                <button type="button" class="app-back-link" data-action="back-to-landing">
+                    ← Back to studio
+                </button>
+                <div class="text-xs font-semibold tracking-wider uppercase hidden sm:block">
+                    FloorPlan3D Engine
+                    <span class="mono-caption ml-2 px-2 py-0.5 border border-hairline">META SAM 3.1 / MUSE SPARK / THREE.JS</span>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-2">
+                <div id="processing-mode-badge" class="hidden rounded-none px-3 py-1 text-xs font-bold uppercase tracking-wider" role="status" aria-live="polite"></div>
+                <div class="status-badge px-3 py-1 text-xs font-bold uppercase tracking-wider {% if processing_mode == 'LIVE' %}is-live{% else %}is-offline{% endif %}">
+                    {% if processing_mode == 'MOCK' %}MOCK MODE{% else %}{% if sam_ready %}SAM 3.1 segmentation{% else %}Local OpenCV segmentation{% endif %} · {% if labeling_ready %}Muse labels on{% else %}Generic labels{% endif %}{% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Main App Layout: Sidebar (Left) + Viewport Tabs (Right) -->
+        <div class="flex min-h-0 flex-1 overflow-hidden">
+
+            <!-- Left Sidebar: Controls & Upload -->
+            <aside aria-label="Floor plan controls" class="studio-sidebar h-full min-h-0 w-80 max-w-[45vw] shrink-0 overflow-y-auto overscroll-contain xl:w-96">
+                <div class="space-y-4 p-4 pb-10">
+
+                    <!-- 1. Quick Hackathon Demo Action -->
+                    <div>
+                        <button id="btn-load-demo" type="button" class="flex w-full items-center justify-center gap-2 px-4 py-2.5 text-xs font-bold uppercase tracking-wider active:scale-95">
+                            <span>⚡ Load Hackathon Demo Plan</span>
+                        </button>
+                        <button id="btn-load-two-story-demo" type="button" class="mt-2 flex w-full items-center justify-center gap-2 px-4 py-2 text-xs font-bold uppercase tracking-wider active:scale-95">
+                            <span>🏢 Load Two-Story Demo</span>
+                        </button>
+                        <button id="btn-sidebar-evac" type="button" class="mt-2 flex w-full items-center justify-center gap-2 px-4 py-2 text-xs font-bold uppercase tracking-wider active:scale-95">
+                            <span>Preview Egress Connectivity</span>
+                        </button>
+                        <p class="mono-caption text-center mt-1.5" style="font-size: 10px;">
+                            Prepared one- and two-story examples work without API keys.
                         </p>
                     </div>
-                </div>
 
-                <!-- 5. 3D Layers Checklist -->
-                <div class="bauhaus-card geo-red space-y-2.5 rounded-none border-2 border-bauhaus-ink bg-white p-4">
-                    <label class="text-xs font-semibold uppercase tracking-wider text-bauhaus-ink block mb-1">
-                        3D Layers Visibility
-                    </label>
-                    <div class="grid grid-cols-2 gap-2 text-xs text-bauhaus-ink">
-                        <label class="flex items-center space-x-2 cursor-pointer">
-                            <input id="chk-walls" type="checkbox" checked class="rounded-none border-bauhaus-ink bg-white text-bauhaus-blue focus:ring-bauhaus-red">
-                            <span>Walls (3D)</span>
-                        </label>
-                        <label class="flex items-center space-x-2 cursor-pointer">
-                            <input id="chk-floors" type="checkbox" checked class="rounded-none border-bauhaus-ink bg-white text-bauhaus-blue focus:ring-bauhaus-red">
-                            <span>Floor Slabs</span>
-                        </label>
-                        <label class="flex items-center space-x-2 cursor-pointer">
-                            <input id="chk-labels" type="checkbox" checked class="rounded-none border-bauhaus-ink bg-white text-bauhaus-blue focus:ring-bauhaus-red">
-                            <span>Room Badges</span>
-                        </label>
-                        <label class="flex items-center space-x-2 cursor-pointer">
-                            <input id="chk-openings" type="checkbox" checked class="rounded-none border-bauhaus-ink bg-white text-bauhaus-blue focus:ring-bauhaus-red">
-                            <span>Doors & Windows</span>
-                        </label>
-                        <label class="flex items-center space-x-2 cursor-pointer col-span-2">
-                            <input id="chk-grid" type="checkbox" checked class="rounded-none border-bauhaus-ink bg-white text-bauhaus-blue focus:ring-bauhaus-red">
-                            <span>1-Meter Architectural Grid</span>
-                        </label>
-                        <label class="flex items-center space-x-2 cursor-pointer col-span-2">
-                            <input id="chk-furniture" type="checkbox" class="rounded-none border-bauhaus-ink bg-white text-bauhaus-blue focus:ring-bauhaus-red">
-                            <span>Furniture & Props</span>
-                        </label>
-                    </div>
-                </div>
-
-                <!-- 6. Room Inspector Card (Interactive Raycasting) -->
-                <div class="bauhaus-card geo-blue rounded-none border-2 border-bauhaus-ink bg-white p-4">
-                    <div class="flex items-center justify-between mb-2">
-                        <label class="text-xs font-semibold uppercase tracking-wider text-bauhaus-ink">
-                            Room Inspector
-                        </label>
-                        <span class="text-[10px] text-bauhaus-blue">Click room in 3D</span>
-                    </div>
-
-                    <div id="room-inspector-empty" class="text-xs text-bauhaus-ink text-center py-4">
-                        Click on any room floor slab in the 3D viewer to inspect its architectural data.
-                    </div>
-
-                    <div id="room-inspector-card" class="hidden space-y-2 text-xs">
-                        <div class="flex items-center justify-between border-b border-bauhaus-ink pb-2">
-                            <h3 id="inspector-title" class="font-bold text-white text-sm">Room Name</h3>
-                        <span id="inspector-type" class="border-2 border-bauhaus-ink bg-bauhaus-blue px-2 py-0.5 text-[10px] font-bold uppercase text-white">CLASSROOM</span>
+                    <!-- Area Summary -->
+                    <section id="area-summary-panel" class="studio-card space-y-2 p-3.5" aria-labelledby="area-summary-title">
+                        <h2 id="area-summary-title" class="mono-label">Area Summary</h2>
+                        <p id="area-summary-total" class="font-mono text-xs">Load a plan to calculate areas.</p>
+                        <div class="space-y-2 border border-hairline p-2 text-[11px] leading-relaxed">
+                            <div id="map-quality-report" role="status" aria-live="polite">Readiness checks appear after loading a scene.</div>
+                            <ul id="map-quality-checks" class="space-y-1" aria-label="Plan review checklist"></ul>
+                            <ul id="map-quality-warnings" class="space-y-1" aria-label="Items to review"></ul>
+                            <div class="flex flex-wrap gap-1.5 pt-1">
+                                <button id="btn-ai-plan-review" type="button" class="px-2 py-1 text-[10px] font-semibold">AI plan review</button>
+                                <button id="btn-building-summary" type="button" class="px-2 py-1 text-[10px] font-semibold">Summarize building</button>
+                                <button id="btn-review-2d" type="button" class="px-2 py-1 text-[10px] font-semibold">Review 2D detections</button>
+                                <button id="btn-review-room" type="button" class="px-2 py-1 text-[10px] font-semibold">Edit a room outline</button>
+                            </div>
+                            <div id="scene-insight-result" class="hidden border-t border-hairline pt-2 text-xs leading-relaxed" role="status" aria-live="polite"></div>
                         </div>
-                        <div class="space-y-1.5 pt-1 text-bauhaus-ink">
-                            <div class="flex justify-between">
-                                <span class="text-bauhaus-ink">Confidence:</span>
-                                <span id="inspector-conf" class="font-mono text-bauhaus-ink">95%</span>
+                        <details>
+                            <summary class="cursor-pointer text-xs font-semibold">Per-room areas</summary>
+                            <ul id="area-summary-rooms" class="mt-2 max-h-48 space-y-1 overflow-y-auto text-xs"></ul>
+                        </details>
+                    </section>
+
+                    <details class="studio-card p-3.5" open>
+                        <summary class="cursor-pointer mono-label">Quick judge walkthrough</summary>
+                        <ol class="mt-2 list-decimal space-y-1 pl-4 text-[11px] leading-relaxed">
+                            <li>Load the one-story demo, then compare its 2D detections with the original plan.</li>
+                            <li>Use the review checklist; edit a room outline if needed.</li>
+                            <li>Load the two-story demo and inspect the story selector and stairs.</li>
+                            <li>Show a route, area summary, and export.</li>
+                        </ol>
+                        <p class="mt-2 mono-caption" style="font-size: 10px;">Both demos and the review flow work without API keys.</p>
+                    </details>
+
+                    {% if not sam_ready or not labeling_ready %}
+                    <div class="studio-card p-3 text-xs leading-relaxed">
+                        <strong class="block mb-1">{% if sam_ready %}SAM segmentation ready{% else %}Local segmentation ready{% endif %}</strong>
+                        {% if sam_ready %}SAM 3.1 will segment uploads.{% else %}Uploads use local OpenCV until a separate Meta API key is configured.{% endif %}
+                        {% if not labeling_ready %}Room labels use generic names until Baseten key is configured.{% endif %}
+                    </div>
+                    {% endif %}
+
+                    <div id="app-message" role="status" aria-live="polite" class="hidden border border-hairline p-3 text-xs leading-relaxed"></div>
+
+                    <!-- 2. Image Upload Card -->
+                    <div class="studio-card space-y-3 p-3.5">
+                        <label class="mono-label block">Upload 2D Floor Plan</label>
+
+                        <!-- Drop Zone -->
+                        <div id="drop-zone" class="group cursor-pointer p-4 text-center transition-colors">
+                            <input id="file-input" type="file" accept="image/png, image/jpeg, image/webp" multiple class="hidden">
+                            
+                            <div id="drop-zone-prompt" class="space-y-2">
+                                <div class="mx-auto flex h-10 w-10 items-center justify-center text-[var(--ink)]">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                                    </svg>
+                                </div>
+                                <p class="text-xs font-semibold">Click to browse or drag & drop</p>
+                                <p class="mono-caption" style="font-size: 10px;">PNG, JPG, or WEBP (up to 10MB). Select multiple plans in ground-to-top order.</p>
                             </div>
-                            <div class="flex justify-between">
-                                <span class="text-bauhaus-ink">Calculated Area:</span>
-                                <span id="inspector-area" class="font-mono text-white">48.0 m²</span>
+
+                            <div id="image-preview-container" class="hidden relative">
+                                <img id="image-preview" src="" alt="Floor Plan Preview" class="max-h-40 mx-auto object-contain">
+                                <button id="btn-remove-image" type="button" aria-label="Remove uploaded floor plan" class="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center text-xs">
+                                    ✕
+                                </button>
                             </div>
-                            <div class="flex justify-between">
-                                <span class="text-bauhaus-ink">Boundary:</span>
-                                <span id="inspector-points" class="font-mono text-bauhaus-ink">4 Vertices</span>
+                        </div>
+                        <button id="btn-process-building" type="button" disabled class="mt-2 hidden w-full px-4 py-2 text-xs font-bold uppercase tracking-wider disabled:cursor-not-allowed disabled:opacity-40">Process selected plans as stories</button>
+                        <p id="building-upload-status" class="hidden text-[10px] leading-relaxed" aria-live="polite"></p>
+                    </div>
+
+                    <!-- Muse Image Draft Section -->
+                    <section class="studio-card space-y-2 p-3.5" aria-labelledby="muse-image-title">
+                        <h2 id="muse-image-title" class="mono-label">Create a draft with Muse Image</h2>
+                        <p class="mono-body" style="font-size: 11px;">Describe a layout; review generated drawing before processing.</p>
+                        <textarea id="muse-image-prompt" maxlength="500" rows="2" placeholder="One-story home with two bedrooms, a kitchen, and central hallway" class="w-full px-2 py-2 text-xs" {% if not image_generation_ready %}disabled{% endif %}></textarea>
+                        <button id="btn-muse-image" type="button" class="w-full px-3 py-2 text-xs font-bold uppercase tracking-wider" {% if not image_generation_ready %}disabled{% endif %}>Generate draft floor plan</button>
+                        <p id="muse-image-status" class="mono-caption" style="font-size: 10px;" aria-live="polite">{% if image_generation_ready %}Muse Image is ready.{% else %}Available after adding META_API_KEY.{% endif %}</p>
+                    </section>
+
+                    <!-- 3. Spatial Calibration Sliders -->
+                    <div class="studio-card space-y-3 p-3.5">
+                        <div class="flex items-center justify-between">
+                            <label class="mono-label">Spatial Calibration</label>
+                            <span class="mono-caption px-1.5 py-0.5 border border-hairline">scene.json</span>
+                        </div>
+
+                        <!-- Meters Per Pixel -->
+                        <div class="space-y-1">
+                            <div class="flex justify-between text-xs">
+                                <span>Scale (Meters / Pixel)</span>
+                                <span id="label-mpp" class="font-mono font-bold">0.020 m/px</span>
                             </div>
-                            <div class="flex justify-between">
-                                <span class="text-bauhaus-ink">Connected Doors:</span>
-                                <span id="inspector-doors" class="font-mono text-bauhaus-ink">d1, d2</span>
+                            <input id="input-mpp" type="range" min="0.005" max="0.08" step="0.005" value="0.02" class="w-full cursor-pointer">
+                            <label class="flex items-center gap-2 text-[11px]">
+                                <input id="chk-auto-scale" type="checkbox" checked>
+                                <span>Estimate scale from detected doors (0.9 m wide)</span>
+                            </label>
+                        </div>
+
+                        <!-- Wall Height -->
+                        <div class="space-y-1">
+                            <div class="flex justify-between text-xs">
+                                <span>Wall Height</span>
+                                <span id="label-wall-height" class="font-mono font-bold">3.0 m</span>
                             </div>
-                            <label for="edit-room-name" class="block pt-2 font-semibold">Room name</label>
-                            <input id="edit-room-name" type="text" maxlength="100" class="w-full rounded-none border border-bauhaus-ink bg-white px-2 py-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red" disabled>
-                            <label for="edit-room-type" class="block font-semibold">Room type</label>
-                            <select id="edit-room-type" class="w-full rounded-none border border-bauhaus-ink bg-white px-2 py-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red" disabled>
-                                <option>classroom</option><option>lab</option><option>corridor</option><option>restroom</option><option>stairs</option><option>elevator</option><option>entrance</option><option>bedroom</option><option>office</option><option>kitchen</option><option>living_room</option><option>room</option><option>other</option>
+                            <input id="input-wall-height" type="range" min="0.8" max="5.0" step="0.1" value="3.0" class="w-full cursor-pointer">
+                        </div>
+
+                        <!-- Wall Thickness -->
+                        <div class="space-y-1">
+                            <div class="flex justify-between text-xs">
+                                <span>Wall Thickness</span>
+                                <span id="label-wall-thickness" class="font-mono font-bold">0.20 m</span>
+                            </div>
+                            <input id="input-wall-thickness" type="range" min="0.1" max="0.5" step="0.02" value="0.2" class="w-full cursor-pointer">
+                        </div>
+                    </div>
+
+                    <!-- Room search and door-based route -->
+                    <div class="studio-card space-y-2.5 p-3.5">
+                        <label class="mono-label block">Find and Route</label>
+                        <div class="flex gap-2">
+                            <select id="room-search" class="min-w-0 flex-1 px-2 py-1.5 text-xs">
+                                <option value="">Choose a room to focus</option>
                             </select>
-                            <div class="flex gap-2 pt-1">
-                                <button id="btn-save-room-edit" type="button" class="flex-1 rounded-none border border-bauhaus-ink bg-bauhaus-blue px-2 py-1.5 text-xs font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red" disabled>Save edit</button>
-                                <button id="btn-delete-room" type="button" class="rounded-none border border-bauhaus-ink bg-bauhaus-red px-2 py-1.5 text-xs font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red" disabled>Delete room</button>
+                            <button id="btn-focus-room" type="button" class="px-3 text-xs font-bold uppercase tracking-wider">Focus</button>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <select id="route-from" aria-label="Route from room" class="min-w-0 px-2 py-1.5 text-xs">
+                                <option value="">From room</option>
+                            </select>
+                            <select id="route-to" aria-label="Route to room" class="min-w-0 px-2 py-1.5 text-xs">
+                                <option value="">To room</option>
+                            </select>
+                        </div>
+                        <button id="btn-show-route" type="button" class="w-full px-3 py-2 text-xs font-bold uppercase tracking-wider">Show door-based route</button>
+                        <p id="route-status" role="status" class="mono-caption" style="font-size: 10px;">Load a scene to search rooms and route through detected doors.</p>
+                    </div>
+
+                    <!-- Ask this map -->
+                    <section class="studio-card space-y-2.5 p-3.5" aria-labelledby="map-assistant-title">
+                        <h2 id="map-assistant-title" class="mono-label">Ask this map</h2>
+                        <form id="map-assistant-form" class="space-y-2">
+                            <input id="map-assistant-question" type="text" maxlength="500" placeholder="Where is the computer lab?" class="w-full px-2 py-1.5 text-xs" required>
+                            <button id="map-assistant-submit" type="submit" class="w-full px-3 py-1.5 text-xs font-bold uppercase tracking-wider">Ask map assistant</button>
+                        </form>
+                        <div class="space-y-1.5 border-t border-hairline pt-2">
+                            <label for="map-audio-input" class="block mono-caption">Ask by voice (WAV)</label>
+                            <input id="map-audio-input" type="file" accept="audio/wav,.wav" class="w-full text-[10px]" {% if not voice_transcription_ready %}disabled{% endif %}>
+                            <button id="btn-transcribe-map" type="button" class="w-full px-3 py-1 text-xs font-bold uppercase tracking-wider" {% if not voice_transcription_ready %}disabled{% endif %}>Transcribe question</button>
+                        </div>
+                        <p id="map-assistant-provider" class="mono-caption" style="font-size: 10px;" aria-live="polite">{% if labeling_ready %}Baseten Muse Spark Open{% else %}Offline scene lookup{% endif %}</p>
+                        <p id="map-assistant-answer" class="hidden border border-hairline p-2 text-xs leading-relaxed" role="status" aria-live="polite"></p>
+                    </section>
+
+                    <!-- 4. Generate Button & Progress -->
+                    <div>
+                        <button id="btn-generate" type="button" disabled class="flex w-full items-center justify-center gap-2 px-4 py-3 text-xs font-bold uppercase tracking-wider disabled:cursor-not-allowed disabled:opacity-40">
+                            <span>{% if processing_mode == 'MOCK' %}🧪 Run Mock Pipeline{% elif sam_ready %}✨ Process with Meta AI{% else %}⚙️ Process locally{% endif %}</span>
+                        </button>
+
+                        <div id="progress-container" class="hidden mt-3 space-y-1.5">
+                            <div class="w-full h-1.5 overflow-hidden" style="background: var(--ground-2);">
+                                <div id="progress-bar" class="h-1.5 w-0 transition-[width] duration-300" style="background: var(--ink);"></div>
                             </div>
-                            <button id="btn-edit-boundary" type="button" class="w-full rounded-none border border-bauhaus-ink bg-bauhaus-yellow px-2 py-1.5 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red" disabled>Edit room outline</button>
-                            <div id="boundary-edit-controls" class="hidden space-y-1.5">
-                                <p id="boundary-edit-status" class="text-[11px]" aria-live="polite">Drag a highlighted point in the 2D Segmentation tab.</p>
-                                <div class="flex gap-2">
-                                    <button id="btn-boundary-undo" type="button" class="flex-1 rounded-none border border-bauhaus-ink px-2 py-1 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red" disabled>Undo</button>
-                                    <button id="btn-boundary-done" type="button" class="flex-1 rounded-none bg-bauhaus-blue px-2 py-1 text-xs font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Finish outline</button>
+                            <p id="progress-status" class="mono-caption text-center">Starting AI pipeline...</p>
+                        </div>
+                    </div>
+
+                    <!-- 5. 3D Layers Checklist -->
+                    <div class="studio-card space-y-2 p-3.5">
+                        <label class="mono-label block mb-1">3D Layers Visibility</label>
+                        <div class="grid grid-cols-2 gap-2 text-xs">
+                            <label class="flex items-center space-x-2 cursor-pointer">
+                                <input id="chk-walls" type="checkbox" checked>
+                                <span>Walls (3D)</span>
+                            </label>
+                            <label class="flex items-center space-x-2 cursor-pointer">
+                                <input id="chk-floors" type="checkbox" checked>
+                                <span>Floor Slabs</span>
+                            </label>
+                            <label class="flex items-center space-x-2 cursor-pointer">
+                                <input id="chk-labels" type="checkbox" checked>
+                                <span>Room Badges</span>
+                            </label>
+                            <label class="flex items-center space-x-2 cursor-pointer">
+                                <input id="chk-openings" type="checkbox" checked>
+                                <span>Doors & Windows</span>
+                            </label>
+                            <label class="flex items-center space-x-2 cursor-pointer col-span-2">
+                                <input id="chk-grid" type="checkbox" checked>
+                                <span>1-Meter Architectural Grid</span>
+                            </label>
+                            <label class="flex items-center space-x-2 cursor-pointer col-span-2">
+                                <input id="chk-furniture" type="checkbox">
+                                <span>Furniture & Props</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- 6. Room Inspector Card -->
+                    <div class="studio-card p-3.5">
+                        <div class="flex items-center justify-between mb-2">
+                            <label class="mono-label">Room Inspector</label>
+                            <span class="mono-caption">Click room in 3D</span>
+                        </div>
+
+                        <div id="room-inspector-empty" class="mono-body text-center py-4 text-xs">
+                            Click on any room floor slab in the 3D viewer to inspect its architectural data.
+                        </div>
+
+                        <div id="room-inspector-card" class="hidden space-y-2 text-xs">
+                            <div class="flex items-center justify-between border-b border-hairline pb-2">
+                                <h3 id="inspector-title" class="font-bold text-sm">Room Name</h3>
+                                <span id="inspector-type" class="border border-hairline px-2 py-0.5 text-[10px] font-bold uppercase">CLASSROOM</span>
+                            </div>
+                            <div class="space-y-1.5 pt-1">
+                                <div class="flex justify-between">
+                                    <span>Confidence:</span>
+                                    <span id="inspector-conf" class="font-mono">95%</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span>Calculated Area:</span>
+                                    <span id="inspector-area" class="font-mono font-bold">48.0 m²</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span>Boundary:</span>
+                                    <span id="inspector-points" class="font-mono">4 Vertices</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span>Connected Doors:</span>
+                                    <span id="inspector-doors" class="font-mono">d1, d2</span>
+                                </div>
+                                <label for="edit-room-name" class="block pt-2 font-semibold">Room name</label>
+                                <input id="edit-room-name" type="text" maxlength="100" class="w-full px-2 py-1 text-xs" disabled>
+                                <label for="edit-room-type" class="block font-semibold">Room type</label>
+                                <select id="edit-room-type" class="w-full px-2 py-1 text-xs" disabled>
+                                    <option>classroom</option><option>lab</option><option>corridor</option><option>restroom</option><option>stairs</option><option>elevator</option><option>entrance</option><option>bedroom</option><option>office</option><option>kitchen</option><option>living_room</option><option>room</option><option>other</option>
+                                </select>
+                                <div class="flex gap-2 pt-1">
+                                    <button id="btn-save-room-edit" type="button" class="flex-1 px-2 py-1.5 text-xs font-semibold" disabled>Save edit</button>
+                                    <button id="btn-delete-room" type="button" class="px-2 py-1.5 text-xs font-semibold" disabled>Delete room</button>
+                                </div>
+                                <button id="btn-edit-boundary" type="button" class="w-full px-2 py-1.5 text-xs font-semibold" disabled>Edit room outline</button>
+                                <div id="boundary-edit-controls" class="hidden space-y-1.5">
+                                    <p id="boundary-edit-status" class="mono-caption" aria-live="polite">Drag a highlighted point in 2D tab.</p>
+                                    <div class="flex gap-2">
+                                        <button id="btn-boundary-undo" type="button" class="flex-1 px-2 py-1 text-xs" disabled>Undo</button>
+                                        <button id="btn-boundary-done" type="button" class="flex-1 px-2 py-1 text-xs font-semibold">Finish outline</button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
+
                 </div>
+            </aside>
 
-            </div>
-        </aside>
+            <!-- Right Main Content Area: Tabbed Views -->
+            <main class="relative flex min-h-0 min-w-0 flex-1 flex-col">
 
-        <!-- Right Main Content Area: Tabbed Views -->
-        <main class="relative flex min-h-0 min-w-0 flex-1 flex-col bg-bauhaus-paper">
-
-            <!-- Viewport Header Tabs & Camera Controls -->
-            <div class="bauhaus-toolbar flex min-h-14 shrink-0 items-center justify-between gap-3 overflow-x-auto border-b-4 border-bauhaus-ink bg-bauhaus-blue px-3 sm:px-5">
-                <!-- Navigation Tabs -->
-                <div class="flex shrink-0 items-center gap-1">
-                    <button data-tab="3d" class="nav-tab-btn active flex items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-3 py-2 text-xs font-semibold text-bauhaus-ink transition-colors duration-150 ease-in-out">
-                        <span>🌐 3D Navigable Map</span>
-                    </button>
-                    <button data-tab="2d" class="nav-tab-btn flex items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-3 py-2 text-xs font-semibold text-bauhaus-ink transition-colors duration-150 ease-in-out hover:text-bauhaus-ink">
-                        <span>🖼️ 2D AI Segmentation</span>
-                    </button>
-                    <button data-tab="json" class="nav-tab-btn flex items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-3 py-2 text-xs font-semibold text-bauhaus-ink transition-colors duration-150 ease-in-out hover:text-bauhaus-ink">
-                        <span>📜 scene.json Contract</span>
-                    </button>
-                </div>
-
-                <!-- Floating 3D Camera Controls -->
-                <div class="flex shrink-0 items-center gap-1.5 text-xs">
-                    <select id="level-filter" aria-label="Visible building stories" class="glass-control hidden max-w-36 rounded-none px-2 py-1 text-bauhaus-ink focus:outline-none focus:ring-1 focus:ring-bauhaus-red">
-                        <option value="all">All Stories</option>
-                    </select>
-                    <button id="btn-view-iso" title="Perspective Isometric View" class="viewport-control rounded-none px-2.5 py-1 text-bauhaus-ink transition-colors duration-150 ease-in-out">
-                        Isometric 3D
-                    </button>
-                    <button id="btn-view-top" title="Top-Down 2D Architectural View" class="viewport-control rounded-none px-2.5 py-1 text-bauhaus-ink transition-colors duration-150 ease-in-out">
-                        Top-Down 2D
-                    </button>
-                    <button id="btn-view-eye" title="Eye-Level Orbit" class="viewport-control rounded-none px-2.5 py-1 text-bauhaus-ink transition-colors duration-150 ease-in-out">
-                        Eye Level
-                    </button>
-                    <button id="btn-walkthrough" type="button" aria-label="Toggle first-person walkthrough" aria-pressed="false" title="Walk with WASD; move mouse to look" class="viewport-control rounded-none px-2.5 py-1 text-bauhaus-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">
-                        Walkthrough
-                    </button>
-                    <button id="btn-measure" type="button" aria-label="Toggle 3D measurement tool" aria-pressed="false" title="Click two floor or wall points to measure" class="viewport-control rounded-none px-2.5 py-1 text-bauhaus-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">
-                        Measure
-                    </button>
-                    <button id="btn-cutaway" title="Cut walls to 1.1m to view room interiors" class="viewport-control rounded-none px-2.5 py-1 text-bauhaus-ink transition-colors duration-150 ease-in-out">
-                        Cutaway View
-                    </button>
-                    <button id="btn-toggle-sunlight" title="Time of Day & Sunlight Simulation" class="viewport-control rounded-none px-2.5 py-1 text-bauhaus-ink transition-colors duration-150 ease-in-out">
-                        ☀️ Sun & Night
-                    </button>
-                    <button id="btn-toggle-blueprint" title="Project 2D Blueprint under 3D model" class="viewport-control rounded-none px-2.5 py-1 text-bauhaus-ink transition-colors duration-150 ease-in-out">
-                        📐 Blueprint
-                    </button>
-                    <button id="btn-toggle-evacuation" title="Preview routes through detected door and stair connections; not a safety assessment" class="flex items-center gap-1 rounded-none border border-bauhaus-ink bg-emerald-600 px-2.5 py-1 font-medium text-white shadow-sm transition-colors duration-150 ease-in-out hover:bg-emerald-700 active:scale-95">
-                        <span>🚨 Evacuation</span>
-                    </button>
-                    <button id="btn-export-glb" title="Download 3D building as .GLB file" class="flex items-center gap-1 rounded-none border border-bauhaus-ink bg-bauhaus-red px-2.5 py-1 font-medium text-white shadow-sm transition-colors duration-150 ease-in-out hover:bg-bauhaus-red active:scale-95">
-                        <span>📦 Export .GLB</span>
-                    </button>
-                    <button id="btn-view-reset" title="Reset Viewport" class="viewport-control rounded-none px-2 py-1 text-bauhaus-ink transition-colors duration-150 ease-in-out">
-                        ↺ Reset
-                    </button>
-                </div>
-            </div>
-
-            <!-- Tab Panels Container -->
-            <div class="relative min-h-0 flex-1 overflow-hidden">
-
-                <!-- Tab 1: 3D Interactive Map (Three.js WebGL Canvas) -->
-                <div id="tab-3d" class="tab-panel relative h-full w-full">
-                    <div id="threejs-canvas-container" class="w-full h-full" tabindex="0" role="application" aria-label="Interactive 3D floor plan. Use mouse to orbit, arrow keys to pan, or enable walkthrough with WASD."></div>
-
-                    <section id="walkthrough-hud" class="walkthrough-hud hidden" aria-label="Walkthrough controls">
-                        <p id="walkthrough-hint" role="status" aria-live="polite">WASD / arrows to walk · drag to look · E to interact · Esc to exit</p>
-                        <div class="walkthrough-touch-controls" aria-label="Touch movement controls">
-                            <div class="walkthrough-dpad">
-                                <button type="button" data-walk-key="w" aria-label="Walk forward">↑</button>
-                                <button type="button" data-walk-key="a" aria-label="Walk left">←</button>
-                                <button type="button" data-walk-key="s" aria-label="Walk backward">↓</button>
-                                <button type="button" data-walk-key="d" aria-label="Walk right">→</button>
-                            </div>
-                            <button type="button" data-walk-interact aria-label="Open nearby door or use stairs">Interact · E</button>
-                        </div>
-                        <div class="walkthrough-quick-actions flex items-center justify-center gap-2 mt-2">
-                            <button id="btn-walk-outside" type="button" class="px-2.5 py-1 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded border border-white/20 shadow transition-colors flex items-center gap-1" title="Step outside the building to inspect the house from outside">👀 View Outside</button>
-                            <button id="btn-walk-inside" type="button" class="px-2.5 py-1 text-xs font-semibold bg-slate-700 hover:bg-slate-600 text-white rounded border border-white/20 shadow transition-colors flex items-center gap-1" title="Return inside to the entrance lobby">🏠 Go Inside</button>
-                        </div>
-                    </section>
-
-                    <div id="measurement-panel" class="glass-panel absolute right-4 top-4 hidden rounded-none border-2 border-bauhaus-ink bg-white p-3 text-xs" role="status" aria-live="polite">
-                        <div class="flex items-center gap-3"><span id="measurement-status">Click a first point to measure.</span><button id="btn-clear-measurement" type="button" aria-label="Clear current measurement" class="border border-bauhaus-ink px-2 py-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Clear</button></div>
+                <!-- Viewport Header Tabs & Camera Controls -->
+                <div class="studio-toolbar flex min-h-12 shrink-0 items-center justify-between gap-3 overflow-x-auto px-3 sm:px-5">
+                    <!-- Navigation Tabs -->
+                    <div class="flex shrink-0 items-center gap-1">
+                        <button data-tab="3d" class="nav-tab-btn active flex items-center gap-1.5 whitespace-nowrap px-3 py-2 text-xs font-semibold">
+                            <span>🌐 3D Navigable Map</span>
+                        </button>
+                        <button data-tab="2d" class="nav-tab-btn flex items-center gap-1.5 whitespace-nowrap px-3 py-2 text-xs font-semibold">
+                            <span>🖼️ 2D AI Segmentation</span>
+                        </button>
+                        <button data-tab="json" class="nav-tab-btn flex items-center gap-1.5 whitespace-nowrap px-3 py-2 text-xs font-semibold">
+                            <span>📜 scene.json Contract</span>
+                        </button>
                     </div>
 
-                    <!-- Sunlight & Night Simulation Floating Panel -->
-                    <div id="sunlight-panel" class="glass-panel absolute right-4 top-16 hidden rounded-none border-2 border-bauhaus-ink bg-white p-3 text-xs shadow-2xl z-20 space-y-2.5 w-64">
-                        <div class="flex items-center justify-between border-b border-bauhaus-ink pb-1">
-                            <span class="font-bold uppercase tracking-wider text-[11px] flex items-center gap-1">
-                                <span id="sun-icon">☀️</span> Sunlight & Shadows
-                            </span>
-                            <button id="btn-close-sunlight" type="button" class="text-xs px-1.5 py-0.5 border border-bauhaus-ink hover:bg-bauhaus-yellow">✕</button>
-                        </div>
-                        <div class="space-y-1">
-                            <div class="flex justify-between text-[11px]">
-                                <span>Time of Day</span>
-                                <span id="label-sun-time" class="font-mono font-bold text-bauhaus-blue">1:00 PM</span>
-                            </div>
-                            <input id="input-sun-time" type="range" min="6" max="22" step="0.5" value="13" class="w-full cursor-pointer accent-bauhaus-red">
-                            <div class="flex justify-between text-[9px] text-gray-500">
-                                <span>6 AM (Dawn)</span>
-                                <span>12 PM (Noon)</span>
-                                <span>10 PM (Night)</span>
-                            </div>
-                        </div>
-                        <div class="flex gap-2 pt-1">
-                            <button id="btn-preset-day" type="button" class="flex-1 py-1 text-[10px] font-bold border border-bauhaus-ink bg-bauhaus-yellow hover:opacity-90">☀️ Day (1 PM)</button>
-                            <button id="btn-preset-night" type="button" class="flex-1 py-1 text-[10px] font-bold border border-bauhaus-ink bg-slate-800 text-white hover:bg-slate-900">🌙 Night Mode</button>
-                        </div>
-                        <p id="sunlight-status" class="text-[10px] text-gray-600 italic">Interior room ceiling lights turn on automatically at night.</p>
-                    </div>
-
-                    <!-- 2D Blueprint Underlay Floating Panel -->
-                    <div id="blueprint-panel" class="glass-panel absolute right-4 top-16 hidden rounded-none border-2 border-bauhaus-ink bg-white p-3 text-xs shadow-2xl z-20 space-y-2.5 w-64">
-                        <div class="flex items-center justify-between border-b border-bauhaus-ink pb-1">
-                            <span class="font-bold uppercase tracking-wider text-[11px] flex items-center gap-1">
-                                📐 2D Blueprint Underlay
-                            </span>
-                            <button id="btn-close-blueprint" type="button" class="text-xs px-1.5 py-0.5 border border-bauhaus-ink hover:bg-bauhaus-yellow">✕</button>
-                        </div>
-                        <p class="text-[10px] text-gray-600">Projects the source blueprint image onto the ground plane to verify 3D alignment.</p>
-                        <div class="space-y-1">
-                            <div class="flex justify-between text-[11px]">
-                                <span>Underlay Opacity</span>
-                                <span id="label-blueprint-opacity" class="font-mono font-bold text-bauhaus-blue">0% (Off)</span>
-                            </div>
-                            <input id="input-blueprint-opacity" type="range" min="0" max="100" step="5" value="0" class="w-full cursor-pointer accent-bauhaus-red">
-                        </div>
-                        <div class="flex gap-2">
-                            <button id="btn-blueprint-zero" type="button" class="flex-1 py-1 text-[10px] border border-bauhaus-ink bg-white hover:bg-bauhaus-muted">Hide</button>
-                            <button id="btn-blueprint-half" type="button" class="flex-1 py-1 text-[10px] border border-bauhaus-ink bg-white hover:bg-bauhaus-muted">50% Blend</button>
-                            <button id="btn-blueprint-full" type="button" class="flex-1 py-1 text-[10px] border border-bauhaus-ink bg-white hover:bg-bauhaus-muted">100% Solid</button>
-                        </div>
-                    </div>
-
-                    <!-- Emergency Evacuation Simulator Audit Card -->
-                    <div id="evacuation-card" class="glass-panel absolute left-4 top-4 hidden rounded-none border-2 border-bauhaus-ink bg-white p-3.5 text-xs shadow-2xl z-20 space-y-2 w-80">
-                        <div class="flex items-center justify-between border-b-2 border-emerald-600 pb-1.5">
-                            <span class="font-bold uppercase tracking-wider text-xs text-emerald-700 flex items-center gap-1.5">
-                                Egress Connectivity Preview
-                            </span>
-                            <button id="btn-close-evacuation" type="button" class="text-xs px-2 py-0.5 border border-bauhaus-ink bg-bauhaus-red text-white hover:opacity-90">✕ Stop</button>
-                        </div>
-                        <div class="space-y-1 text-[11px]">
-                            <div class="flex justify-between">
-                                <span class="text-gray-600">Designated Exits:</span>
-                                <strong id="evac-exit-count" class="font-mono text-emerald-700">2 Exits</strong>
-                            </div>
-                            <div class="flex justify-between">
-                                <span class="text-gray-600">Evacuation Routes:</span>
-                                <strong id="evac-room-count" class="font-mono text-emerald-700">All Rooms Connected</strong>
-                            </div>
-                            <div class="flex justify-between">
-                                <span class="text-gray-600">Max Travel Distance:</span>
-                                <strong id="evac-max-dist" class="font-mono text-bauhaus-blue">13.6 m</strong>
-                            </div>
-                            <div class="flex justify-between">
-                                <span class="text-gray-600">Average Egress:</span>
-                                <strong id="evac-avg-dist" class="font-mono text-bauhaus-blue">8.4 m</strong>
-                            </div>
-                            <div class="flex justify-between border-t border-gray-200 pt-1">
-                                <span class="text-gray-600">Safety / code assessment:</span>
-                                <strong id="evac-compliance" class="font-mono text-bauhaus-red">Not assessed</strong>
-                            </div>
-                        </div>
-                        <p class="text-[10px] text-gray-500 italic border-t border-gray-100 pt-1">
-                            Routes and lengths are geometry estimates only. Exit candidates may be inferred. Not for evacuation planning, code compliance, construction, or safety decisions.
-                        </p>
-                    </div>
-
-                    <!-- Overlay Legend & Controls Guide -->
-                    <div class="glass-panel bauhaus-overlay pointer-events-auto absolute bottom-4 left-4 space-y-1.5 rounded-none border-2 border-bauhaus-ink bg-white p-3 text-[11px] text-bauhaus-ink shadow-2xl">
-                        <div class="font-bold text-bauhaus-ink uppercase tracking-wider text-[10px] mb-1">Room Types Legend</div>
-                        <div class="grid grid-cols-2 gap-x-4 gap-y-1">
-                            <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-none bg-bauhaus-blue"></span>Classroom</div>
-                            <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-none bg-bauhaus-red"></span>Lab</div>
-                            <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-none border border-bauhaus-ink bg-bauhaus-muted"></span>Corridor</div>
-                            <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-none bg-bauhaus-blue"></span>Restroom</div>
-                            <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-none bg-bauhaus-yellow"></span>Entrance</div>
-                            <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-none bg-bauhaus-yellow"></span>Door / Stairs</div>
-                        </div>
-                        <div class="text-[10px] text-bauhaus-ink border-t border-bauhaus-ink pt-1.5 mt-1.5 flex items-center justify-between">
-                            <span>Arrows: Move view</span>
-                            <span>Left Click: Orbit</span>
-                            <span>Right Click: Pan</span>
-                            <span>Scroll: Zoom</span>
-                        </div>
+                    <!-- Floating 3D Camera Controls -->
+                    <div class="flex shrink-0 items-center gap-1.5 text-xs">
+                        <select id="level-filter" aria-label="Visible building stories" class="hidden max-w-36 px-2 py-1">
+                            <option value="all">All Stories</option>
+                        </select>
+                        <button id="btn-view-iso" title="Perspective Isometric View" class="viewport-control px-2.5 py-1">
+                            Isometric 3D
+                        </button>
+                        <button id="btn-view-top" title="Top-Down 2D Architectural View" class="viewport-control px-2.5 py-1">
+                            Top-Down 2D
+                        </button>
+                        <button id="btn-view-eye" title="Eye-Level Orbit" class="viewport-control px-2.5 py-1">
+                            Eye Level
+                        </button>
+                        <button id="btn-walkthrough" type="button" aria-label="Toggle first-person walkthrough" aria-pressed="false" class="viewport-control px-2.5 py-1">
+                            Walkthrough
+                        </button>
+                        <button id="btn-measure" type="button" aria-label="Toggle 3D measurement tool" aria-pressed="false" class="viewport-control px-2.5 py-1">
+                            Measure
+                        </button>
+                        <button id="btn-cutaway" title="Cut walls to 1.1m to view room interiors" class="viewport-control px-2.5 py-1">
+                            Cutaway View
+                        </button>
+                        <button id="btn-toggle-sunlight" title="Time of Day & Sunlight Simulation" class="viewport-control px-2.5 py-1">
+                            ☀️ Sun & Night
+                        </button>
+                        <button id="btn-toggle-blueprint" title="Project 2D Blueprint under 3D model" class="viewport-control px-2.5 py-1">
+                            📐 Blueprint
+                        </button>
+                        <button id="btn-toggle-evacuation" title="Preview routes through detected door and stair connections" class="flex items-center gap-1 px-2.5 py-1 font-semibold">
+                            <span>🚨 Evacuation</span>
+                        </button>
+                        <button id="btn-export-glb" title="Download 3D building as .GLB file" class="flex items-center gap-1 px-2.5 py-1 font-semibold">
+                            <span>📦 Export .GLB</span>
+                        </button>
+                        <button id="btn-view-reset" title="Reset Viewport" class="viewport-control px-2 py-1">
+                            ↺ Reset
+                        </button>
                     </div>
                 </div>
 
-                <!-- Tab 2: 2D AI Segmentation (Canvas Overlay) -->
-                <div id="tab-2d" class="tab-panel hidden h-full w-full flex-col items-center justify-center overflow-auto bg-bauhaus-muted p-6">
-                    <div class="max-w-4xl w-full flex flex-col items-center space-y-3">
-                        <div class="w-full flex flex-wrap items-center gap-2 rounded-none border-2 border-bauhaus-ink bg-white p-3 text-xs" aria-label="Scale calibration controls">
-                            <button id="btn-calibrate-scale" type="button" aria-pressed="false" class="rounded-none border border-bauhaus-ink bg-bauhaus-blue px-3 py-1.5 font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Pick two points</button>
-                            <label for="known-length" class="font-semibold">Known length (m)</label>
-                            <input id="known-length" type="number" min="0.01" max="10000" step="0.01" value="1" class="w-24 rounded-none border border-bauhaus-ink px-2 py-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">
-                            <button id="btn-apply-scale" type="button" class="rounded-none border border-bauhaus-ink bg-bauhaus-yellow px-3 py-1.5 font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red" disabled>Apply scale</button>
-                            <button id="btn-cancel-scale" type="button" class="rounded-none border border-bauhaus-ink bg-white px-3 py-1.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-bauhaus-red">Cancel</button>
-                            <span id="scale-calibration-status" class="text-bauhaus-ink" aria-live="polite">Use two points on a known length to recalibrate.</span>
+                <!-- Tab Panels Container -->
+                <div class="relative min-h-0 flex-1 overflow-hidden">
+
+                    <!-- Tab 1: 3D Interactive Map (Three.js WebGL Canvas) -->
+                    <div id="tab-3d" class="tab-panel relative h-full w-full">
+                        <div id="threejs-canvas-container" class="w-full h-full" tabindex="0" role="application" aria-label="Interactive 3D floor plan"></div>
+
+                        <section id="walkthrough-hud" class="walkthrough-hud hidden" aria-label="Walkthrough controls">
+                            <p id="walkthrough-hint" role="status" aria-live="polite">WASD / ARROWS TO WALK · DRAG TO LOOK · E TO INTERACT · ESC TO EXIT</p>
+                            <div class="walkthrough-touch-controls" aria-label="Touch movement controls">
+                                <div class="walkthrough-dpad">
+                                    <button type="button" data-walk-key="w" aria-label="Walk forward">↑</button>
+                                    <button type="button" data-walk-key="a" aria-label="Walk left">←</button>
+                                    <button type="button" data-walk-key="s" aria-label="Walk backward">↓</button>
+                                    <button type="button" data-walk-key="d" aria-label="Walk right">→</button>
+                                </div>
+                                <button type="button" data-walk-interact aria-label="Open nearby door or use stairs">Interact · E</button>
+                            </div>
+                            <div class="walkthrough-quick-actions flex items-center justify-center gap-2 mt-2">
+                                <button id="btn-walk-outside" type="button" class="px-2.5 py-1 text-xs font-semibold" title="Step outside building">👀 View Outside</button>
+                                <button id="btn-walk-inside" type="button" class="px-2.5 py-1 text-xs font-semibold" title="Return inside">🏠 Go Inside</button>
+                            </div>
+                        </section>
+
+                        <div id="measurement-panel" class="absolute right-4 top-4 hidden p-3 text-xs" role="status" aria-live="polite">
+                            <div class="flex items-center gap-3">
+                                <span id="measurement-status">Click a first point to measure.</span>
+                                <button id="btn-clear-measurement" type="button" aria-label="Clear measurement" class="px-2 py-1">Clear</button>
+                            </div>
                         </div>
-                        <div class="w-full flex items-center justify-between text-xs text-bauhaus-ink">
-                            <span>Floor plan with detected room, wall, door, and window geometry</span>
-                        <span id="overlay-scale" class="text-bauhaus-blue">Scale: 0.020 m/px</span>
+
+                        <!-- Sunlight & Night Simulation Floating Panel -->
+                        <div id="sunlight-panel" class="absolute right-4 top-16 hidden p-3 text-xs z-20 space-y-2.5 w-64">
+                            <div class="flex items-center justify-between border-b border-hairline pb-1">
+                                <span class="mono-label flex items-center gap-1">
+                                    <span id="sun-icon">☀️</span> Sunlight & Shadows
+                                </span>
+                                <button id="btn-close-sunlight" type="button" class="text-xs px-1.5 py-0.5">✕</button>
+                            </div>
+                            <div class="space-y-1">
+                                <div class="flex justify-between text-[11px]">
+                                    <span>Time of Day</span>
+                                    <span id="label-sun-time" class="font-mono font-bold">1:00 PM</span>
+                                </div>
+                                <input id="input-sun-time" type="range" min="6" max="22" step="0.5" value="13" class="w-full cursor-pointer">
+                                <div class="flex justify-between text-[9px] text-[var(--muted)]">
+                                    <span>6 AM</span>
+                                    <span>12 PM</span>
+                                    <span>10 PM</span>
+                                </div>
+                            </div>
+                            <div class="flex gap-2 pt-1">
+                                <button id="btn-preset-day" type="button" class="flex-1 py-1 text-[10px] font-bold">☀️ Day (1 PM)</button>
+                                <button id="btn-preset-night" type="button" class="flex-1 py-1 text-[10px] font-bold">🌙 Night Mode</button>
+                            </div>
+                            <p id="sunlight-status" class="mono-caption" style="font-size: 10px;">Interior ceiling lights turn on automatically at night.</p>
                         </div>
-                        <div class="border border-bauhaus-ink rounded-none overflow-hidden shadow-2xl bg-white">
-                            <canvas id="segmentation-canvas" class="max-w-full max-h-[70vh] block"></canvas>
+
+                        <!-- 2D Blueprint Underlay Floating Panel -->
+                        <div id="blueprint-panel" class="absolute right-4 top-16 hidden p-3 text-xs z-20 space-y-2.5 w-64">
+                            <div class="flex items-center justify-between border-b border-hairline pb-1">
+                                <span class="mono-label flex items-center gap-1">
+                                    📐 2D Blueprint Underlay
+                                </span>
+                                <button id="btn-close-blueprint" type="button" class="text-xs px-1.5 py-0.5">✕</button>
+                            </div>
+                            <p class="mono-body" style="font-size: 11px;">Projects source blueprint image onto ground plane.</p>
+                            <div class="space-y-1">
+                                <div class="flex justify-between text-[11px]">
+                                    <span>Underlay Opacity</span>
+                                    <span id="label-blueprint-opacity" class="font-mono font-bold">0% (Off)</span>
+                                </div>
+                                <input id="input-blueprint-opacity" type="range" min="0" max="100" step="5" value="0" class="w-full cursor-pointer">
+                            </div>
+                            <div class="flex gap-2">
+                                <button id="btn-blueprint-zero" type="button" class="flex-1 py-1 text-[10px]">Hide</button>
+                                <button id="btn-blueprint-half" type="button" class="flex-1 py-1 text-[10px]">50% Blend</button>
+                                <button id="btn-blueprint-full" type="button" class="flex-1 py-1 text-[10px]">100% Solid</button>
+                            </div>
+                        </div>
+
+                        <!-- Emergency Evacuation Simulator Audit Card -->
+                        <div id="evacuation-card" class="absolute left-4 top-4 hidden p-3.5 text-xs z-20 space-y-2 w-80">
+                            <div class="flex items-center justify-between border-b border-hairline pb-1.5">
+                                <span class="mono-label">Egress Connectivity Preview</span>
+                                <button id="btn-close-evacuation" type="button" class="text-xs px-2 py-0.5">✕ Stop</button>
+                            </div>
+                            <div class="space-y-1 text-[11px]">
+                                <div class="flex justify-between">
+                                    <span>Designated Exits:</span>
+                                    <strong id="evac-exit-count" class="font-mono">2 Exits</strong>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span>Evacuation Routes:</span>
+                                    <strong id="evac-room-count" class="font-mono">All Rooms Connected</strong>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span>Max Travel Distance:</span>
+                                    <strong id="evac-max-dist" class="font-mono">13.6 m</strong>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span>Average Egress:</span>
+                                    <strong id="evac-avg-dist" class="font-mono">8.4 m</strong>
+                                </div>
+                                <div class="flex justify-between border-t border-hairline pt-1">
+                                    <span>Safety / code assessment:</span>
+                                    <strong id="evac-compliance" class="font-mono">Not assessed</strong>
+                                </div>
+                            </div>
+                            <p class="mono-caption" style="font-size: 10px; border-top: 1px solid var(--hair); padding-top: 4px;">
+                                Routes and lengths are geometry estimates only. Exit candidates may be inferred. Not for code compliance.
+                            </p>
+                        </div>
+
+                        <!-- Overlay Legend & Controls Guide -->
+                        <div class="legend-panel absolute bottom-4 left-4 space-y-1.5 p-3 text-[11px]">
+                            <div class="mono-label" style="font-size: 10px; margin-bottom: 2px;">Room Types Legend</div>
+                            <div id="room-types-legend-swatches" class="grid grid-cols-2 gap-x-4 gap-y-1">
+                                <!-- Populated dynamically by viewer.js from shared ROOM_FLOOR_COLORS -->
+                            </div>
+                            <div class="mono-caption border-t border-hairline pt-1.5 mt-1.5" style="font-size: 9.5px;">
+                                ARROWS: MOVE / LEFT CLICK: ORBIT / RIGHT CLICK: PAN / SCROLL: ZOOM
+                            </div>
                         </div>
                     </div>
-                </div>
 
-                <!-- Tab 3: scene.json Contract Viewer -->
-                <div id="tab-json" class="tab-panel hidden flex h-full min-h-0 min-w-0 w-full flex-col overflow-hidden bg-bauhaus-paper p-4 sm:p-6">
-                    <div class="flex items-center justify-between mb-3 shrink-0">
-                        <div class="text-xs text-bauhaus-ink">
-                            Output follows the hackathon <span class="font-mono text-bauhaus-blue">scene.json</span> contract (coordinates in meters, origin top-left).
-                        </div>
-                        <div class="flex space-x-2">
-                            <button id="btn-copy-json" class="rounded-none border border-bauhaus-ink bg-transparent px-3 py-1.5 text-xs text-bauhaus-ink transition-colors duration-150 hover:border-bauhaus-red hover:text-bauhaus-ink active:scale-95">
-                                📋 Copy JSON
-                            </button>
-                            <button id="btn-download-json" class="rounded-none bg-bauhaus-red px-3 py-1.5 text-xs font-medium text-white shadow-md transition-colors duration-150 hover:bg-bauhaus-red active:scale-95">
-                                💾 Download scene.json
-                            </button>
-                            <button id="btn-download-glb-tab" class="flex items-center gap-1 rounded-none bg-bauhaus-red px-3 py-1.5 text-xs font-medium text-white shadow-md transition-colors duration-150 hover:bg-bauhaus-red active:scale-95">
-                                📦 Download .GLB Model
-                            </button>
+                    <!-- Tab 2: 2D AI Segmentation (Canvas Overlay) -->
+                    <div id="tab-2d" class="tab-panel hidden h-full w-full flex-col items-center justify-center overflow-auto p-6">
+                        <div class="max-w-4xl w-full flex flex-col items-center space-y-3">
+                            <div class="studio-card w-full flex flex-wrap items-center gap-2 p-3 text-xs" aria-label="Scale calibration controls">
+                                <button id="btn-calibrate-scale" type="button" aria-pressed="false" class="px-3 py-1.5 font-semibold">Pick two points</button>
+                                <label for="known-length" class="font-semibold">Known length (m)</label>
+                                <input id="known-length" type="number" min="0.01" max="10000" step="0.01" value="1" class="w-24 px-2 py-1">
+                                <button id="btn-apply-scale" type="button" class="px-3 py-1.5 font-semibold" disabled>Apply scale</button>
+                                <button id="btn-cancel-scale" type="button" class="px-3 py-1.5">Cancel</button>
+                                <span id="scale-calibration-status" class="mono-caption">Use two points on a known length to recalibrate.</span>
+                            </div>
+                            <div class="w-full flex items-center justify-between text-xs">
+                                <span class="mono-caption">Detected room, wall, door, and window geometry</span>
+                                <span id="overlay-scale" class="font-mono">Scale: 0.020 m/px</span>
+                            </div>
+                            <div class="border border-hairline" style="background: var(--ground-2);">
+                                <canvas id="segmentation-canvas" class="max-w-full max-h-[70vh] block"></canvas>
+                            </div>
                         </div>
                     </div>
-                    <pre class="h-full min-h-0 min-w-0 w-full flex-1 overflow-auto whitespace-pre rounded-none border border-bauhaus-ink bg-white p-4 font-mono text-xs leading-relaxed text-bauhaus-ink select-all sm:p-6"><code id="json-output">// Load the Demo or Upload an image to view scene.json</code></pre>
-                </div>
 
-            </div>
-        </main>
+                    <!-- Tab 3: scene.json Contract Viewer -->
+                    <div id="tab-json" class="tab-panel hidden flex h-full min-h-0 min-w-0 w-full flex-col overflow-hidden p-4 sm:p-6">
+                        <div class="flex items-center justify-between mb-3 shrink-0">
+                            <div class="mono-caption">
+                                Output follows the hackathon <span class="font-mono font-bold">scene.json</span> contract (coordinates in meters, origin top-left).
+                            </div>
+                            <div class="flex space-x-2">
+                                <button id="btn-copy-json" class="px-3 py-1.5 text-xs font-semibold">
+                                    📋 Copy JSON
+                                </button>
+                                <button id="btn-download-json" class="px-3 py-1.5 text-xs font-semibold">
+                                    💾 Download scene.json
+                                </button>
+                                <button id="btn-download-glb-tab" class="px-3 py-1.5 text-xs font-semibold">
+                                    📦 Download .GLB Model
+                                </button>
+                            </div>
+                        </div>
+                        <pre class="h-full min-h-0 min-w-0 w-full flex-1 overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed select-all sm:p-6"><code id="json-output">// Load Demo or Upload an image to view scene.json</code></pre>
+                    </div>
+
+                </div>
+            </main>
+        </div>
+
     </div>
 
-    <!-- Application Controller JS -->
+    <!-- Application Controllers & Landing Scripts -->
     <script src="/static/js/viewer.js?v=20261028-route-polish"></script>
     <script src="/static/js/app.js?v=20261028-route-polish"></script>
+    <script src="/static/js/landing.js?v=20261031-editorial"></script>
 </body>
 </html>

@@ -94,16 +94,18 @@ class FloorPlanViewer {
 
         // Muted architectural colors retain room-type distinction without overpowering the model.
         this.roomColors = {
-            classroom: 0x527ca8,
-            lab:       0x9570ad,
-            corridor:  0x707b89,
-            restroom:  0x4b9c94,
-            stairs:    0xc28b3c,
-            elevator:  0x637db7,
-            entrance:  0x4e9a79,
-            room:      0x8993a0,
-            other:     0x788596,
+            classroom: 0xCBD0C4,
+            lab:       0xD6C2B4,
+            corridor:  0xE7E3DA,
+            restroom:  0xC3CCCB,
+            stairs:    0xBDB6A6,
+            entrance:  0xD9CDB0,
+            library:   0xCFC4B0,
+            room:      0xD2CDC0,
+            elevator:  0xBDB6A6,
+            other:     0xD2CDC0
         };
+        window.ROOM_FLOOR_COLORS = this.roomColors;
 
         // Initialize WebGL scene
         this.init();
@@ -115,7 +117,7 @@ class FloorPlanViewer {
 
         // 1. Scene
         this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(0x172131); // Deep slate viewport field
+        this.scene.background = new THREE.Color(0xE7E3DA); // Editorial studio bone ground
 
         // 2. Camera (Perspective)
         this.camera = new THREE.PerspectiveCamera(45, width / height, 0.05, 1000);
@@ -143,6 +145,7 @@ class FloorPlanViewer {
         // 6. Add object groups to scene
         Object.values(this.groups).forEach(g => this.scene.add(g));
         this.createFloorInfoPanel();
+        this.populateLegend();
 
         // 7. Event Listeners
         window.addEventListener("resize", () => this.onWindowResize());
@@ -185,20 +188,94 @@ class FloorPlanViewer {
         this.animate();
     }
 
+
+    populateLegend() {
+        const container = document.getElementById("room-types-legend-swatches");
+        if (!container) return;
+        container.innerHTML = "";
+        const items = [
+            { key: "classroom", label: "Classroom" },
+            { key: "lab", label: "Lab" },
+            { key: "corridor", label: "Corridor" },
+            { key: "restroom", label: "Restroom" },
+            { key: "stairs", label: "Stairs" },
+            { key: "entrance", label: "Entrance" },
+            { key: "library", label: "Library" },
+            { key: "other", label: "Other" }
+        ];
+        items.forEach(({ key, label }) => {
+            const hex = (this.roomColors[key] || 0xD2CDC0).toString(16).padStart(6, "0");
+            const row = document.createElement("div");
+            row.className = "flex items-center gap-1.5";
+            row.innerHTML = `<span style="display:inline-block;width:10px;height:10px;background-color:#${hex};border:1px solid rgba(26,25,23,0.16);flex-shrink:0;"></span><span class="mono-label" style="font-size:10px;text-transform:uppercase;color:var(--ink-2);">${label}</span>`;
+            container.appendChild(row);
+        });
+    }
+
+    renderBadgeCanvas(canvas, room, isExpanded = false) {
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Flat translucent bone ground (85% opacity)
+        ctx.fillStyle = "rgba(231, 227, 218, 0.88)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // 1px hairline border
+        ctx.strokeStyle = "rgba(26, 25, 23, 0.22)";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(1, 1, canvas.width - 2, canvas.height - 2);
+
+        // Azeret Mono uppercase text in --ink (#1A1917)
+        ctx.fillStyle = "#1A1917";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+
+        const label = (room.label || `Room ${room.id}`).toUpperCase();
+
+        if (isExpanded) {
+            ctx.font = "600 20px 'Azeret Mono', monospace";
+            ctx.fillText(label, canvas.width / 2, 26);
+
+            const confidence = Number(room.confidence);
+            const confText = Number.isFinite(confidence) && confidence > 0
+                ? `${Math.round(confidence * 100)}% CONF`
+                : "UNCLASSIFIED";
+            ctx.fillStyle = "#4A4741";
+            ctx.font = "500 15px 'Azeret Mono', monospace";
+            ctx.fillText(confText, canvas.width / 2, 50);
+        } else {
+            ctx.font = "600 22px 'Azeret Mono', monospace";
+            ctx.fillText(label, canvas.width / 2, canvas.height / 2);
+        }
+    }
+
+    updateBadgeSprite(sprite, isExpanded) {
+        if (!sprite || sprite.userData.isExpanded === isExpanded) return;
+        sprite.userData.isExpanded = isExpanded;
+        const canvas = sprite.userData.canvas;
+        const room = sprite.userData.room;
+        if (canvas && room) {
+            this.renderBadgeCanvas(canvas, room, isExpanded);
+            if (sprite.material.map) {
+                sprite.material.map.needsUpdate = true;
+            }
+        }
+    }
+
     setupLighting() {
-        // Soft ambient fill light
-        const ambientLight = new THREE.AmbientLight(0xe5e9f0, 0.34);
+        // Soft ambient fill light (bone ground reflection)
+        const ambientLight = new THREE.AmbientLight(0xe7e3da, 0.45);
         this.ambientLight = ambientLight;
         this.scene.add(ambientLight);
 
-        // Hemisphere light: subtle blue sky vs warm bounce ground
-        const hemiLight = new THREE.HemisphereLight(0xe6edf7, 0x4a4038, 0.5);
+        // Hemisphere light: subtle bone sky vs warm bounce ground
+        const hemiLight = new THREE.HemisphereLight(0xe7e3da, 0xdcd7cb, 0.52);
         hemiLight.position.set(0, 50, 0);
         this.hemiLight = hemiLight;
         this.scene.add(hemiLight);
 
         // Key directional light with soft architectural shadows
-        const dirLight = new THREE.DirectionalLight(0xfff4df, 0.88);
+        const dirLight = new THREE.DirectionalLight(0xfffcf5, 0.95);
         dirLight.position.set(30, 45, 25);
         dirLight.castShadow = true;
         dirLight.shadow.mapSize.width = 4096;
@@ -218,7 +295,7 @@ class FloorPlanViewer {
         this.scene.add(dirLight.target);
 
         // Soft secondary fill light
-        const fillLight = new THREE.DirectionalLight(0x1040c0, 0.25);
+        const fillLight = new THREE.DirectionalLight(0xE7E3DA, 0.25);
         fillLight.position.set(-25, 25, -20);
         this.fillLight = fillLight;
         this.scene.add(fillLight);
@@ -308,13 +385,17 @@ class FloorPlanViewer {
         const loadingGroup = new THREE.Group();
         loadingGroup.name = "loadingGroup";
 
-        const blueprintGrid = new THREE.GridHelper(20, 20, 0xf0c020, 0x121212);
+        const blueprintGrid = new THREE.GridHelper(20, 20, 0x1A1917, 0x1A1917);
+        if (blueprintGrid.material) {
+            blueprintGrid.material.transparent = true;
+            blueprintGrid.material.opacity = 0.12;
+        }
         loadingGroup.add(blueprintGrid);
 
         const laserGeometry = new THREE.PlaneGeometry(20, 0.2);
         const laserMaterial = new THREE.MeshStandardMaterial({
-            color: 0xd02020,
-            emissive: 0xd02020,
+            color: 0x9B3418,
+            emissive: 0x9B3418,
             emissiveIntensity: 0.65,
             transparent: true,
             opacity: 0.8,
@@ -502,7 +583,7 @@ class FloorPlanViewer {
         });
         const line = new THREE.LineLoop(
             new THREE.BufferGeometry().setFromPoints(points),
-            new THREE.LineBasicMaterial({ color: 0x00d9e8, transparent: true, opacity: 1, depthTest: false })
+            new THREE.LineBasicMaterial({ color: 0x9B3418, transparent: true, opacity: 1, depthTest: false })
         );
         line.name = "room-boundary-edit-preview";
         line.renderOrder = 20;
@@ -839,17 +920,21 @@ class FloorPlanViewer {
         const gridSize = Math.ceil(span * 1.8);
         const divisions = gridSize; // 1 division = exactly 1 meter!
 
-        // 1-meter architectural grid helper
-        const grid = new THREE.GridHelper(gridSize, divisions, 0x4b83bd, 0x39485d);
+        // 1-meter architectural grid helper: ink center line, ink cells at ~12% opacity
+        const grid = new THREE.GridHelper(gridSize, divisions, 0x1A1917, 0x1A1917);
         grid.position.y = -0.01;
+        if (grid.material) {
+            grid.material.transparent = true;
+            grid.material.opacity = 0.12;
+        }
         this.groups.grid.add(grid);
 
-        // Ground foundation plane
+        // Ground foundation plane: secondary ground #DCD7CB
         const groundGeo = new THREE.PlaneGeometry(gridSize * 1.5, gridSize * 1.5);
         const groundMat = new THREE.MeshStandardMaterial({
-            color: 0x273447,
-            roughness: 0.9,
-            metalness: 0.1
+            color: 0xDCD7CB,
+            roughness: 0.95,
+            metalness: 0.05
         });
         const ground = new THREE.Mesh(groundGeo, groundMat);
         ground.rotation.x = -Math.PI / 2;
@@ -860,9 +945,9 @@ class FloorPlanViewer {
 
     buildDoorThresholds(doors) {
         const thresholdMaterial = new THREE.MeshStandardMaterial({
-            color: 0x626e7d,
-            roughness: 0.92,
-            metalness: 0.02,
+            color: 0xDCD7CB,
+            roughness: 0.95,
+            metalness: 0.05,
         });
         const wallThickness = this.getWallThickness();
         doors.forEach(door => {
@@ -914,9 +999,9 @@ class FloorPlanViewer {
      */
     buildWalls(walls) {
         const wallMat = this.wallMaterial || (this.wallMaterial = new THREE.MeshStandardMaterial({
-            color: 0xc5c5bf,      // Warm light-gray plaster with visible shading
-            roughness: 0.8,
-            metalness: 0.1,
+            color: 0xF1EEE6,      // Matte bone plaster (#F1EEE6)
+            roughness: 0.95,
+            metalness: 0.05,
             side: THREE.DoubleSide
         }));
 
@@ -971,6 +1056,12 @@ class FloorPlanViewer {
             wallMesh.receiveShadow = true;
             wallMesh.userData = { isWall: true, wallId: wall.id, level, floorIndex: level };
 
+            // Architectural drafting edge lines: thin #1A1917 EdgesGeometry
+            const wallEdges = new THREE.EdgesGeometry(wallGeom, 25);
+            const wallEdgeMat = new THREE.LineBasicMaterial({ color: 0x1A1917, linewidth: 1 });
+            const wallEdgeLines = new THREE.LineSegments(wallEdges, wallEdgeMat);
+            wallMesh.add(wallEdgeLines);
+
             this.getFloorLayer(level, "walls")?.add(wallMesh);
             this.animatingMeshes.push(wallMesh);
         });
@@ -1014,8 +1105,8 @@ class FloorPlanViewer {
             const colorHex = this.roomColors[room.type] || this.roomColors.other;
             const roomMat = new THREE.MeshStandardMaterial({
                 color: colorHex,
-                roughness: 0.65,
-                metalness: 0.1,
+                roughness: 0.90,
+                metalness: 0.02,
                 transparent: true,
                 opacity: 0,
                 depthWrite: false,
@@ -1321,51 +1412,10 @@ class FloorPlanViewer {
      */
     createRoomBadgeSprite(room) {
         const canvas = document.createElement("canvas");
-        canvas.width = 512;
-        canvas.height = 256;
-        const ctx = canvas.getContext("2d");
+        canvas.width = 300;
+        canvas.height = 68;
+        this.renderBadgeCanvas(canvas, room, false);
 
-        // High DPI sharpness
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        // Square paper badge, with a heavy ink border and a primary-color room marker.
-        const x = 32, y = 32, w = 448, h = 192;
-        ctx.fillStyle = "#F0F0F0";
-        ctx.beginPath();
-        ctx.rect(x, y, w, h);
-        ctx.closePath();
-        ctx.fill();
-
-        // Color border matching room type
-        const typeColorHex = this.roomColors[room.type] || 0x1040c0;
-        const hexStr = "#" + typeColorHex.toString(16).padStart(6, "0");
-        ctx.strokeStyle = "#121212";
-        ctx.lineWidth = 8;
-        ctx.stroke();
-
-        // Type color accent pill
-        ctx.fillStyle = hexStr;
-        ctx.beginPath();
-        ctx.rect(56, 52, 12, 40);
-        ctx.fill();
-
-        // Main Room Label Text
-        ctx.fillStyle = "#121212";
-        ctx.font = "900 36px 'Outfit', sans-serif";
-        ctx.textAlign = "left";
-        ctx.fillText(room.label || `Room ${room.id}`, 80, 84);
-
-        // Subtitle: Room Type and Confidence
-        ctx.fillStyle = "#121212";
-        ctx.font = "500 24px 'Outfit', sans-serif";
-        const typeCapitalized = (room.type || "room").toUpperCase();
-        const confidence = Number(room.confidence);
-        const confidenceText = Number.isFinite(confidence) && confidence > 0
-            ? `${Math.round(confidence * 100)}% Conf`
-            : "Unclassified";
-        ctx.fillText(`${typeCapitalized} • ${confidenceText}`, 80, 140);
-
-        // Badge sprite texture
         const texture = new THREE.CanvasTexture(canvas);
         texture.minFilter = THREE.LinearFilter;
         texture.generateMipmaps = false;
@@ -1373,12 +1423,15 @@ class FloorPlanViewer {
         const spriteMat = new THREE.SpriteMaterial({
             map: texture,
             transparent: true,
-            depthTest: false, // Always visible above walls
+            depthTest: false,
             depthWrite: false
         });
 
         const sprite = new THREE.Sprite(spriteMat);
-        sprite.scale.set(3.2, 1.6, 1.0);
+        sprite.scale.set(1.3, 0.30, 1.0);
+        sprite.userData.canvas = canvas;
+        sprite.userData.room = room;
+        sprite.userData.isExpanded = false;
         return sprite;
     }
 
@@ -1387,14 +1440,14 @@ class FloorPlanViewer {
      */
     buildDoors(doors) {
         const wallMat = this.wallMaterial || new THREE.MeshStandardMaterial({
-            color: 0xf0f0f0,
+            color: 0xF1EEE6,
             roughness: 0.8,
             metalness: 0.1,
             side: THREE.DoubleSide
         });
         this.wallMaterial = wallMat;
-        const doorPanelMat = new THREE.MeshStandardMaterial({ color: 0x805437, roughness: 0.72, metalness: 0 });
-        const knobMat = new THREE.MeshStandardMaterial({ color: 0xb58b42, metalness: 0.72, roughness: 0.28 });
+        const doorPanelMat = new THREE.MeshStandardMaterial({ color: 0x5A4636, roughness: 0.85, metalness: 0 });
+        const knobMat = new THREE.MeshStandardMaterial({ color: 0x1A1917, metalness: 0.8, roughness: 0.2 });
 
         this.walkthroughDoors = [];
 
@@ -1475,16 +1528,16 @@ class FloorPlanViewer {
      */
     buildWindows(windows) {
         const wallMat = this.wallMaterial || new THREE.MeshStandardMaterial({
-            color: 0xf0f0f0,
+            color: 0xF1EEE6,
             roughness: 0.8,
             metalness: 0.1,
             side: THREE.DoubleSide
         });
         this.wallMaterial = wallMat;
         const glassMat = new THREE.MeshStandardMaterial({
-            color: 0x1040c0,
+            color: 0xA9B4B6,
             transparent: true,
-            opacity: 0.4,
+            opacity: 0.55,
             depthWrite: false
         });
 
@@ -1509,6 +1562,13 @@ class FloorPlanViewer {
             const glassGeo = new THREE.BoxGeometry(width, winHeight, paneDepth);
             const glassMesh = new THREE.Mesh(glassGeo, glassMat);
             glassMesh.position.y = (sillHeight + windowTop) / 2;
+
+            // Hairline frame in #1A1917
+            const glassEdges = new THREE.EdgesGeometry(glassGeo);
+            const frameMat = new THREE.LineBasicMaterial({ color: 0x1A1917, linewidth: 1 });
+            const glassFrame = new THREE.LineSegments(glassEdges, frameMat);
+            glassMesh.add(glassFrame);
+
             winGroup.add(glassMesh);
 
             // The white sill and header meet the pane exactly and match wall thickness.
@@ -1653,23 +1713,79 @@ class FloorPlanViewer {
     }
 
     selectRoom(roomMesh) {
-        // Reset previously selected room color
+        // Clear previously selected room outline
+        if (this.selectedRoomOutline) {
+            if (this.selectedRoomOutline.parent) {
+                this.selectedRoomOutline.parent.remove(this.selectedRoomOutline);
+            }
+            if (this.selectedRoomOutline.geometry) this.selectedRoomOutline.geometry.dispose();
+            if (this.selectedRoomOutline.material) this.selectedRoomOutline.material.dispose();
+            this.selectedRoomOutline = null;
+        }
+
         if (this.selectedRoomMesh && this.selectedRoomOriginalColor !== null) {
             this.selectedRoomMesh.material.color.setHex(this.selectedRoomOriginalColor);
             this.selectedRoomMesh.material.emissive.setHex(0x000000);
         }
 
         this.selectedRoomMesh = roomMesh;
-        this.selectedRoomOriginalColor = roomMesh.userData.originalColor;
+        this.selectedRoomOriginalColor = roomMesh ? roomMesh.userData.originalColor : null;
 
-        // Highlight with the Bauhaus yellow selection color.
-        roomMesh.material.color.setHex(0xf0c020);
-        roomMesh.material.emissive.setHex(0xf0c020);
+        // Outline ONLY in pigment #9B3418 (never fill!)
+        if (roomMesh && roomMesh.geometry) {
+            const edges = new THREE.EdgesGeometry(roomMesh.geometry);
+            const outlineMat = new THREE.LineBasicMaterial({
+                color: 0x9B3418,
+                linewidth: 2,
+                depthTest: false
+            });
+            const outline = new THREE.LineSegments(edges, outlineMat);
+            outline.renderOrder = 999;
+            outline.position.y = 0.05;
+            roomMesh.add(outline);
+            this.selectedRoomOutline = outline;
+        }
+
+        // Expand badge for selected room, collapse others
+        const selectedId = roomMesh?.userData?.roomData?.id;
+        this.floorGroups.forEach(floorGroup => {
+            const labelGroup = floorGroup.getObjectByName("labels");
+            if (labelGroup) {
+                labelGroup.children.forEach(sprite => {
+                    const isTarget = sprite.userData?.room?.id === selectedId;
+                    this.updateBadgeSprite(sprite, isTarget);
+                });
+            }
+        });
 
         // Notify global UI handler
         if (typeof window.onFloorPlanRoomSelected === "function") {
             window.onFloorPlanRoomSelected(roomMesh.userData.roomData);
         }
+    }
+
+    clearRoomSelection() {
+        if (this.selectedRoomOutline) {
+            if (this.selectedRoomOutline.parent) {
+                this.selectedRoomOutline.parent.remove(this.selectedRoomOutline);
+            }
+            if (this.selectedRoomOutline.geometry) this.selectedRoomOutline.geometry.dispose();
+            if (this.selectedRoomOutline.material) this.selectedRoomOutline.material.dispose();
+            this.selectedRoomOutline = null;
+        }
+        if (this.selectedRoomMesh && this.selectedRoomOriginalColor !== null) {
+            this.selectedRoomMesh.material.color.setHex(this.selectedRoomOriginalColor);
+            this.selectedRoomMesh.material.emissive.setHex(0x000000);
+        }
+        this.selectedRoomMesh = null;
+        this.selectedRoomOriginalColor = null;
+
+        this.floorGroups.forEach(floorGroup => {
+            const labelGroup = floorGroup.getObjectByName("labels");
+            if (labelGroup) {
+                labelGroup.children.forEach(sprite => this.updateBadgeSprite(sprite, false));
+            }
+        });
     }
 
     /**
@@ -1844,13 +1960,13 @@ class FloorPlanViewer {
         }
         const geometry = new THREE.TubeGeometry(curvePath, Math.max(32, pathNodes.length * 12), 0.055, 8, false);
         const material = new THREE.MeshStandardMaterial({
-            color: 0x00d9e8,
-            emissive: 0x004c55,
-            emissiveIntensity: 0.35,
+            color: 0x9B3418,
+            emissive: 0x9B3418,
+            emissiveIntensity: 0.45,
             roughness: 0.45,
             metalness: 0.05,
             transparent: true,
-            opacity: 0.92,
+            opacity: 0.95,
             depthWrite: false,
             toneMapped: false
         });
@@ -1910,49 +2026,49 @@ class FloorPlanViewer {
         const isSunrise = this.timeOfDay >= 6.0 && this.timeOfDay < 7.5;
 
         if (isNight) {
-            this.keyLight.color.setHex(0x3b82f6);
-            this.keyLight.intensity = 0.12;
-            this.ambientLight.color.setHex(0x0f172a);
-            this.ambientLight.intensity = 0.18;
-            this.hemiLight.color.setHex(0x1e293b);
-            this.hemiLight.groundColor.setHex(0x020617);
-            this.hemiLight.intensity = 0.22;
+            this.keyLight.color.setHex(0xdcd7cb);
+            this.keyLight.intensity = 0.18;
+            this.ambientLight.color.setHex(0x3a3832);
+            this.ambientLight.intensity = 0.25;
+            this.hemiLight.color.setHex(0x4a4741);
+            this.hemiLight.groundColor.setHex(0x1a1917);
+            this.hemiLight.intensity = 0.25;
             if (this.fillLight) this.fillLight.intensity = 0.05;
             this.interiorLightsGroup.visible = true;
-            this.scene.background = new THREE.Color(0x090d16);
+            this.scene.background = new THREE.Color(0x1A1917);
         } else if (isSunset) {
-            this.keyLight.color.setHex(0xff7733);
-            this.keyLight.intensity = 0.75;
-            this.ambientLight.color.setHex(0xff9966);
-            this.ambientLight.intensity = 0.35;
-            this.hemiLight.color.setHex(0xffaa77);
-            this.hemiLight.groundColor.setHex(0x4a2a1a);
+            this.keyLight.color.setHex(0xdfd3c3);
+            this.keyLight.intensity = 0.80;
+            this.ambientLight.color.setHex(0xded7cb);
+            this.ambientLight.intensity = 0.38;
+            this.hemiLight.color.setHex(0xe7e3da);
+            this.hemiLight.groundColor.setHex(0x4a4741);
             this.hemiLight.intensity = 0.45;
             if (this.fillLight) this.fillLight.intensity = 0.15;
             this.interiorLightsGroup.visible = false;
-            this.scene.background = new THREE.Color(0x2d1b2e);
+            this.scene.background = new THREE.Color(0xE7E3DA);
         } else if (isSunrise) {
-            this.keyLight.color.setHex(0xffb266);
-            this.keyLight.intensity = 0.70;
-            this.ambientLight.color.setHex(0xffe0cc);
+            this.keyLight.color.setHex(0xdfd3c3);
+            this.keyLight.intensity = 0.75;
+            this.ambientLight.color.setHex(0xded7cb);
             this.ambientLight.intensity = 0.38;
-            this.hemiLight.color.setHex(0xffeedd);
-            this.hemiLight.groundColor.setHex(0x403020);
+            this.hemiLight.color.setHex(0xe7e3da);
+            this.hemiLight.groundColor.setHex(0x4a4038);
             this.hemiLight.intensity = 0.45;
             if (this.fillLight) this.fillLight.intensity = 0.18;
             this.interiorLightsGroup.visible = false;
-            this.scene.background = new THREE.Color(0x1a2130);
+            this.scene.background = new THREE.Color(0xE7E3DA);
         } else {
-            this.keyLight.color.setHex(0xfff7ea);
+            this.keyLight.color.setHex(0xfffcf5);
             this.keyLight.intensity = 0.95;
-            this.ambientLight.color.setHex(0xe5e9f0);
-            this.ambientLight.intensity = 0.42;
-            this.hemiLight.color.setHex(0xe6edf7);
-            this.hemiLight.groundColor.setHex(0x4a4038);
+            this.ambientLight.color.setHex(0xe7e3da);
+            this.ambientLight.intensity = 0.45;
+            this.hemiLight.color.setHex(0xe7e3da);
+            this.hemiLight.groundColor.setHex(0xdcd7cb);
             this.hemiLight.intensity = 0.52;
             if (this.fillLight) this.fillLight.intensity = 0.25;
             this.interiorLightsGroup.visible = false;
-            this.scene.background = new THREE.Color(0x172131);
+            this.scene.background = new THREE.Color(0xE7E3DA);
         }
     }
 
@@ -2174,9 +2290,9 @@ class FloorPlanViewer {
         canvas.width = 128;
         canvas.height = 32;
         const ctx = canvas.getContext("2d");
-        ctx.fillStyle = "#059669";
+        ctx.fillStyle = "#9B3418";
         ctx.fillRect(0, 0, 128, 32);
-        ctx.fillStyle = "#ffffff";
+        ctx.fillStyle = "#E7E3DA";
         for (let x = 0; x < 128; x += 32) {
             ctx.beginPath();
             ctx.moveTo(x + 4, 4);
@@ -2196,8 +2312,8 @@ class FloorPlanViewer {
 
         const egressMaterial = new THREE.MeshStandardMaterial({
             map: evacTexture,
-            color: 0x22c55e,
-            emissive: 0x15803d,
+            color: 0x9B3418,
+            emissive: 0x9B3418,
             emissiveIntensity: 0.95,
             roughness: 0.3,
             metalness: 0.1,
@@ -2321,30 +2437,30 @@ class FloorPlanViewer {
             signCanvas.width = 256;
             signCanvas.height = 96;
             const sCtx = signCanvas.getContext("2d");
-            sCtx.fillStyle = "#064e3b";
+            sCtx.fillStyle = "#E7E3DA";
             sCtx.fillRect(0, 0, 256, 96);
-            sCtx.lineWidth = 6;
-            sCtx.strokeStyle = "#34d399";
+            sCtx.lineWidth = 4;
+            sCtx.strokeStyle = "#9B3418";
             sCtx.strokeRect(4, 4, 248, 88);
-            sCtx.fillStyle = "#ecfdf5";
-            sCtx.font = "bold 44px 'Segoe UI', system-ui, sans-serif";
+            sCtx.fillStyle = "#9B3418";
+            sCtx.font = "bold 38px 'Azeret Mono', monospace";
             sCtx.textAlign = "center";
             sCtx.textBaseline = "middle";
-            sCtx.fillText(hasExplicitExits ? "EXIT ➔" : "EXIT?", 128, 48);
+            sCtx.fillText(hasExplicitExits ? "EXIT" : "EXIT?", 128, 48);
 
             const signTex = new THREE.CanvasTexture(signCanvas);
             const signFaceMat = new THREE.MeshStandardMaterial({
                 map: signTex,
-                emissive: 0x22c55e,
+                emissive: 0x9B3418,
                 emissiveMap: signTex,
-                emissiveIntensity: 0.9,
-                roughness: 0.2,
+                emissiveIntensity: 0.5,
+                roughness: 0.5,
                 metalness: 0.1,
             });
             const signHousingMat = new THREE.MeshStandardMaterial({
-                color: 0x1f2937,
-                roughness: 0.4,
-                metalness: 0.8
+                color: 0x1A1917,
+                roughness: 0.6,
+                metalness: 0.4
             });
 
             const signMaterials = [
@@ -2356,7 +2472,7 @@ class FloorPlanViewer {
             signBox.castShadow = true;
             signGroup.add(signBox);
 
-            const exitLight = new THREE.PointLight(0x22c55e, 1.0, 5, 1.8);
+            const exitLight = new THREE.PointLight(0x9B3418, 0.8, 5, 1.8);
             exitLight.position.set(0, -0.2, 0);
             signGroup.add(exitLight);
             group.add(signGroup);
@@ -2369,9 +2485,9 @@ class FloorPlanViewer {
 
             const ringGeo = new THREE.RingGeometry(0.35, 0.65, 32);
             const ringMat = new THREE.MeshStandardMaterial({
-                color: 0x10b981,
-                emissive: 0x059669,
-                emissiveIntensity: 1.0,
+                color: 0x9B3418,
+                emissive: 0x9B3418,
+                emissiveIntensity: 0.7,
                 side: THREE.DoubleSide
             });
             const ringMesh = new THREE.Mesh(ringGeo, ringMat);
@@ -2379,23 +2495,23 @@ class FloorPlanViewer {
             beaconGroup.add(ringMesh);
 
             const postGeo = new THREE.CylinderGeometry(0.03, 0.03, 1.2, 12);
-            const postMat = new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.8, roughness: 0.3 });
+            const postMat = new THREE.MeshStandardMaterial({ color: 0x1A1917, metalness: 0.5, roughness: 0.5 });
             const post = new THREE.Mesh(postGeo, postMat);
             post.position.y = 0.6;
             beaconGroup.add(post);
 
             const orbGeo = new THREE.SphereGeometry(0.12, 16, 16);
             const orbMat = new THREE.MeshStandardMaterial({
-                color: 0x34d399,
-                emissive: 0x22c55e,
-                emissiveIntensity: 1.2,
-                roughness: 0.1
+                color: 0x9B3418,
+                emissive: 0x9B3418,
+                emissiveIntensity: 0.8,
+                roughness: 0.3
             });
             const orb = new THREE.Mesh(orbGeo, orbMat);
             orb.position.y = 1.25;
             beaconGroup.add(orb);
 
-            const outdoorLight = new THREE.PointLight(0x34d399, 1.2, 6, 1.5);
+            const outdoorLight = new THREE.PointLight(0x9B3418, 0.9, 6, 1.5);
             outdoorLight.position.y = 1.3;
             beaconGroup.add(outdoorLight);
 
@@ -3043,7 +3159,7 @@ class FloorPlanViewer {
     addMeasurementMarker(point) {
         const marker = new THREE.Mesh(
             new THREE.SphereGeometry(0.08, 12, 8),
-            new THREE.MeshStandardMaterial({ color: 0xf0c020, emissive: 0xf0c020, emissiveIntensity: 0.5 })
+            new THREE.MeshStandardMaterial({ color: 0x9B3418, emissive: 0x9B3418, emissiveIntensity: 0.6 })
         );
         marker.position.copy(point);
         this.groups.measurements.add(marker);
@@ -3060,7 +3176,7 @@ class FloorPlanViewer {
         }
         const [start, end] = this.measurementPoints;
         const geometry = new THREE.BufferGeometry().setFromPoints([start, end]);
-        const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: 0xf0c020, depthTest: false }));
+        const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: 0x9B3418, depthTest: false }));
         this.groups.measurements.add(line);
         this.onMeasurementUpdate?.(`Distance: ${start.distanceTo(end).toFixed(2)} m · click again to start another measurement.`);
     }
@@ -3155,6 +3271,12 @@ class FloorPlanViewer {
                 const viewDepth = Math.max(0.01, -cameraSpace.z);
                 const projected = tempWorldPosition.clone().project(this.camera);
                 const inFrame = Math.abs(projected.x) <= 1.15 && Math.abs(projected.y) <= 1.15 && viewDepth > 0;
+                // Distance scale factor: scales down as distance increases
+                const distFactor = Math.max(0.65, Math.min(1.1, 18 / Math.max(8, distance)));
+                const baseScaleX = sprite.userData.isExpanded ? 1.5 : 1.3;
+                const baseScaleY = sprite.userData.isExpanded ? 0.44 : 0.30;
+                sprite.scale.set(baseScaleX * distFactor, baseScaleY * distFactor, 1.0);
+
                 const pixelScale = viewportHeight / (2 * tanHalfFov * viewDepth);
                 const width = Math.max(18, sprite.scale.x * pixelScale);
                 const height = Math.max(14, sprite.scale.y * pixelScale);
