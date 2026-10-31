@@ -2123,6 +2123,43 @@ class FloorPlanViewer {
             }
         });
 
+        // Direct door-to-door edges through corridors and shared rooms
+        const roomDoors = new Map();
+        rooms.forEach(r => roomDoors.set(r.id, []));
+        doors.forEach(d => {
+            const connects = Array.isArray(d.connects) ? d.connects : [];
+            connects.forEach(rId => {
+                if (roomDoors.has(rId)) roomDoors.get(rId).push(d);
+            });
+        });
+
+        roomDoors.forEach(doorList => {
+            for (let i = 0; i < doorList.length; i++) {
+                for (let j = i + 1; j < doorList.length; j++) {
+                    const d1 = doorList[i], d2 = doorList[j];
+                    const dist = Math.hypot(d1.center[0] - d2.center[0], d1.center[1] - d2.center[1]);
+                    graph.get(`door:${d1.id}`).push({ to: `door:${d2.id}`, cost: dist });
+                    graph.get(`door:${d2.id}`).push({ to: `door:${d1.id}`, cost: dist });
+                }
+            }
+        });
+
+        // Helper to get exterior safe assembly beacon offset perpendicular to wall
+        const getBeaconOffset = (d, floorIndex) => {
+            const bounds = this.bounds || { minX: 1, maxX: 15, minY: 1, maxY: 11 };
+            const rot = this.getOpeningRotation(d, floorIndex);
+            if (rot !== 0) {
+                // Vertical wall (e.g. West or East facade)
+                const isWestSide = d.center[0] < (bounds.minX + bounds.maxX) / 2;
+                return { outDx: isWestSide ? -2.5 : 2.5, outDz: 0 };
+            } else {
+                // Horizontal wall (e.g. South or North facade)
+                const isSouthSide = d.center[1] > (bounds.minY + bounds.maxY) / 2;
+                return { outDx: 0, outDz: isSouthSide ? 2.5 : -2.5 };
+            }
+        };
+
+        const usedExitDoorIds = new Set();
         // 3. For each room, find shortest path to the closest exit door
         let maxTravelDist = 0;
         let totalTravelDist = 0;
@@ -2204,6 +2241,9 @@ class FloorPlanViewer {
             });
 
             if (bestExitNode && Number.isFinite(minExitDist)) {
+                const exitDoorId = bestExitNode.replace("door:", "");
+                usedExitDoorIds.add(exitDoorId);
+
                 const pathNodes = [];
                 let curr = bestExitNode;
                 while (curr) {
@@ -2215,6 +2255,8 @@ class FloorPlanViewer {
                 pathNodes.forEach(node => {
                     if (node.startsWith("room:")) {
                         const rId = node.replace("room:", "");
+                        const r = rooms.find(item => item.id === rId);
+                        const rFloor = r ? this.getItemFloorIndex(r) : 0;
                         const pt = roomCentroids.get(rId);
                         if (pt) {
                             const w = this.toWorldCoords(pt[0], pt[1]);
@@ -2226,6 +2268,7 @@ class FloorPlanViewer {
                         const dId = node.replace("door:", "");
                         const d = doors.find(item => item.id === dId);
                         if (d && d.center) {
+                            const dFloor = Number(d.floorIndex ?? d.level) || 0;
                             const w = this.toWorldCoords(d.center[0], d.center[1]);
                             const level = this.getItemFloorIndex(d);
                             pathPoints.push(new THREE.Vector3(w.x, this.getLevelElevation(level) + 0.08, w.z));
@@ -2233,13 +2276,12 @@ class FloorPlanViewer {
                     }
                 });
 
-                if (pathPoints.length >= 2) {
-                    const lastPt = pathPoints[pathPoints.length - 1];
-                    const prevPt = pathPoints[pathPoints.length - 2];
-                    const dir = new THREE.Vector3().subVectors(lastPt, prevPt).normalize();
-                    if (dir.lengthSq() > 0.01) {
-                        pathPoints.push(lastPt.clone().addScaledVector(dir, 2.5));
-                    }
+                // Extend path straight through exit door directly to exterior safe assembly beacon
+                const bestExitDoor = doors.find(item => item.id === exitDoorId);
+                if (bestExitDoor && bestExitDoor.center) {
+                    const { outDx, outDz } = getBeaconOffset(bestExitDoor, 0);
+                    const bWorld = this.toWorldCoords(bestExitDoor.center[0] + outDx, bestExitDoor.center[1] + outDz);
+                    pathPoints.push(new THREE.Vector3(bWorld.x, this.getLevelElevation(0) + 0.08, bWorld.z));
                 }
 
                 if (pathPoints.length >= 2) {
@@ -2258,6 +2300,9 @@ class FloorPlanViewer {
         // 4. Place 3D wall-mounted illuminated EXIT signs and exterior safe assembly beacons
         exitDoors.forEach(d => {
             if (!d.center) return;
+            // Only place beacon and sign for exits that actually receive evacuation traffic!
+            if (!usedExitDoorIds.has(d.id)) return;
+
             const w = this.toWorldCoords(d.center[0], d.center[1]);
             const floorIndex = Number(d.floorIndex ?? d.level) || 0;
             const floorElev = this.getLevelElevation(floorIndex);
@@ -2313,21 +2358,7 @@ class FloorPlanViewer {
             group.add(signGroup);
 
             // 5. Exterior Safe Assembly Point beacon in the outside yard
-            const connects = Array.isArray(d.connects) ? d.connects : [];
-            const indoorRoomId = connects.find(id => id !== "outside");
-            const indoorRoom = rooms.find(r => r.id === indoorRoomId);
-            let outDx = 0, outDz = 0;
-            if (indoorRoom && roomCentroids.has(indoorRoom.id)) {
-                const rCenter = roomCentroids.get(indoorRoom.id);
-                const dirX = d.center[0] - rCenter[0];
-                const dirY = d.center[1] - rCenter[1];
-                const len = Math.hypot(dirX, dirY) || 1;
-                outDx = (dirX / len) * 2.5;
-                outDz = (dirY / len) * 2.5;
-            } else {
-                outDz = 2.5;
-            }
-
+            const { outDx, outDz } = getBeaconOffset(d, floorIndex);
             const beaconWorld = this.toWorldCoords(d.center[0] + outDx, d.center[1] + outDz);
             const beaconGroup = new THREE.Group();
             beaconGroup.position.set(beaconWorld.x, floorElev + 0.02, beaconWorld.z);
