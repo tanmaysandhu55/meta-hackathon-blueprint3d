@@ -646,27 +646,29 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
-    btnTranscribeMap.addEventListener("click", async () => {
-        if (!mapAudioInput.files.length) {
-            mapTranscriptionStatus.textContent = "Choose a supported mono PCM WAV recording first.";
-            return;
-        }
-        btnTranscribeMap.disabled = true;
-        mapTranscriptionStatus.textContent = "Transcribing…";
-        try {
-            const formData = new FormData();
-            formData.append("audio", mapAudioInput.files[0]);
-            const response = await fetch("/api/transcribe", { method: "POST", body: formData });
-            const result = await response.json();
-            if (!response.ok || !result.success) throw new Error(result.error || "Transcription failed.");
-            mapAssistantQuestion.value = result.transcript;
-            mapTranscriptionStatus.textContent = "Transcript added to the question box. Review it, then select Ask map assistant.";
-        } catch (error) {
-            mapTranscriptionStatus.textContent = error.message || "Transcription is unavailable.";
-        } finally {
-            btnTranscribeMap.disabled = false;
-        }
-    });
+    if (btnTranscribeMap) {
+        btnTranscribeMap.addEventListener("click", async () => {
+            if (!mapAudioInput || !mapAudioInput.files || !mapAudioInput.files.length) {
+                if (mapTranscriptionStatus) mapTranscriptionStatus.textContent = "Choose a supported mono PCM WAV recording first.";
+                return;
+            }
+            btnTranscribeMap.disabled = true;
+            if (mapTranscriptionStatus) mapTranscriptionStatus.textContent = "Transcribing…";
+            try {
+                const formData = new FormData();
+                formData.append("audio", mapAudioInput.files[0]);
+                const response = await fetch("/api/transcribe", { method: "POST", body: formData });
+                const result = await response.json();
+                if (!response.ok || !result.success) throw new Error(result.error || "Transcription failed.");
+                if (mapAssistantQuestion) mapAssistantQuestion.value = result.transcript;
+                if (mapTranscriptionStatus) mapTranscriptionStatus.textContent = "Transcript added to the question box. Review it, then select Ask map assistant.";
+            } catch (error) {
+                if (mapTranscriptionStatus) mapTranscriptionStatus.textContent = error.message || "Transcription is unavailable.";
+            } finally {
+                btnTranscribeMap.disabled = false;
+            }
+        });
+    }
 
     // -------------------------------------------------------------
     // Slider Events

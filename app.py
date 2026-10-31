@@ -95,7 +95,8 @@ def sam_ready():
 
 
 def _processing_mode():
-    if os.getenv("MOCK_MODE", "0").strip().lower() in {"1", "true", "yes", "on"}:
+    mock_val = (os.getenv("MOCK_MODE") or os.getenv("MOCK_AI") or "0").strip().lower()
+    if mock_val in {"1", "true", "yes", "on"}:
         return "MOCK"
     return "LOCAL"
 

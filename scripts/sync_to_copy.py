@@ -15,6 +15,11 @@ files_to_copy = [
     r"static\js\editor.js",
     r"static\hero.png",
     r"samples\index.json",
+    r"app.py",
+    r".env.example",
+    r"baseten_service.py",
+    r"meta_sam_service.py",
+    r"meta_media_service.py",
 ]
 
 dirs_to_copy = [

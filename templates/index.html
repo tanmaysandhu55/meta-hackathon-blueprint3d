@@ -331,7 +331,7 @@
             <div class="flex items-center gap-2">
                 <div id="processing-mode-badge" class="hidden rounded-none px-3 py-1 text-xs font-bold uppercase tracking-wider" role="status" aria-live="polite"></div>
                 <div class="status-badge px-3 py-1 text-xs font-bold uppercase tracking-wider {% if processing_mode == 'LIVE' %}is-live{% else %}is-offline{% endif %}">
-                    {% if processing_mode == 'MOCK' %}MOCK MODE{% else %}{% if sam_ready %}SAM 3.1 segmentation{% else %}Local OpenCV segmentation{% endif %} · {% if labeling_ready %}Muse labels on{% else %}Generic labels{% endif %}{% endif %}
+                    {% if processing_mode == 'MOCK' %}MOCK MODE{% else %}{% if sam_ready %}SAM 3.1 segmentation{% else %}Local OpenCV segmentation{% endif %} &bull; {% if labeling_ready %}Muse labels on{% else %}Generic labels{% endif %}{% endif %}
                 </div>
             </div>
         </div>
@@ -511,6 +511,7 @@
                             <label for="map-audio-input" class="block mono-caption">Ask by voice (WAV)</label>
                             <input id="map-audio-input" type="file" accept="audio/wav,.wav" class="w-full text-[10px]" {% if not voice_transcription_ready %}disabled{% endif %}>
                             <button id="btn-transcribe-map" type="button" class="w-full px-3 py-1 text-xs font-bold uppercase tracking-wider" {% if not voice_transcription_ready %}disabled{% endif %}>Transcribe question</button>
+                            <p id="map-transcription-status" class="mono-caption text-[10px] text-stone-500 mt-1" aria-live="polite"></p>
                         </div>
                         <p id="map-assistant-provider" class="mono-caption" style="font-size: 10px;" aria-live="polite">{% if labeling_ready %}Baseten Muse Spark Open{% else %}Offline scene lookup{% endif %}</p>
                         <p id="map-assistant-answer" class="hidden border border-hairline p-2 text-xs leading-relaxed" role="status" aria-live="polite"></p>
@@ -519,7 +520,7 @@
                     <!-- 4. Generate Button & Progress -->
                     <div>
                         <button id="btn-generate" type="button" disabled class="flex w-full items-center justify-center gap-2 px-4 py-3 text-xs font-bold uppercase tracking-wider disabled:cursor-not-allowed disabled:opacity-40">
-                            <span>{% if processing_mode == 'MOCK' %}🧪 Run Mock Pipeline{% elif sam_ready %}✨ Process with Meta AI{% else %}⚙️ Process locally{% endif %}</span>
+                            <span>{% if processing_mode == 'MOCK' %}Run Mock Pipeline &rarr;{% elif sam_ready %}Process with Meta AI &rarr;{% else %}Process Locally &rarr;{% endif %}</span>
                         </button>
 
                         <div id="progress-container" class="hidden mt-3 space-y-1.5">
