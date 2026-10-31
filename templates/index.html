@@ -39,6 +39,7 @@
     <!-- Custom CSS & Editorial Studio System -->
     <link rel="stylesheet" href="/static/css/custom.css">
     <link rel="stylesheet" href="/static/css/styles.css?v=20261031-editorial">
+    <link rel="stylesheet" href="/static/css/editor.css?v=20261031-editor-v6">
 
     <!-- Pinned Three.js r128 via CDN (cdnjs) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -67,6 +68,7 @@
                 <li><a href="#method-section" class="nav-link">Method</a></li>
                 <li><a href="#plans-section" class="nav-link">Plans</a></li>
                 <li><a href="#try-it-section" class="nav-link">Try it</a></li>
+                <li><button type="button" class="nav-link bg-transparent border-none cursor-pointer" data-action="open-editor">2D Editor</button></li>
             </ul>
             <div>
                 <button type="button" class="btn-studio-nav" data-action="open-app-upload">Upload a plan</button>
@@ -316,6 +318,7 @@
         <!-- Studio App Bar with Back Button -->
         <div class="app-studio-header">
             <div class="flex items-center gap-3">
+                <button type="button" class="app-back-link" data-action="open-editor" id="btn-open-editor-top">✏️ 2D Editor</button>
                 <button type="button" class="app-back-link" data-action="back-to-landing">
                     ← Back to studio
                 </button>
@@ -849,9 +852,583 @@
 
     </div>
 
+
+    <!-- ======================================================================
+         3. 2D FLOOR PLAN EDITOR VIEW (#editor-view)
+         ====================================================================== -->
+    <div id="editor-view" class="view-hidden">
+        <!-- Editor Top Navigation Bar (60px) -->
+        <header class="editor-top-bar">
+            <div class="flex items-center gap-3">
+                <button type="button" class="editor-nav-btn" data-action="editor-back-to-landing">
+                    &larr; Studio
+                </button>
+                <button type="button" class="editor-nav-btn" data-action="editor-go-to-3d">
+                    3D View &rarr;
+                </button>
+                <div class="editor-wordmark ml-2 hidden sm:flex">
+                    FloorPlan3D<span class="wordmark-dot">.</span>
+                    <span class="mono-caption ml-2 px-1.5 py-0.5 border border-hairline text-[10px]">2D EDITOR</span>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+                <label for="editor-project-title" class="mono-label text-[10px] text-stone-500 hidden md:block">PLAN:</label>
+                <input id="editor-project-title" type="text" value="UNTITLED PLAN" class="editor-project-title-input" maxlength="40" />
+            </div>
+
+            <div class="flex items-center gap-2">
+                <button id="btn-editor-fit-top" type="button" class="editor-nav-btn" data-editor-action="fit" title="Fit to content (F)">
+                    Fit (F)
+                </button>
+                <button id="btn-editor-send-to-3d" type="button" class="editor-primary-btn" title="Convert and view in 3D">
+                    Send to 3D &rarr;
+                </button>
+            </div>
+        </header>
+
+        <!-- Editor Workspace: Left Library (260px) + Center Canvas + Status Bar -->
+        <div class="editor-workspace">
+            <!-- Left Element Library Panel (260px, Collapsible) -->
+            <aside id="editor-library-panel" class="editor-library-panel" aria-label="Architectural Component Library">
+                <div class="editor-library-header">
+                    <div class="flex items-center gap-2">
+                        <span class="editor-status-marker"></span>
+                        <span class="editor-library-title">LIBRARY</span>
+                    </div>
+                    <button id="btn-toggle-library" type="button" class="editor-library-toggle" title="Collapse / Expand Library">
+                        <span id="editor-lib-toggle-icon">&laquo;</span>
+                    </button>
+                </div>
+                
+                <div class="editor-library-scrollable">
+                    <!-- 1. Structure -->
+                    <div class="editor-accordion-section is-open" data-accordion="structure">
+                        <button type="button" class="editor-accordion-title">
+                            <span>STRUCTURE</span>
+                            <span class="editor-accordion-chevron">&#9662;</span>
+                        </button>
+                        <div class="editor-accordion-drawer">
+                            <div class="editor-lib-grid">
+                                <button type="button" class="editor-lib-cell" data-lib-tool="wall-exterior" title="Exterior Wall (0.20m)">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.3">
+                                            <rect x="3" y="10" width="22" height="8" />
+                                            <line x1="6" y1="18" x2="10" y2="10" />
+                                            <line x1="12" y1="18" x2="16" y2="10" />
+                                            <line x1="18" y1="18" x2="22" y2="10" />
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">EXT WALL</span>
+                                </button>
+                                <button type="button" class="editor-lib-cell" data-lib-tool="wall-interior" title="Interior Wall (0.15m)">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.2">
+                                            <rect x="3" y="11" width="22" height="6" />
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">INT WALL</span>
+                                </button>
+                                <button type="button" class="editor-lib-cell" data-lib-tool="structure-column" title="Structural Column">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.2">
+                                            <rect x="7" y="7" width="14" height="14" />
+                                            <line x1="7" y1="7" x2="21" y2="21" />
+                                            <line x1="7" y1="21" x2="21" y2="7" />
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">COLUMN</span>
+                                </button>
+                                <button type="button" class="editor-lib-cell" data-lib-tool="stairs-straight" title="Straight Stairs">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.2">
+                                            <rect x="6" y="3" width="16" height="22" />
+                                            <line x1="6" y1="7" x2="22" y2="7" />
+                                            <line x1="6" y1="11" x2="22" y2="11" />
+                                            <line x1="6" y1="15" x2="22" y2="15" />
+                                            <line x1="6" y1="19" x2="22" y2="19" />
+                                            <path d="M14 21 L14 5 M11 8 L14 5 L17 8" stroke-width="1.2" />
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">STAIRS</span>
+                                </button>
+                                <button type="button" class="editor-lib-cell" data-lib-tool="stairs-l" title="L Stairs">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.2">
+                                            <path d="M5 5 L23 5 L23 23 L15 23 L15 13 L5 13 Z" />
+                                            <line x1="5" y1="9" x2="15" y2="9" />
+                                            <line x1="19" y1="13" x2="19" y2="23" />
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">L STAIRS</span>
+                                </button>
+                                <button type="button" class="editor-lib-cell" data-lib-tool="structure-railing" title="Railing">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.2">
+                                            <line x1="3" y1="14" x2="25" y2="14" stroke-dasharray="2 2" />
+                                            <circle cx="4" cy="14" r="1.5" />
+                                            <circle cx="14" cy="14" r="1.5" />
+                                            <circle cx="24" cy="14" r="1.5" />
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">RAILING</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 2. Doors -->
+                    <div class="editor-accordion-section is-open" data-accordion="doors">
+                        <button type="button" class="editor-accordion-title">
+                            <span>DOORS</span>
+                            <span class="editor-accordion-chevron">&#9662;</span>
+                        </button>
+                        <div class="editor-accordion-drawer">
+                            <div class="editor-lib-grid">
+                                <button type="button" class="editor-lib-cell" data-lib-tool="door-single" title="Single Door (0.90m)">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.2">
+                                            <line x1="4" y1="22" x2="4" y2="6" />
+                                            <path d="M4 6 A16 16 0 0 1 20 22" stroke-dasharray="2 1.5" />
+                                            <line x1="4" y1="22" x2="20" y2="22" />
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">SINGLE</span>
+                                </button>
+                                <button type="button" class="editor-lib-cell" data-lib-tool="door-double" title="Double Door (1.60m)">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.2">
+                                            <path d="M4 14 A10 10 0 0 1 14 24" stroke-dasharray="2 1.5" />
+                                            <path d="M24 14 A10 10 0 0 0 14 24" stroke-dasharray="2 1.5" />
+                                            <line x1="4" y1="24" x2="24" y2="24" />
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">DOUBLE</span>
+                                </button>
+                                <button type="button" class="editor-lib-cell" data-lib-tool="door-sliding" title="Sliding Door (1.40m)">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.2">
+                                            <rect x="3" y="11" width="13" height="3" />
+                                            <rect x="12" y="14" width="13" height="3" />
+                                            <line x1="2" y1="14" x2="26" y2="14" stroke-width="0.75" />
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">SLIDING</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 3. Windows -->
+                    <div class="editor-accordion-section is-open" data-accordion="windows">
+                        <button type="button" class="editor-accordion-title">
+                            <span>WINDOWS</span>
+                            <span class="editor-accordion-chevron">&#9662;</span>
+                        </button>
+                        <div class="editor-accordion-drawer">
+                            <div class="editor-lib-grid">
+                                <button type="button" class="editor-lib-cell" data-lib-tool="window-single" title="Single Window (1.00m)">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.2">
+                                            <rect x="3" y="11" width="22" height="6" />
+                                            <line x1="3" y1="14" x2="25" y2="14" stroke-width="1.5" />
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">SINGLE</span>
+                                </button>
+                                <button type="button" class="editor-lib-cell" data-lib-tool="window-double" title="Double Window (1.50m)">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.2">
+                                            <rect x="3" y="10" width="22" height="8" />
+                                            <line x1="3" y1="14" x2="25" y2="14" />
+                                            <line x1="14" y1="10" x2="14" y2="18" />
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">DOUBLE</span>
+                                </button>
+                                <button type="button" class="editor-lib-cell" data-lib-tool="window-wide" title="Wide Window (2.00m)">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.2">
+                                            <rect x="2" y="10" width="24" height="8" />
+                                            <line x1="2" y1="14" x2="26" y2="14" />
+                                            <line x1="10" y1="10" x2="10" y2="18" />
+                                            <line x1="18" y1="10" x2="18" y2="18" />
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">WIDE</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 4. Living and bedroom -->
+                    <div class="editor-accordion-section is-open" data-accordion="living">
+                        <button type="button" class="editor-accordion-title">
+                            <span>LIVING &amp; BEDROOM</span>
+                            <span class="editor-accordion-chevron">&#9662;</span>
+                        </button>
+                        <div class="editor-accordion-drawer">
+                            <div class="editor-lib-grid">
+                                <button type="button" class="editor-lib-cell" data-lib-tool="furniture-bed" title="Bed (1.6x2.0m)">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.2">
+                                            <rect x="5" y="4" width="18" height="20" />
+                                            <rect x="7" y="6" width="6" height="4" />
+                                            <rect x="15" y="6" width="6" height="4" />
+                                            <line x1="5" y1="12" x2="23" y2="12" />
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">BED</span>
+                                </button>
+                                <button type="button" class="editor-lib-cell" data-lib-tool="furniture-sofa" title="Sofa (2.1x0.9m)">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.2">
+                                            <rect x="4" y="6" width="20" height="16" />
+                                            <rect x="4" y="6" width="4" height="16" />
+                                            <rect x="20" y="6" width="4" height="16" />
+                                            <line x1="8" y1="10" x2="20" y2="10" />
+                                            <line x1="14" y1="10" x2="14" y2="22" />
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">SOFA</span>
+                                </button>
+                                <button type="button" class="editor-lib-cell" data-lib-tool="furniture-table" title="Coffee Table (1.2x0.6m)">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.2">
+                                            <rect x="4" y="8" width="20" height="12" />
+                                            <rect x="7" y="11" width="14" height="6" stroke-dasharray="1.5 1.5" />
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">TABLE</span>
+                                </button>
+                                <button type="button" class="editor-lib-cell" data-lib-tool="furniture-chairs" title="Armchair (0.8x0.8m)">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.2">
+                                            <rect x="6" y="6" width="16" height="16" />
+                                            <path d="M6 10 C6 7 22 7 22 10" />
+                                            <line x1="6" y1="14" x2="9" y2="14" />
+                                            <line x1="19" y1="14" x2="22" y2="14" />
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">CHAIRS</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 5. Kitchen and bath -->
+                    <div class="editor-accordion-section is-open" data-accordion="kitchen-bath">
+                        <button type="button" class="editor-accordion-title">
+                            <span>KITCHEN &amp; BATH</span>
+                            <span class="editor-accordion-chevron">&#9662;</span>
+                        </button>
+                        <div class="editor-accordion-drawer">
+                            <div class="editor-lib-grid">
+                                <button type="button" class="editor-lib-cell" data-lib-tool="furniture-stove" title="Stove (0.6x0.6m)">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.2">
+                                            <rect x="5" y="5" width="18" height="18" />
+                                            <circle cx="9.5" cy="9.5" r="2.5" />
+                                            <circle cx="18.5" cy="9.5" r="2.5" />
+                                            <circle cx="9.5" cy="18.5" r="2.5" />
+                                            <circle cx="18.5" cy="18.5" r="2.5" />
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">STOVE</span>
+                                </button>
+                                <button type="button" class="editor-lib-cell" data-lib-tool="furniture-fridge" title="Fridge (0.8x0.7m)">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.2">
+                                            <rect x="5" y="5" width="18" height="18" />
+                                            <line x1="5" y1="11" x2="23" y2="11" />
+                                            <line x1="19" y1="8" x2="21" y2="8" />
+                                            <line x1="19" y1="15" x2="21" y2="15" />
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">FRIDGE</span>
+                                </button>
+                                <button type="button" class="editor-lib-cell" data-lib-tool="furniture-sink" title="Sink (0.9x0.6m)">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.2">
+                                            <rect x="4" y="5" width="20" height="18" />
+                                            <rect x="7" y="8" width="14" height="12" rx="2" />
+                                            <circle cx="14" cy="14" r="1.5" />
+                                            <line x1="14" y1="8" x2="14" y2="12" />
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">SINK</span>
+                                </button>
+                                <button type="button" class="editor-lib-cell" data-lib-tool="furniture-toilet" title="Toilet (0.5x0.7m)">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.2">
+                                            <rect x="6" y="4" width="16" height="6" rx="1" />
+                                            <path d="M8 10 C8 21 20 21 20 10 Z" />
+                                            <ellipse cx="14" cy="14" rx="4" ry="5" />
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">TOILET</span>
+                                </button>
+                                <button type="button" class="editor-lib-cell" data-lib-tool="furniture-bathtub" title="Bathtub (1.7x0.75m)">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.2">
+                                            <rect x="4" y="6" width="20" height="16" />
+                                            <rect x="6" y="8" width="16" height="12" rx="4" />
+                                            <circle cx="9" cy="14" r="1.5" />
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">BATHTUB</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 6. Dining and office -->
+                    <div class="editor-accordion-section is-open" data-accordion="dining-office">
+                        <button type="button" class="editor-accordion-title">
+                            <span>DINING &amp; OFFICE</span>
+                            <span class="editor-accordion-chevron">&#9662;</span>
+                        </button>
+                        <div class="editor-accordion-drawer">
+                            <div class="editor-lib-grid">
+                                <button type="button" class="editor-lib-cell" data-lib-tool="furniture-desk" title="Desk (1.4x0.7m)">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.2">
+                                            <rect x="4" y="6" width="20" height="16" />
+                                            <line x1="4" y1="11" x2="24" y2="11" stroke-dasharray="1 1.5" />
+                                            <rect x="18" y="11" width="6" height="11" />
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">DESK</span>
+                                </button>
+                                <button type="button" class="editor-lib-cell" data-lib-tool="furniture-office-chair" title="Office Chair (0.6x0.6m)">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.2">
+                                            <circle cx="14" cy="14" r="5" />
+                                            <path d="M8 19 C10 21 18 21 20 19" stroke-width="1.5" />
+                                            <line x1="14" y1="9" x2="14" y2="5" />
+                                            <line x1="9" y1="14" x2="5" y2="14" />
+                                            <line x1="19" y1="14" x2="23" y2="14" />
+                                            <line x1="10" y1="18" x2="7" y2="21" />
+                                            <line x1="18" y1="18" x2="21" y2="21" />
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">CHAIR</span>
+                                </button>
+                                <button type="button" class="editor-lib-cell" data-lib-tool="furniture-dining-table" title="Dining Table (1.6x0.9m)">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.2">
+                                            <rect x="6" y="8" width="16" height="12" />
+                                            <line x1="9" y1="5" x2="13" y2="5" />
+                                            <line x1="15" y1="5" x2="19" y2="5" />
+                                            <line x1="9" y1="23" x2="13" y2="23" />
+                                            <line x1="15" y1="23" x2="19" y2="23" />
+                                            <line x1="3" y1="11" x2="3" y2="17" />
+                                            <line x1="25" y1="11" x2="25" y2="17" />
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">DINING</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 7. Text -->
+                    <div class="editor-accordion-section is-open" data-accordion="text">
+                        <button type="button" class="editor-accordion-title">
+                            <span>TEXT</span>
+                            <span class="editor-accordion-chevron">&#9662;</span>
+                        </button>
+                        <div class="editor-accordion-drawer">
+                            <div class="editor-lib-grid">
+                                <button type="button" class="editor-lib-cell" data-lib-tool="text-label" title="Room Label">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.2">
+                                            <text x="6" y="19" font-family="'Azeret Mono', monospace" font-size="14" font-weight="700" fill="currentColor" stroke="none">Aa</text>
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">LABEL</span>
+                                </button>
+                                <button type="button" class="editor-lib-cell" data-lib-tool="text-dimension" title="Dimension Mark">
+                                    <div class="editor-lib-icon">
+                                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.2">
+                                            <line x1="4" y1="14" x2="24" y2="14" />
+                                            <line x1="4" y1="9" x2="4" y2="19" />
+                                            <line x1="24" y1="9" x2="24" y2="19" />
+                                            <path d="M7 12 L4 14 L7 16 M21 12 L24 14 L21 16" />
+                                        </svg>
+                                    </div>
+                                    <span class="editor-lib-caption">DIMENSION</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Center Canvas Container -->
+            <div id="editor-canvas-container" class="editor-canvas-container">
+                <!-- Empty State Card (Step 3) -->
+                <div id="editor-empty-state" class="editor-empty-card">
+                    <h2 class="editor-empty-title">Start your plan</h2>
+                    <p class="editor-empty-desc">Create a new architectural drawing, start from a sample layout, or edit an AI blueprint.</p>
+                    <div class="editor-empty-actions">
+                        <button type="button" id="btn-empty-draw-walls" class="editor-empty-btn">
+                            Draw walls
+                        </button>
+                        <button type="button" id="btn-empty-template" class="editor-empty-btn">
+                            Start from a template
+                        </button>
+                        <button type="button" id="btn-empty-load-ai" class="editor-empty-btn">
+                            Load AI result
+                        </button>
+                        <button type="button" id="btn-empty-load-sample" class="editor-empty-btn is-primary">
+                            Load sample
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Floating Toolbar -->
+                <div class="editor-toolbar" role="toolbar" aria-label="Floor plan editor tools">
+                    <button type="button" class="editor-tool-btn is-active" data-editor-tool="select" title="Select / Move [V]">
+                        Select <span class="editor-tool-key">[V]</span>
+                    </button>
+                    <button type="button" class="editor-tool-btn" data-editor-tool="wall" title="Draw Walls [W]">
+                        Wall <span class="editor-tool-key">[W]</span>
+                    </button>
+                    <button type="button" class="editor-tool-btn" data-editor-tool="room" title="Room Outline [R]">
+                        Room <span class="editor-tool-key">[R]</span>
+                    </button>
+                    <button type="button" class="editor-tool-btn" data-editor-tool="door" title="Place Door [D]">
+                        Door <span class="editor-tool-key">[D]</span>
+                    </button>
+                    <button type="button" class="editor-tool-btn" data-editor-tool="window" title="Place Window [N]">
+                        Window <span class="editor-tool-key">[N]</span>
+                    </button>
+                    <button type="button" class="editor-tool-btn" data-editor-tool="text" title="Text Annotation [T]">
+                        Text <span class="editor-tool-key">[T]</span>
+                    </button>
+                    <button type="button" class="editor-tool-btn" data-editor-tool="delete" title="Delete Selected [Del]">
+                        Delete <span class="editor-tool-key">[Del]</span>
+                    </button>
+
+                    <div class="editor-tool-separator"></div>
+
+                    <button type="button" class="editor-tool-btn" data-editor-action="zoom-in" title="Zoom In [+]">
+                        +
+                    </button>
+                    <button type="button" class="editor-tool-btn" data-editor-action="zoom-out" title="Zoom Out [-]">
+                        &minus;
+                    </button>
+                    <button type="button" class="editor-tool-btn" data-editor-action="fit" title="Fit Content [F]">
+                        Fit
+                    </button>
+                </div>
+
+                <!-- Scale Bar in Bottom-Left of Canvas (Step 2) -->
+                <div id="editor-scale-bar" class="editor-scale-bar">
+                    <div class="editor-scale-bar-track">
+                        <span class="editor-scale-tick"></span>
+                        <div id="editor-scale-bar-line" class="editor-scale-bar-line"></div>
+                        <span class="editor-scale-tick"></span>
+                    </div>
+                    <span id="editor-scale-bar-label" class="editor-scale-bar-label">5 m</span>
+                </div>
+
+                <!-- Native SVG Canvas -->
+                <svg id="editor-canvas" class="editor-svg-canvas" xmlns="http://www.w3.org/2000/svg">
+                    <defs>
+                        <marker id="editor-arrowhead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                            <polygon points="0 0, 6 3, 0 6" fill="var(--pigment)" />
+                        </marker>
+                    </defs>
+
+                    <!-- Viewport Group with dynamic pan & zoom transform -->
+                    <g id="editor-viewport" transform="translate(320, 220) scale(50)">
+                        <!-- Layer 0: Metric Grid (pointer-events: none) -->
+                        <g id="editor-grid" pointer-events="none"></g>
+
+                        <!-- Layer 1: Rooms (Floor fills) -->
+                        <g id="editor-rooms"></g>
+
+                        <!-- Layer 2: Walls (Polygons & centerline construction) -->
+                        <g id="editor-walls"></g>
+
+                        <!-- Layer 3: Openings (Doors & Windows + swing arcs) -->
+                        <g id="editor-openings"></g>
+
+                        <!-- Layer 4: Furniture & Equipment symbols -->
+                        <g id="editor-furniture"></g>
+
+                        <!-- Layer 5: Annotations, dimensions, leaders (pointer-events: none) -->
+                        <g id="editor-annotations" pointer-events="none"></g>
+
+                        <!-- Layer 6: Dynamic Live Preview (active drawing, pointer-events: none) -->
+                        <g id="editor-preview" pointer-events="none"></g>
+
+                        <!-- Layer 7: Selection Bounding Box (vector-effect: non-scaling-stroke) -->
+                        <g id="editor-selection"></g>
+                    </g>
+
+                    <!-- Screen-Space Overlay Layers (Fixed Screen Pixels, NO zoom distortion) -->
+                    <g id="editor-labels-overlay" pointer-events="none"></g>
+                    <g id="editor-ruler-overlay" pointer-events="none"></g>
+                </svg>
+
+                <!-- Floating / Docked Properties Panel (Contextual) -->
+                <div id="editor-properties-panel" class="editor-properties-panel">
+                    <div class="editor-panel-heading">
+                        <div class="flex items-center gap-2">
+                            <span class="editor-status-marker"></span>
+                            <span id="editor-prop-title">PLAN OVERVIEW</span>
+                        </div>
+                        <button id="btn-close-props" type="button" class="editor-panel-close" title="Close Panel">&times;</button>
+                    </div>
+                    <div id="editor-properties-content" class="editor-properties-content">
+                        <!-- Populated dynamically based on selection -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <footer class="editor-status-bar">
+            <div class="editor-status-group">
+                <div class="editor-status-item">
+                    <span class="editor-status-marker"></span>
+                    <span id="editor-coords">X: +0.00 m   Y: +0.00 m</span>
+                </div>
+                <div class="editor-status-item">
+                    <label class="flex items-center gap-1.5 cursor-pointer">
+                        <input id="editor-snap-toggle" type="checkbox" checked class="accent-[#9B3418]" />
+                        <span>SNAP</span>
+                    </label>
+                    <select id="editor-snap-select" class="editor-snap-select" aria-label="Snap grid step">
+                        <option value="0.10">0.10 m</option>
+                        <option value="0.25" selected>0.25 m</option>
+                        <option value="0.50">0.50 m</option>
+                        <option value="1.00">1.00 m</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="editor-status-group">
+                <div class="editor-status-item">
+                    <span id="editor-zoom-label">100% (50px/m)</span>
+                </div>
+                <div class="editor-status-item">
+                    <span id="editor-active-tool">TOOL: SELECT [V]</span>
+                </div>
+                <div class="editor-status-item text-[9.5px] text-stone-500 hidden md:block">
+                    SPACE+DRAG: PAN / WHEEL: ZOOM / ENTER: SET LENGTH
+                </div>
+            </div>
+        </footer>
+    </div>
+
+
     <!-- Application Controllers & Landing Scripts -->
     <script src="/static/js/viewer.js?v=20261028-route-polish"></script>
     <script src="/static/js/app.js?v=20261028-route-polish"></script>
-    <script src="/static/js/landing.js?v=20261031-editorial"></script>
+    <script src="/static/js/landing.js?v=20261031-editor-v5"></script>
+    <script src="/static/js/editor.js?v=20261031-editor-v6"></script>
 </body>
 </html>

@@ -38,6 +38,7 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
+app.config["TEMPLATES_AUTO_RELOAD"] = True
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024 + 64 * 1024  # audio endpoint limit plus multipart overhead
 

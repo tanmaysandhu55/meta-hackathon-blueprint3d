@@ -461,6 +461,81 @@
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
+  function switchToAppView() {
+    const landingView = document.getElementById('landing-view');
+    const appView = document.getElementById('app-view');
+    const editorView = document.getElementById('editor-view');
+    if (!appView) return;
+
+    if (landingView) landingView.classList.add('view-hidden');
+    if (editorView) editorView.classList.add('view-hidden');
+    appView.classList.remove('view-hidden');
+
+    requestAnimationFrame(() => {
+      if (window.viewer && typeof window.viewer.onWindowResize === 'function') {
+        window.viewer.onWindowResize();
+      }
+    });
+  }
+
+  function switchToLandingView() {
+    const landingView = document.getElementById('landing-view');
+    const appView = document.getElementById('app-view');
+    const editorView = document.getElementById('editor-view');
+    if (!landingView) return;
+
+    if (appView) appView.classList.add('view-hidden');
+    if (editorView) editorView.classList.add('view-hidden');
+    landingView.classList.remove('view-hidden');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function switchToEditorView() {
+    const landingView = document.getElementById('landing-view');
+    const appView = document.getElementById('app-view');
+    const editorView = document.getElementById('editor-view');
+    if (!editorView) return;
+
+    if (landingView) landingView.classList.add('view-hidden');
+    if (appView) appView.classList.add('view-hidden');
+    editorView.classList.remove('view-hidden');
+
+    requestAnimationFrame(() => {
+      if (window.floorPlanEditor && typeof window.floorPlanEditor.updateViewportTransform === 'function') {
+        if (typeof window.floorPlanEditor.onViewShown === 'function') {
+        window.floorPlanEditor.onViewShown();
+      } else {
+        window.floorPlanEditor.updateViewportTransform();
+      }
+      }
+    });
+  }
+
+
+  // Global delegated click listener for view switching
+  document.addEventListener('click', (e) => {
+    const openEditorBtn = e.target.closest('[data-action="open-editor"]');
+    if (openEditorBtn) {
+      e.preventDefault();
+      switchToEditorView();
+      return;
+    }
+
+    const backLandingBtn = e.target.closest('[data-action="editor-back-to-landing"], [data-action="back-to-landing"]');
+    if (backLandingBtn && backLandingBtn.dataset.action === 'editor-back-to-landing') {
+      e.preventDefault();
+      switchToLandingView();
+      return;
+    }
+
+    const goTo3dBtn = e.target.closest('[data-action="editor-go-to-3d"]');
+    if (goTo3dBtn) {
+      e.preventDefault();
+      switchToAppView();
+      return;
+    }
+  });
+
   function initViewSwitching() {
     // Buttons that open App View
     document.querySelectorAll('[data-action="open-app-upload"]').forEach(btn => {
@@ -491,10 +566,34 @@
       });
     });
 
-    // Expose switch methods globally if needed
+    // Open 2D Floor Plan Editor
+    document.querySelectorAll('[data-action="open-editor"]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        switchToEditorView();
+      });
+    });
+
+    // Editor navigation actions
+    document.querySelectorAll('[data-action="editor-back-to-landing"]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        switchToLandingView();
+      });
+    });
+
+    document.querySelectorAll('[data-action="editor-go-to-3d"]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        switchToAppView();
+      });
+    });
+
+    // Expose switch methods globally
     window.FloorPlan3DStudio = {
       switchToAppView,
-      switchToLandingView
+      switchToLandingView,
+      switchToEditorView
     };
   }
 

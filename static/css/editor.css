@@ -1,0 +1,902 @@
+/* ==========================================================================
+   FloorPlan3D — 2D Floor Plan Editor Stylesheet
+   Strict Editorial Studio Palette:
+   --ground: #E7E3DA | --ground-2: #DCD7CB | --ink: #1A1917 | --ink-2: #4A4741
+   --muted: #6E6A61 | --pigment: #9B3418 | --hair: rgba(26,25,23,0.16)
+   ========================================================================== */
+
+#editor-view {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  background-color: var(--ground, #E7E3DA) !important;
+  color: var(--ink, #1A1917) !important;
+  font-family: var(--font-mono, 'Azeret Mono', monospace) !important;
+  z-index: 9999 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+  user-select: none !important;
+}
+
+#editor-view.view-hidden {
+  display: none !important;
+}
+
+/* --------------------------------------------------------------------------
+   Top Navigation Bar (60px)
+   -------------------------------------------------------------------------- */
+.editor-top-bar {
+  height: 60px !important;
+  min-height: 60px !important;
+  background-color: var(--ground, #E7E3DA) !important;
+  border-bottom: 1px solid var(--hair, rgba(26,25,23,0.16)) !important;
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 0 1.25rem !important;
+  flex-shrink: 0 !important;
+  z-index: 50 !important;
+  box-sizing: border-box !important;
+}
+
+.editor-wordmark {
+  font-family: var(--font-serif, 'Instrument Serif', Georgia, serif) !important;
+  font-size: 20px !important;
+  letter-spacing: -0.015em !important;
+  color: var(--ink, #1A1917) !important;
+  display: flex !important;
+  align-items: baseline !important;
+  text-decoration: none !important;
+}
+
+.editor-wordmark .wordmark-dot {
+  color: var(--pigment, #9B3418) !important;
+}
+
+.editor-project-title-input {
+  background: var(--ground-2, #DCD7CB) !important;
+  border: 1px solid var(--hair, rgba(26,25,23,0.16)) !important;
+  color: var(--ink, #1A1917) !important;
+  font-family: var(--font-mono, 'Azeret Mono', monospace) !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.12em !important;
+  padding: 6px 12px !important;
+  border-radius: 0 !important;
+  outline: none !important;
+  min-width: 180px !important;
+  box-sizing: border-box !important;
+}
+
+.editor-project-title-input:focus {
+  border-color: var(--ink, #1A1917) !important;
+  outline: 1px solid var(--pigment, #9B3418) !important;
+}
+
+.editor-nav-btn {
+  background: var(--ground, #E7E3DA) !important;
+  border: 1px solid var(--ink, #1A1917) !important;
+  color: var(--ink, #1A1917) !important;
+  font-family: var(--font-mono, 'Azeret Mono', monospace) !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.12em !important;
+  padding: 7px 14px !important;
+  border-radius: 0 !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  transition: background-color 0.12s ease, color 0.12s ease !important;
+}
+
+.editor-nav-btn:hover {
+  background-color: var(--ink, #1A1917) !important;
+  color: var(--ground, #E7E3DA) !important;
+}
+
+.editor-primary-btn {
+  background: var(--ink, #1A1917) !important;
+  border: 1px solid var(--ink, #1A1917) !important;
+  color: var(--ground, #E7E3DA) !important;
+  font-family: var(--font-mono, 'Azeret Mono', monospace) !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.14em !important;
+  padding: 7px 16px !important;
+  border-radius: 0 !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  transition: opacity 0.12s ease !important;
+}
+
+.editor-primary-btn:hover {
+  opacity: 0.88 !important;
+}
+
+/* --------------------------------------------------------------------------
+   Editor Workspace Layout
+   -------------------------------------------------------------------------- */
+.editor-workspace {
+  flex: 1 1 0% !important;
+  display: flex !important;
+  flex-direction: row !important;
+  position: relative !important;
+  width: 100% !important;
+  height: calc(100vh - 92px) !important;
+  overflow: hidden !important;
+  background-color: var(--ground, #E7E3DA) !important;
+  box-sizing: border-box !important;
+}
+
+/* --------------------------------------------------------------------------
+   Left Library Panel (260px, Collapsible)
+   -------------------------------------------------------------------------- */
+.editor-library-panel {
+  width: 260px !important;
+  min-width: 260px !important;
+  max-width: 260px !important;
+  background-color: var(--ground, #E7E3DA) !important;
+  border-right: 1px solid var(--hair, rgba(26,25,23,0.16)) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  height: 100% !important;
+  flex-shrink: 0 !important;
+  z-index: 55 !important;
+  box-sizing: border-box !important;
+  transition: width 0.2s ease, min-width 0.2s ease, margin 0.2s ease !important;
+}
+
+.editor-library-panel.is-collapsed {
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  border-right: none !important;
+  overflow: hidden !important;
+}
+
+.editor-library-header {
+  height: 40px !important;
+  min-height: 40px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 0 14px !important;
+  border-bottom: 1px solid var(--hair, rgba(26,25,23,0.16)) !important;
+  background-color: var(--ground, #E7E3DA) !important;
+  flex-shrink: 0 !important;
+  box-sizing: border-box !important;
+}
+
+.editor-library-title {
+  font-family: var(--font-mono, 'Azeret Mono', monospace) !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.14em !important;
+  color: var(--ink, #1A1917) !important;
+}
+
+.editor-library-toggle {
+  background: var(--ground-2, #DCD7CB) !important;
+  border: 1px solid var(--hair, rgba(26,25,23,0.16)) !important;
+  color: var(--ink, #1A1917) !important;
+  font-family: var(--font-mono, monospace) !important;
+  font-size: 12px !important;
+  width: 24px !important;
+  height: 24px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+  border-radius: 0 !important;
+  transition: all 0.12s ease !important;
+}
+
+.editor-library-toggle:hover {
+  background: var(--ink, #1A1917) !important;
+  color: var(--ground, #E7E3DA) !important;
+}
+
+.editor-library-scrollable {
+  flex: 1 1 0% !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  padding-bottom: 24px !important;
+  box-sizing: border-box !important;
+}
+
+/* Accordion Sections */
+.editor-accordion-section {
+  border-bottom: 1px solid var(--hair, rgba(26,25,23,0.16)) !important;
+}
+
+.editor-accordion-title {
+  width: 100% !important;
+  height: 34px !important;
+  background: transparent !important;
+  border: none !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 0 14px !important;
+  font-family: var(--font-mono, 'Azeret Mono', monospace) !important;
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.12em !important;
+  color: var(--ink-2, #4A4741) !important;
+  cursor: pointer !important;
+  text-align: left !important;
+  transition: background-color 0.1s ease !important;
+}
+
+.editor-accordion-title:hover {
+  background-color: var(--ground-2, #DCD7CB) !important;
+}
+
+.editor-accordion-chevron {
+  font-size: 9px !important;
+  transition: transform 0.15s ease !important;
+}
+
+.editor-accordion-section:not(.is-open) .editor-accordion-chevron {
+  transform: rotate(-90deg) !important;
+}
+
+.editor-accordion-drawer {
+  display: none !important;
+  padding: 10px 14px 14px 14px !important;
+  box-sizing: border-box !important;
+}
+
+.editor-accordion-section.is-open .editor-accordion-drawer {
+  display: block !important;
+}
+
+/* 56px Square Preview Cells */
+.editor-lib-grid {
+  display: grid !important;
+  grid-template-columns: repeat(3, 56px) !important;
+  gap: 12px 14px !important;
+  justify-content: start !important;
+}
+
+.editor-lib-cell {
+  width: 56px !important;
+  height: 56px !important;
+  background-color: var(--ground-2, #DCD7CB) !important;
+  border: 1px solid var(--hair, rgba(26,25,23,0.16)) !important;
+  border-radius: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 3px !important;
+  cursor: pointer !important;
+  padding: 2px !important;
+  box-sizing: border-box !important;
+  transition: all 0.12s ease !important;
+  outline: none !important;
+}
+
+.editor-lib-cell:hover {
+  background-color: var(--ground, #E7E3DA) !important;
+  border-color: var(--ink, #1A1917) !important;
+}
+
+.editor-lib-cell.is-armed {
+  border: 2px solid var(--pigment, #9B3418) !important;
+  background-color: var(--ground, #E7E3DA) !important;
+}
+
+.editor-lib-icon {
+  width: 28px !important;
+  height: 28px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  color: var(--ink, #1A1917) !important;
+  pointer-events: none !important;
+}
+
+.editor-lib-caption {
+  font-family: var(--font-mono, 'Azeret Mono', monospace) !important;
+  font-size: 7.5px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.04em !important;
+  color: var(--ink-2, #4A4741) !important;
+  text-transform: uppercase !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  max-width: 50px !important;
+  pointer-events: none !important;
+}
+
+/* --------------------------------------------------------------------------
+   Center Canvas Container
+   -------------------------------------------------------------------------- */
+.editor-canvas-container {
+  flex: 1 1 0% !important;
+  position: relative !important;
+  width: 100% !important;
+  height: 100% !important;
+  overflow: hidden !important;
+  background-color: var(--ground, #E7E3DA) !important;
+  cursor: default !important;
+  box-sizing: border-box !important;
+}
+
+.editor-canvas-container.is-panning {
+  cursor: grab !important;
+}
+
+.editor-canvas-container.is-panning:active {
+  cursor: grabbing !important;
+}
+
+.editor-svg-canvas {
+  width: 100% !important;
+  height: 100% !important;
+  display: block !important;
+  background-color: var(--ground, #E7E3DA) !important;
+}
+
+/* --------------------------------------------------------------------------
+   Empty State Card (Step 3)
+   -------------------------------------------------------------------------- */
+.editor-empty-card {
+  position: absolute !important;
+  top: 50% !important;
+  left: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  background-color: var(--ground, #E7E3DA) !important;
+  border: 1px solid var(--hair, rgba(26,25,23,0.16)) !important;
+  padding: 2.25rem 2.5rem !important;
+  text-align: center !important;
+  z-index: 40 !important;
+  width: 440px !important;
+  max-width: 90% !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  box-sizing: border-box !important;
+}
+
+.editor-empty-card.is-hidden {
+  display: none !important;
+}
+
+.editor-empty-title {
+  font-family: var(--font-serif, 'Instrument Serif', Georgia, serif) !important;
+  font-size: 28px !important;
+  font-weight: 400 !important;
+  letter-spacing: -0.015em !important;
+  color: var(--ink, #1A1917) !important;
+  margin: 0 0 0.5rem 0 !important;
+}
+
+.editor-empty-desc {
+  font-family: var(--font-mono, 'Azeret Mono', monospace) !important;
+  font-size: 11px !important;
+  line-height: 1.5 !important;
+  color: var(--muted, #6E6A61) !important;
+  margin: 0 0 1.75rem 0 !important;
+}
+
+.editor-empty-actions {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 10px !important;
+}
+
+.editor-empty-btn {
+  background: var(--ground, #E7E3DA) !important;
+  border: 1px solid var(--ink, #1A1917) !important;
+  color: var(--ink, #1A1917) !important;
+  font-family: var(--font-mono, 'Azeret Mono', monospace) !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.1em !important;
+  padding: 10px 12px !important;
+  cursor: pointer !important;
+  border-radius: 0 !important;
+  transition: all 0.12s ease !important;
+  text-align: center !important;
+  white-space: nowrap !important;
+}
+
+.editor-empty-btn:hover {
+  background-color: var(--ink, #1A1917) !important;
+  color: var(--ground, #E7E3DA) !important;
+}
+
+.editor-empty-btn.is-primary {
+  background-color: var(--ink, #1A1917) !important;
+  color: var(--ground, #E7E3DA) !important;
+}
+
+.editor-empty-btn.is-primary:hover {
+  opacity: 0.88 !important;
+}
+
+/* --------------------------------------------------------------------------
+   Scale Bar in Canvas Bottom-Left (Step 2)
+   -------------------------------------------------------------------------- */
+.editor-scale-bar {
+  position: absolute !important;
+  bottom: 16px !important;
+  left: 42px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  gap: 3px !important;
+  z-index: 30 !important;
+  pointer-events: none !important;
+  user-select: none !important;
+}
+
+.editor-scale-bar-track {
+  display: flex !important;
+  align-items: center !important;
+}
+
+.editor-scale-tick {
+  width: 1px !important;
+  height: 8px !important;
+  background-color: var(--ink, #1A1917) !important;
+}
+
+.editor-scale-bar-line {
+  height: 2px !important;
+  background-color: var(--ink, #1A1917) !important;
+}
+
+.editor-scale-bar-label {
+  font-family: var(--font-mono, 'Azeret Mono', monospace) !important;
+  font-size: 9.5px !important;
+  font-weight: 600 !important;
+  color: var(--ink-2, #4A4741) !important;
+  letter-spacing: 0.1em !important;
+}
+
+/* --------------------------------------------------------------------------
+   Top Floating Toolbar
+   -------------------------------------------------------------------------- */
+.editor-toolbar {
+  position: absolute !important;
+  top: 14px !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  background-color: var(--ground, #E7E3DA) !important;
+  border: 1px solid var(--ink, #1A1917) !important;
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  padding: 3px !important;
+  z-index: 100 !important;
+  box-shadow: none !important;
+  box-sizing: border-box !important;
+}
+
+.editor-tool-btn {
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  color: var(--ink, #1A1917) !important;
+  font-family: var(--font-mono, 'Azeret Mono', monospace) !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.1em !important;
+  padding: 6px 12px !important;
+  border-radius: 0 !important;
+  cursor: pointer !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  transition: all 0.1s ease !important;
+  white-space: nowrap !important;
+}
+
+.editor-tool-btn:hover {
+  background-color: var(--ground-2, #DCD7CB) !important;
+}
+
+.editor-tool-btn.is-active {
+  color: var(--ink, #1A1917) !important;
+  border-bottom: 2px solid var(--pigment, #9B3418) !important;
+  font-weight: 700 !important;
+}
+
+.editor-tool-key {
+  font-size: 9px !important;
+  color: var(--muted, #6E6A61) !important;
+  font-weight: normal !important;
+}
+
+.editor-tool-separator {
+  width: 1px !important;
+  height: 20px !important;
+  background-color: var(--hair, rgba(26,25,23,0.16)) !important;
+  margin: 0 4px !important;
+}
+
+/* --------------------------------------------------------------------------
+   Floating / Docked Properties Panel (Contextual)
+   -------------------------------------------------------------------------- */
+.editor-properties-panel {
+  position: absolute !important;
+  top: 14px !important;
+  right: 14px !important;
+  width: 250px !important;
+  background-color: var(--ground, #E7E3DA) !important;
+  border: 1px solid var(--ink, #1A1917) !important;
+  z-index: 100 !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  max-height: calc(100% - 28px) !important;
+  box-sizing: border-box !important;
+}
+
+.editor-panel-heading {
+  height: 38px !important;
+  min-height: 38px !important;
+  border-bottom: 1px solid var(--hair, rgba(26,25,23,0.16)) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 0 12px !important;
+  font-family: var(--font-mono, 'Azeret Mono', monospace) !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.12em !important;
+  color: var(--ink, #1A1917) !important;
+  flex-shrink: 0 !important;
+  box-sizing: border-box !important;
+}
+
+.editor-panel-close {
+  background: transparent !important;
+  border: none !important;
+  font-size: 16px !important;
+  line-height: 1 !important;
+  cursor: pointer !important;
+  color: var(--ink-2, #4A4741) !important;
+}
+
+.editor-panel-close:hover {
+  color: var(--pigment, #9B3418) !important;
+}
+
+.editor-properties-content {
+  padding: 12px !important;
+  overflow-y: auto !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 12px !important;
+  font-size: 11px !important;
+  box-sizing: border-box !important;
+}
+
+.editor-prop-group {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 4px !important;
+}
+
+.editor-prop-label {
+  font-family: var(--font-mono, 'Azeret Mono', monospace) !important;
+  font-size: 9px !important;
+  font-weight: 600 !important;
+  color: var(--muted, #6E6A61) !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.1em !important;
+}
+
+.editor-prop-input,
+.editor-prop-select {
+  background: var(--ground-2, #DCD7CB) !important;
+  border: 1px solid var(--hair, rgba(26,25,23,0.16)) !important;
+  color: var(--ink, #1A1917) !important;
+  font-family: var(--font-mono, 'Azeret Mono', monospace) !important;
+  font-size: 11px !important;
+  padding: 5px 8px !important;
+  border-radius: 0 !important;
+  outline: none !important;
+  box-sizing: border-box !important;
+}
+
+.editor-prop-input:focus,
+.editor-prop-select:focus {
+  border-color: var(--ink, #1A1917) !important;
+  outline: 1px solid var(--pigment, #9B3418) !important;
+}
+
+.editor-prop-val {
+  font-family: var(--font-mono, 'Azeret Mono', monospace) !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  color: var(--ink, #1A1917) !important;
+}
+
+.editor-prop-row {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+}
+
+.editor-prop-btn {
+  background: var(--ground, #E7E3DA) !important;
+  border: 1px solid var(--ink, #1A1917) !important;
+  color: var(--ink, #1A1917) !important;
+  font-family: var(--font-mono, monospace) !important;
+  font-size: 10px !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.08em !important;
+  padding: 6px 10px !important;
+  border-radius: 0 !important;
+  cursor: pointer !important;
+  transition: all 0.12s ease !important;
+}
+
+.editor-prop-btn:hover {
+  background: var(--ink, #1A1917) !important;
+  color: var(--ground, #E7E3DA) !important;
+}
+
+.editor-prop-btn-danger {
+  background: transparent !important;
+  border: 1px solid var(--pigment, #9B3418) !important;
+  color: var(--pigment, #9B3418) !important;
+  font-family: var(--font-mono, monospace) !important;
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.08em !important;
+  padding: 6px 10px !important;
+  border-radius: 0 !important;
+  cursor: pointer !important;
+  transition: all 0.12s ease !important;
+  margin-top: 6px !important;
+}
+
+.editor-prop-btn-danger:hover {
+  background: var(--pigment, #9B3418) !important;
+  color: var(--ground, #E7E3DA) !important;
+}
+
+/* --------------------------------------------------------------------------
+   Bottom Status Bar (32px)
+   -------------------------------------------------------------------------- */
+.editor-status-bar {
+  height: 32px !important;
+  min-height: 32px !important;
+  background-color: var(--ground-2, #DCD7CB) !important;
+  border-top: 1px solid var(--hair, rgba(26,25,23,0.16)) !important;
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 0 1rem !important;
+  font-size: 10.5px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.14em !important;
+  color: var(--ink-2, #4A4741) !important;
+  flex-shrink: 0 !important;
+  z-index: 50 !important;
+  box-sizing: border-box !important;
+}
+
+.editor-status-group {
+  display: flex !important;
+  align-items: center !important;
+  gap: 16px !important;
+}
+
+.editor-status-item {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  white-space: nowrap !important;
+}
+
+.editor-status-marker {
+  display: inline-block !important;
+  width: 6px !important;
+  height: 6px !important;
+  background-color: var(--pigment, #9B3418) !important;
+}
+
+.editor-snap-select {
+  background: var(--ground, #E7E3DA) !important;
+  border: 1px solid var(--hair, rgba(26,25,23,0.16)) !important;
+  color: var(--ink, #1A1917) !important;
+  font-family: var(--font-mono, 'Azeret Mono', monospace) !important;
+  font-size: 10px !important;
+  padding: 2px 6px !important;
+  border-radius: 0 !important;
+  cursor: pointer !important;
+  outline: none !important;
+}
+
+/* --------------------------------------------------------------------------
+   SVG Canvas Graphic Elements & Non-Scaling Strokes (Step 2)
+   -------------------------------------------------------------------------- */
+.svg-grid-line {
+  stroke: var(--ink, #1A1917);
+  stroke-width: 0.75px;
+  vector-effect: non-scaling-stroke !important;
+  pointer-events: none !important;
+}
+
+.svg-grid-major {
+  opacity: 0.10;
+}
+
+.svg-grid-submajor {
+  opacity: 0.22;
+  stroke-width: 1px;
+}
+
+.svg-grid-minor {
+  opacity: 0.04;
+}
+
+/* Object Classes */
+.editor-room-poly {
+  cursor: pointer;
+  stroke: var(--ink, #1A1917);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke !important;
+}
+
+.editor-wall-poly {
+  fill: #F1EEE6;
+  stroke: var(--ink, #1A1917);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke !important;
+}
+
+.editor-opening-line {
+  stroke-width: 1.5px;
+  vector-effect: non-scaling-stroke !important;
+}
+
+.editor-hit-wall,
+.editor-hit-opening,
+.editor-hit-room,
+.editor-hit-furniture {
+  cursor: pointer;
+}
+
+/* Selection Outlines & Control Handles */
+.editor-selection-outline {
+  stroke: var(--pigment, #9B3418);
+  stroke-width: 1.5px;
+  stroke-dasharray: 4 3;
+  fill: none;
+  vector-effect: non-scaling-stroke !important;
+  pointer-events: none;
+}
+
+/* Fixed 8px Screen-Space Handles (Step 2) */
+.editor-screen-handle {
+  fill: var(--ground, #E7E3DA) !important;
+  stroke: var(--pigment, #9B3418) !important;
+  stroke-width: 1.5px !important;
+  vector-effect: non-scaling-stroke !important;
+  cursor: move !important;
+  pointer-events: all !important;
+}
+
+/* --------------------------------------------------------------------------
+   Constant Screen-Size Labels (Step 1, Approach a)
+   Screen sizes: ruler 10px, wall/dimension 11px, room 12px, text min 8px
+   -------------------------------------------------------------------------- */
+.editor-canvas-label {
+  font-family: var(--font-mono, 'Azeret Mono', monospace) !important;
+  fill: var(--ink, #1A1917) !important;
+  stroke: var(--ground, #E7E3DA) !important;
+  stroke-width: 3px !important;
+  stroke-linejoin: round !important;
+  stroke-linecap: round !important;
+  paint-order: stroke fill !important;
+  pointer-events: none !important;
+  user-select: none !important;
+}
+
+.editor-room-title {
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  text-anchor: middle !important;
+  letter-spacing: 0.04em !important;
+}
+
+.editor-room-area {
+  font-size: 10px !important;
+  font-weight: 500 !important;
+  fill: var(--ink-2, #4A4741) !important;
+  text-anchor: middle !important;
+}
+
+.editor-dim-label {
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  text-anchor: middle !important;
+}
+
+.editor-text-obj {
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  text-anchor: middle !important;
+}
+
+/* Ruler Strips & Labels (Step 3) */
+.editor-ruler-strip {
+  fill: var(--ground, #E7E3DA) !important;
+  stroke: var(--hair, rgba(26,25,23,0.16)) !important;
+  stroke-width: 1px !important;
+  pointer-events: none !important;
+}
+
+.editor-ruler-tick {
+  stroke: var(--ink-2, #4A4741) !important;
+  stroke-width: 1px !important;
+  vector-effect: non-scaling-stroke !important;
+  pointer-events: none !important;
+}
+
+.editor-ruler-label {
+  font-family: var(--font-mono, 'Azeret Mono', monospace) !important;
+  font-size: 10px !important;
+  font-weight: 500 !important;
+  fill: var(--muted, #6E6A61) !important;
+  pointer-events: none !important;
+  user-select: none !important;
+}
+
+.editor-ruler-corner {
+  fill: var(--ground-2, #DCD7CB) !important;
+  stroke: var(--hair, rgba(26,25,23,0.16)) !important;
+  stroke-width: 1px !important;
+  pointer-events: none !important;
+}
+
+/* Live Wall Length Badge (Step 4) */
+.editor-wall-badge-bg {
+  fill: var(--ground, #E7E3DA) !important;
+  stroke: var(--hair, rgba(26,25,23,0.16)) !important;
+  stroke-width: 1px !important;
+  vector-effect: non-scaling-stroke !important;
+}
+
+.editor-wall-badge-text {
+  font-family: var(--font-mono, 'Azeret Mono', monospace) !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  fill: var(--ink, #1A1917) !important;
+  text-anchor: middle !important;
+  pointer-events: none !important;
+  user-select: none !important;
+}
+
+/* Low-Zoom Simplification (Step 5: under 20 px/m) */
+.lod-low .editor-door-arc {
+  display: none !important;
+}
+
+.lod-low .editor-furniture-detail {
+  display: none !important;
+}
