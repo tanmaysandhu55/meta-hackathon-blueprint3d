@@ -46,8 +46,8 @@
     { "id": "d2", "center": [11.0, 6.0], "width": 0.72, "connects": ["r2", "r3"] },
     { "id": "d3", "center": [3.2, 7.2], "width": 0.64, "connects": ["r4", "r3"] },
     { "id": "d4", "center": [7.8, 7.2], "width": 0.68, "connects": ["r5", "r3"] },
-    { "id": "d5", "center": [1.1, 6.16], "width": 0.88, "connects": ["r3", "outside"] },
-    { "id": "d6", "center": [12.5, 8.4], "width": 0.9, "connects": ["r6", "r7"] },
+    { "id": "d5", "center": [1.1, 6.16], "width": 0.88, "connects": ["r3", "outside"], "rotation": 1.5708 },
+    { "id": "d6", "center": [12.5, 8.4], "width": 0.9, "connects": ["r6", "r7"], "rotation": 1.5708 },
     { "id": "d7", "center": [11.35, 7.2], "width": 0.9, "connects": ["r3", "r6"] },
     { "id": "d8", "center": [11.35, 10.9], "width": 1.0, "connects": ["r6", "outside"] }
   ],

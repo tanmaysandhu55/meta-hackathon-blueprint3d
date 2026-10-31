@@ -437,6 +437,9 @@ class FloorPlanViewer {
     }
 
     getOpeningRotation(opening, floorIndex) {
+        if (opening && Number.isFinite(Number(opening.rotation))) {
+            return Number(opening.rotation);
+        }
         const center = opening.center || [0, 0];
         let bestDistance = Infinity;
         let rotation = 0;
@@ -458,7 +461,8 @@ class FloorPlanViewer {
             const acrossDistance = isVertical
                 ? Math.abs(center[0] - (minX + maxX) / 2)
                 : Math.abs(center[1] - (minY + maxY) / 2);
-            const distance = Math.hypot(alongDistance, acrossDistance);
+            // Weight acrossDistance heavily so intersecting perpendicular walls do not hijack the orientation
+            const distance = Math.hypot(alongDistance, acrossDistance * 4);
             if (distance < bestDistance) {
                 bestDistance = distance;
                 rotation = isVertical ? Math.PI / 2 : 0;
