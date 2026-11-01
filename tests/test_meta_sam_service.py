@@ -47,7 +47,7 @@ def test_sam_request_uses_meta_model_api_and_restores_original_mask_size(monkeyp
     assert request["metadata"]["mask_encoding"] == "one_bit"
     content = request["input"][0]["content"]
     assert content[0]["type"] == "input_text"
-    assert "rooms" in content[0]["text"]
+    assert "room" in content[0]["text"]
     data_url = content[1]["image_url"]
     with Image.open(io.BytesIO(base64.b64decode(data_url.split(",", 1)[1]))) as sent_image:
         assert max(sent_image.size) == 2048

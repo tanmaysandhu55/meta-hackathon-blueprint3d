@@ -14,10 +14,14 @@ from PIL import Image
 logger = logging.getLogger(__name__)
 
 CONCEPT_PROMPTS = {
-    "room": "rooms",
-    "wall": "walls",
-    "door": "doors",
-    "window": "windows",
+    "room": "room",
+    "wall": "wall",
+    "door": "door",
+    "window": "window",
+    "staircase": "staircase",
+    "elevator": "elevator",
+    "corridor": "corridor",
+    "toilet": "toilet",
 }
 
 
