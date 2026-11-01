@@ -631,6 +631,7 @@ class FloorPlanViewer {
     }
 
     createFloorInfoPanel() {
+        if (!this.container) return;
         const panel = document.createElement("div");
         panel.className = "floor-info-panel";
         panel.hidden = true;
