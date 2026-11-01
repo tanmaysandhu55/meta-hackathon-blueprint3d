@@ -105,7 +105,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // 2D Overlay canvas
     const segmentationCanvas = document.getElementById("segmentation-canvas");
-    const segCtx = segmentationCanvas.getContext("2d");
+    const segCtx = segmentationCanvas ? segmentationCanvas.getContext("2d") : null;
     const overlayScale = document.getElementById("overlay-scale");
 
     // JSON Viewer & Actions
@@ -184,8 +184,8 @@ document.addEventListener("DOMContentLoaded", () => {
     function setProcessingBadge(mode) {
         if (!processingModeBadge) return;
         const messages = {
-            MOCK: "MOCK MODE — PREPARED SAMPLE, NOT LIVE AI",
-            DEMO: "PREPARED DEMO — NOT A LIVE AI RESULT",
+            MOCK: "MOCK MODE - PREPARED SAMPLE, NOT LIVE AI",
+            DEMO: "PREPARED DEMO - NOT A LIVE AI RESULT",
             LIVE: "META SAM 3.1 RESULT",
             LOCAL: "LOCAL OPENCV SEGMENTATION",
         };
@@ -194,7 +194,7 @@ document.addEventListener("DOMContentLoaded", () => {
         processingModeBadge.title = activeMode === "MOCK"
             ? "Generated from the prepared sample plan. Uploaded image pixels were not analyzed."
             : activeMode === "LOCAL"
-                ? "OpenCV analyzes plans locally; Meta SAM 3.1 can segment uploads, and Baseten-hosted Muse Spark Open can suggest room labels."
+                ? "OpenCV analyzes plans locally; Meta SAM 3.1 segments uploads, and Meta Muse Spark suggests room labels."
                 : activeMode === "LIVE"
                     ? "At least one segmentation concept was processed by Meta SAM 3.1. Check scene warnings for local fallback concepts."
                 : "Prepared sample data, not a live provider result.";
@@ -202,6 +202,27 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     if (initialProcessingMode === "MOCK") setProcessingBadge(initialProcessingMode);
+    async function initConfigStatusChip() {
+        try {
+            const res = await fetch("/api/config/status");
+            if (!res.ok) return;
+            const data = await res.json();
+            if (!data) return;
+            if (data.live_ready) {
+                setProcessingBadge("LIVE");
+            } else if (data.key_configured && data.mock_mode) {
+                if (processingModeBadge) {
+                    processingModeBadge.textContent = "MOCK MODE (KEY SET)";
+                    processingModeBadge.title = "MODEL_API_KEY is configured, but MOCK_AI=1 is active.";
+                    processingModeBadge.classList.remove("hidden");
+                }
+            }
+        } catch (_) {
+            // graceful ignore
+        }
+    }
+    initConfigStatusChip();
+
 
     let appMessageTimer = null;
     function showMessage(message, kind = "info") {
@@ -387,28 +408,35 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    btnReview2D.addEventListener("click", () => {
-        if (!currentSceneData) {
-            showMessage("Load a demo or plan before reviewing 2D detections.", "info");
-            return;
-        }
-        document.querySelector('[data-tab="2d"]').click();
-    });
+    if (btnReview2D) {
+        btnReview2D.addEventListener("click", () => {
+            if (!currentSceneData) {
+                showMessage("Load a demo or plan before reviewing 2D detections.", "info");
+                return;
+            }
+            const tab2d = document.querySelector('[data-tab="2d"]');
+            if (tab2d) tab2d.click();
+        });
+    }
 
-    btnReviewRoom.addEventListener("click", () => {
-        if (!currentSceneData || !loadedImageElement) {
-            showMessage("Load a demo or upload a plan before editing a room outline.", "info");
-            return;
-        }
-        const rooms = currentSceneData.rooms || [];
-        const room = rooms.find(item => (item.polygon || []).length < 3 || polygonHasSelfIntersection(item.polygon)) || rooms[0];
-        if (!room) {
-            showMessage("There are no room outlines available to edit.", "warning");
-            return;
-        }
-        window.onFloorPlanRoomSelected(room);
-        btnEditBoundary.click();
-    });
+    if (btnReviewRoom) {
+        btnReviewRoom.addEventListener("click", () => {
+            if (!currentSceneData || !loadedImageElement) {
+                showMessage("Load a demo or upload a plan before editing a room outline.", "info");
+                return;
+            }
+            const rooms = currentSceneData.rooms || [];
+            const room = rooms.find(item => (item.polygon || []).length < 3 || polygonHasSelfIntersection(item.polygon)) || rooms[0];
+            if (!room) {
+                showMessage("There are no room outlines available to edit.", "warning");
+                return;
+            }
+            if (typeof window.onFloorPlanRoomSelected === "function") {
+                window.onFloorPlanRoomSelected(room);
+            }
+            if (btnEditBoundary) btnEditBoundary.click();
+        });
+    }
 
     function refreshEditedScene() {
         if (!currentSceneData) return;
@@ -580,25 +608,31 @@ document.addEventListener("DOMContentLoaded", () => {
         routeStatus.textContent = `Route shown through ${doorCount} door${doorCount === 1 ? "" : "s"} and ${floorChanges} floor change${floorChanges === 1 ? "" : "s"}.`;
     }
 
-    btnFocusRoom.addEventListener("click", () => {
-        const room = (currentSceneData?.rooms || []).find(item => item.id === roomSearch.value);
-        if (!room) {
-            routeStatus.textContent = "Load a scene and choose a room first.";
-            return;
-        }
-        viewer.focusRoom(room);
-        if (typeof window.onFloorPlanRoomSelected === "function") {
-            window.onFloorPlanRoomSelected(room);
-        }
-    });
+    if (btnFocusRoom) {
+        btnFocusRoom.addEventListener("click", () => {
+            const room = (currentSceneData?.rooms || []).find(item => item.id === (roomSearch ? roomSearch.value : ""));
+            if (!room) {
+                if (routeStatus) routeStatus.textContent = "Load a scene and choose a room first.";
+                return;
+            }
+            if (viewer) viewer.focusRoom(room);
+            if (typeof window.onFloorPlanRoomSelected === "function") {
+                window.onFloorPlanRoomSelected(room);
+            }
+        });
+    }
 
-    btnShowRoute.addEventListener("click", () => {
-        if (!currentSceneData) {
-            routeStatus.textContent = "Load a scene before creating a route.";
-            return;
-        }
-        showRoomRoute(currentSceneData, routeFrom.value, routeTo.value);
-    });
+    if (btnShowRoute) {
+        btnShowRoute.addEventListener("click", () => {
+            if (!currentSceneData) {
+                if (routeStatus) routeStatus.textContent = "Load a scene before creating a route.";
+                return;
+            }
+            if (routeFrom && routeTo) {
+                showRoomRoute(currentSceneData, routeFrom.value, routeTo.value);
+            }
+        });
+    }
 
     async function requestSceneInsight(kind, button) {
         if (!currentSceneData) {
@@ -738,65 +772,83 @@ document.addEventListener("DOMContentLoaded", () => {
     // -------------------------------------------------------------
     // Slider Events
     // -------------------------------------------------------------
-    inputMpp.addEventListener("input", (e) => {
-        labelMpp.textContent = `${parseFloat(e.target.value).toFixed(3)} m/px`;
-    });
+    if (inputMpp && labelMpp) {
+        inputMpp.addEventListener("input", (e) => {
+            labelMpp.textContent = `${parseFloat(e.target.value).toFixed(3)} m/px`;
+        });
+    }
 
-    chkAutoScale.addEventListener("change", () => {
+    if (chkAutoScale && inputMpp) {
+        chkAutoScale.addEventListener("change", () => {
+            inputMpp.disabled = chkAutoScale.checked;
+            inputMpp.classList.toggle("opacity-40", chkAutoScale.checked);
+        });
         inputMpp.disabled = chkAutoScale.checked;
         inputMpp.classList.toggle("opacity-40", chkAutoScale.checked);
-    });
-    inputMpp.disabled = chkAutoScale.checked;
-    inputMpp.classList.toggle("opacity-40", chkAutoScale.checked);
+    }
 
-    inputWallHeight.addEventListener("input", (e) => {
-        const val = parseFloat(e.target.value).toFixed(1);
-        labelWallHeight.textContent = `${val} m`;
-        viewer.setWallHeight(val);
-    });
+    if (inputWallHeight && labelWallHeight) {
+        inputWallHeight.addEventListener("input", (e) => {
+            const val = parseFloat(e.target.value).toFixed(1);
+            labelWallHeight.textContent = `${val} m`;
+            if (viewer) viewer.setWallHeight(val);
+        });
+    }
 
-    inputWallThickness.addEventListener("input", (e) => {
-        const value = parseFloat(e.target.value);
-        labelWallThickness.textContent = `${value.toFixed(2)} m`;
-    });
-    inputWallThickness.addEventListener("change", e => viewer.setWallThickness(parseFloat(e.target.value)));
+    if (inputWallThickness && labelWallThickness) {
+        inputWallThickness.addEventListener("input", (e) => {
+            const value = parseFloat(e.target.value);
+            labelWallThickness.textContent = `${value.toFixed(2)} m`;
+        });
+        inputWallThickness.addEventListener("change", e => {
+            if (viewer) viewer.setWallThickness(parseFloat(e.target.value));
+        });
+    }
 
     // -------------------------------------------------------------
     // Drag & Drop / File Selection
     // -------------------------------------------------------------
-    dropZone.addEventListener("click", () => fileInput.click());
+    if (dropZone && fileInput) {
+        dropZone.addEventListener("click", () => fileInput.click());
+    }
 
-    fileInput.addEventListener("change", (e) => {
-        if (e.target.files && e.target.files.length) handleFileSelection(Array.from(e.target.files));
-    });
+    if (fileInput) {
+        fileInput.addEventListener("change", (e) => {
+            if (e.target.files && e.target.files.length) handleFileSelection(Array.from(e.target.files));
+        });
+    }
 
-    dropZone.addEventListener("dragover", (e) => {
-        e.preventDefault();
-        dropZone.classList.add("drag-active");
-    });
+    if (dropZone) {
+        dropZone.addEventListener("dragover", (e) => {
+            e.preventDefault();
+            dropZone.classList.add("drag-active");
+        });
 
-    dropZone.addEventListener("dragleave", () => {
-        dropZone.classList.remove("drag-active");
-    });
+        dropZone.addEventListener("dragleave", () => {
+            dropZone.classList.remove("drag-active");
+        });
 
-    dropZone.addEventListener("drop", (e) => {
-        e.preventDefault();
-        dropZone.classList.remove("drag-active");
-        if (e.dataTransfer.files && e.dataTransfer.files.length) handleFileSelection(Array.from(e.dataTransfer.files));
-    });
+        dropZone.addEventListener("drop", (e) => {
+            e.preventDefault();
+            dropZone.classList.remove("drag-active");
+            if (e.dataTransfer.files && e.dataTransfer.files.length) handleFileSelection(Array.from(e.dataTransfer.files));
+        });
+    }
 
-    btnRemoveImage.addEventListener("click", (e) => {
-        e.stopPropagation();
-        selectedFile = null;
-        selectedFiles = [];
-        fileInput.value = "";
-        imagePreviewContainer.classList.add("hidden");
-        dropZonePrompt.classList.remove("hidden");
-        btnGenerate.disabled = true;
-        btnProcessBuilding.classList.add("hidden");
-        buildingUploadStatus.classList.add("hidden");
-        clearMessage();
-    });
+    if (btnRemoveImage) {
+        btnRemoveImage.addEventListener("click", (e) => {
+            e.stopPropagation();
+            selectedFile = null;
+            selectedFiles = [];
+            if (fileInput) fileInput.value = "";
+            if (imagePreviewContainer) imagePreviewContainer.classList.add("hidden");
+            if (dropZonePrompt) dropZonePrompt.classList.remove("hidden");
+            if (btnGenerate) btnGenerate.disabled = true;
+            if (btnProcessBuilding) btnProcessBuilding.classList.add("hidden");
+            if (buildingUploadStatus) buildingUploadStatus.classList.add("hidden");
+            clearMessage();
+        });
+    }
 
     function handleFileSelection(files) {
         const valid = files.filter(file => ["image/png", "image/jpeg", "image/webp"].includes(file.type.toLowerCase()) && file.size <= 10 * 1024 * 1024);
@@ -889,47 +941,54 @@ document.addEventListener("DOMContentLoaded", () => {
     btnViewReset?.addEventListener("click", () => {
         viewer.resetCameraView();
     });
-    levelFilter.addEventListener("change", () => {
-        viewer.setVisibleLevel(levelFilter.value === "all" ? null : levelFilter.value);
-        if (floorPlanImages.length > 1) {
-            const imageIndex = levelFilter.value === "all" ? 0 : Number(levelFilter.value);
-            loadedImageElement = floorPlanImages[imageIndex] || floorPlanImages[0];
-        }
-        if (loadedImageElement) render2DSegmentationCanvas();
-    });
+    if (levelFilter) {
+        levelFilter.addEventListener("change", () => {
+            if (viewer) viewer.setVisibleLevel(levelFilter.value === "all" ? null : levelFilter.value);
+            if (floorPlanImages.length > 1) {
+                const imageIndex = levelFilter.value === "all" ? 0 : Number(levelFilter.value);
+                loadedImageElement = floorPlanImages[imageIndex] || floorPlanImages[0];
+            }
+            if (loadedImageElement) render2DSegmentationCanvas();
+        });
+    }
 
-    btnCutaway.addEventListener("click", () => {
-        isCutawayActive = !isCutawayActive;
-        if (isCutawayActive) {
-            btnCutaway.classList.add("bg-amber-600", "text-white");
-            btnCutaway.classList.remove("bg-slate-800", "text-slate-300");
-            viewer.setWallHeight(1.1, { syncFloors: false }); // Cutaway height only; preserve story spacing.
-            labelWallHeight.textContent = "1.1 m (Cutaway)";
-        } else {
-            btnCutaway.classList.remove("bg-amber-600", "text-white");
-            btnCutaway.classList.add("bg-slate-800", "text-slate-300");
-            const originalHeight = parseFloat(inputWallHeight.value) || 3.0;
-            viewer.setWallHeight(originalHeight, { syncFloors: false });
-            labelWallHeight.textContent = `${originalHeight.toFixed(1)} m`;
-        }
-    });
+    if (btnCutaway) {
+        btnCutaway.addEventListener("click", () => {
+            isCutawayActive = !isCutawayActive;
+            if (isCutawayActive) {
+                btnCutaway.classList.add("bg-amber-600", "text-white");
+                btnCutaway.classList.remove("bg-slate-800", "text-slate-300");
+                if (viewer) viewer.setWallHeight(1.1, { syncFloors: false }); // Cutaway height only; preserve story spacing.
+                if (labelWallHeight) labelWallHeight.textContent = "1.1 m (Cutaway)";
+            } else {
+                btnCutaway.classList.remove("bg-amber-600", "text-white");
+                btnCutaway.classList.add("bg-slate-800", "text-slate-300");
+                const originalHeight = parseFloat(inputWallHeight?.value) || 3.0;
+                if (viewer) viewer.setWallHeight(originalHeight, { syncFloors: false });
+                if (labelWallHeight) labelWallHeight.textContent = `${originalHeight.toFixed(1)} m`;
+            }
+        });
+    }
 
-    chkWalls.addEventListener("change", (e) => viewer.toggleLayer("walls", e.target.checked));
-    if (chkFloors) chkFloors.addEventListener("change", (e) => viewer.toggleLayer("rooms", e.target.checked));
-    if (chkRoof) chkRoof.addEventListener("change", (e) => viewer.toggleLayer("roof", e.target.checked));
-    chkLabels.addEventListener("change", (e) => viewer.toggleLayer("labels", e.target.checked));
-    chkOpenings.addEventListener("change", (e) => {
-        viewer.toggleLayer("doors", e.target.checked);
-        viewer.toggleLayer("windows", e.target.checked);
+    if (chkWalls) chkWalls.addEventListener("change", (e) => viewer?.toggleLayer("walls", e.target.checked));
+    if (chkFloors) chkFloors.addEventListener("change", (e) => viewer?.toggleLayer("rooms", e.target.checked));
+    if (chkRoof) chkRoof.addEventListener("change", (e) => viewer?.toggleLayer("roof", e.target.checked));
+    if (chkLabels) chkLabels.addEventListener("change", (e) => viewer?.toggleLayer("labels", e.target.checked));
+    if (chkOpenings) chkOpenings.addEventListener("change", (e) => {
+        viewer?.toggleLayer("doors", e.target.checked);
+        viewer?.toggleLayer("windows", e.target.checked);
     });
-    chkGrid.addEventListener("change", (e) => viewer.toggleLayer("grid", e.target.checked));
-    chkFurniture.addEventListener("change", (e) => viewer.toggleLayer("furniture", e.target.checked));
+    if (chkGrid) chkGrid.addEventListener("change", (e) => viewer?.toggleLayer("grid", e.target.checked));
+    if (chkFurniture) chkFurniture.addEventListener("change", (e) => viewer?.toggleLayer("furniture", e.target.checked));
 
-    btnWalkthrough.addEventListener("click", () => {
-        const enabled = viewer.toggleWalkthroughMode();
-        btnWalkthrough.setAttribute("aria-pressed", String(enabled));
-        btnWalkthrough.textContent = enabled ? "Exit Walkthrough" : "Walkthrough";
-    });
+    if (btnWalkthrough) {
+        btnWalkthrough.addEventListener("click", () => {
+            if (!viewer) return;
+            const enabled = viewer.toggleWalkthroughMode();
+            btnWalkthrough.setAttribute("aria-pressed", String(enabled));
+            btnWalkthrough.textContent = enabled ? "Exit Walkthrough" : "Walkthrough";
+        });
+    }
     viewer.onWalkthroughChange = enabled => {
         btnWalkthrough.setAttribute("aria-pressed", String(enabled));
         btnWalkthrough.textContent = enabled ? "Exit Walkthrough" : "Walkthrough";
@@ -948,37 +1007,48 @@ document.addEventListener("DOMContentLoaded", () => {
             if (viewer) viewer.walkInside();
         });
     }
-    btnMeasure.addEventListener("click", () => {
-        const enabled = viewer.toggleMeasurementMode();
-        btnMeasure.setAttribute("aria-pressed", String(enabled));
-        btnMeasure.textContent = enabled ? "Stop Measure" : "Measure";
-        measurementPanel.classList.toggle("hidden", !enabled);
-        measurementStatus.textContent = enabled ? "Click a first point in the 3D view." : "Measurement stopped.";
-    });
-    btnClearMeasurement.addEventListener("click", () => {
-        viewer.clearMeasurement();
-        measurementStatus.textContent = "Click a first point to measure.";
-    });
-    viewer.onMeasurementUpdate = message => { measurementStatus.textContent = message; };
-    viewer.onMeasurementModeChange = enabled => {
-        btnMeasure.setAttribute("aria-pressed", String(enabled));
-        btnMeasure.textContent = enabled ? "Stop Measure" : "Measure";
-        measurementPanel.classList.toggle("hidden", !enabled);
-    };
+    if (btnMeasure) {
+        btnMeasure.addEventListener("click", () => {
+            if (!viewer) return;
+            const enabled = viewer.toggleMeasurementMode();
+            btnMeasure.setAttribute("aria-pressed", String(enabled));
+            btnMeasure.textContent = enabled ? "Stop Measure" : "Measure";
+            if (measurementPanel) measurementPanel.classList.toggle("hidden", !enabled);
+            if (measurementStatus) measurementStatus.textContent = enabled ? "Click a first point in the 3D view." : "Measurement stopped.";
+        });
+    }
+    if (btnClearMeasurement) {
+        btnClearMeasurement.addEventListener("click", () => {
+            if (viewer) viewer.clearMeasurement();
+            if (measurementStatus) measurementStatus.textContent = "Click a first point to measure.";
+        });
+    }
+    if (viewer) {
+        viewer.onMeasurementUpdate = message => { if (measurementStatus) measurementStatus.textContent = message; };
+        viewer.onMeasurementModeChange = enabled => {
+            if (btnMeasure) {
+                btnMeasure.setAttribute("aria-pressed", String(enabled));
+                btnMeasure.textContent = enabled ? "Stop Measure" : "Measure";
+            }
+            if (measurementPanel) measurementPanel.classList.toggle("hidden", !enabled);
+        };
+    }
 
-    btnCalibrateScale.addEventListener("click", () => {
-        if (!currentSceneData || !loadedImageElement) {
-            scaleCalibrationStatus.textContent = "Load a floor plan before calibrating scale.";
-            return;
-        }
-        scaleCalibrationActive = true;
-        scaleCalibrationPoints = [];
-        btnCalibrateScale.setAttribute("aria-pressed", "true");
-        btnCalibrateScale.classList.add("calibration-active");
-        btnApplyScale.disabled = true;
-        scaleCalibrationStatus.textContent = "Click the first point, then the second point on the plan.";
-        segmentationCanvas.classList.add("calibration-crosshair");
-    });
+    if (btnCalibrateScale) {
+        btnCalibrateScale.addEventListener("click", () => {
+            if (!currentSceneData || !loadedImageElement) {
+                if (scaleCalibrationStatus) scaleCalibrationStatus.textContent = "Load a floor plan before calibrating scale.";
+                return;
+            }
+            scaleCalibrationActive = true;
+            scaleCalibrationPoints = [];
+            btnCalibrateScale.setAttribute("aria-pressed", "true");
+            btnCalibrateScale.classList.add("calibration-active");
+            if (btnApplyScale) btnApplyScale.disabled = true;
+            if (scaleCalibrationStatus) scaleCalibrationStatus.textContent = "Click the first point, then the second point on the plan.";
+            if (segmentationCanvas) segmentationCanvas.classList.add("calibration-crosshair");
+        });
+    }
 
     segmentationCanvas.addEventListener("click", event => {
         if (!scaleCalibrationActive) return;
@@ -1002,42 +1072,49 @@ document.addEventListener("DOMContentLoaded", () => {
         render2DSegmentationCanvas();
     });
 
-    btnEditBoundary.addEventListener("click", () => {
-        const room = (currentSceneData?.rooms || []).find(item => item.id === selectedRoomId);
-        if (!room || !loadedImageElement || (room.polygon || []).length < 3) {
-            boundaryEditStatus.textContent = "Select a room with a valid outline and its plan image first.";
-            return;
-        }
-        polygonEditActive = true;
-        segmentationCanvas.classList.add("polygon-edit-active");
-        polygonEditUndoStack = [];
-        polygonEditDragIndex = null;
-        boundaryEditControls.classList.remove("hidden");
-        boundaryEditStatus.textContent = "Open 2D Segmentation, then drag a cyan vertex to adjust the outline.";
-        viewer.previewRoomBoundary(room);
-        document.querySelector('[data-tab="2d"]').click();
-        render2DSegmentationCanvas();
-    });
+    if (btnEditBoundary) {
+        btnEditBoundary.addEventListener("click", () => {
+            const room = (currentSceneData?.rooms || []).find(item => item.id === selectedRoomId);
+            if (!room || !loadedImageElement || (room.polygon || []).length < 3) {
+                if (boundaryEditStatus) boundaryEditStatus.textContent = "Select a room with a valid outline and its plan image first.";
+                return;
+            }
+            polygonEditActive = true;
+            if (segmentationCanvas) segmentationCanvas.classList.add("polygon-edit-active");
+            polygonEditUndoStack = [];
+            polygonEditDragIndex = null;
+            if (boundaryEditControls) boundaryEditControls.classList.remove("hidden");
+            if (boundaryEditStatus) boundaryEditStatus.textContent = "Open 2D Segmentation, then drag a cyan vertex to adjust the outline.";
+            if (viewer) viewer.previewRoomBoundary(room);
+            const tab2d = document.querySelector('[data-tab="2d"]');
+            if (tab2d) tab2d.click();
+            render2DSegmentationCanvas();
+        });
+    }
 
-    btnBoundaryUndo.addEventListener("click", () => {
-        const room = (currentSceneData?.rooms || []).find(item => item.id === selectedRoomId);
-        const previous = polygonEditUndoStack.pop();
-        if (!room || !previous) return;
-        room.polygon = previous;
-        btnBoundaryUndo.disabled = polygonEditUndoStack.length === 0;
-        boundaryEditStatus.textContent = "Previous outline restored.";
-        refreshBoundaryScene();
-    });
+    if (btnBoundaryUndo) {
+        btnBoundaryUndo.addEventListener("click", () => {
+            const room = (currentSceneData?.rooms || []).find(item => item.id === selectedRoomId);
+            const previous = polygonEditUndoStack.pop();
+            if (!room || !previous) return;
+            room.polygon = previous;
+            btnBoundaryUndo.disabled = polygonEditUndoStack.length === 0;
+            if (boundaryEditStatus) boundaryEditStatus.textContent = "Previous outline restored.";
+            refreshBoundaryScene();
+        });
+    }
 
-    btnBoundaryDone.addEventListener("click", () => {
-        polygonEditActive = false;
-        segmentationCanvas.classList.remove("polygon-edit-active");
-        polygonEditDragIndex = null;
-        boundaryEditControls.classList.add("hidden");
-        viewer.clearRoomBoundaryPreview();
-        boundaryEditStatus.textContent = "Outline saved and shown on the 3D floor. The cyan edge marks the edit; detected wall solids are a separate geometry layer. Export scene.json or GLB to keep it.";
-        render2DSegmentationCanvas();
-    });
+    if (btnBoundaryDone) {
+        btnBoundaryDone.addEventListener("click", () => {
+            polygonEditActive = false;
+            if (segmentationCanvas) segmentationCanvas.classList.remove("polygon-edit-active");
+            polygonEditDragIndex = null;
+            if (boundaryEditControls) boundaryEditControls.classList.add("hidden");
+            if (viewer) viewer.clearRoomBoundaryPreview();
+            if (boundaryEditStatus) boundaryEditStatus.textContent = "Outline saved and shown on the 3D floor. The cyan edge marks the edit; detected wall solids are a separate geometry layer. Export scene.json or GLB to keep it.";
+            render2DSegmentationCanvas();
+        });
+    }
 
     segmentationCanvas.addEventListener("pointerdown", event => {
         if (!polygonEditActive || scaleCalibrationActive || !selectedRoomId) return;
@@ -1098,16 +1175,20 @@ document.addEventListener("DOMContentLoaded", () => {
     segmentationCanvas.addEventListener("pointerup", finishBoundaryDrag);
     segmentationCanvas.addEventListener("pointercancel", finishBoundaryDrag);
 
-    btnCancelScale.addEventListener("click", () => {
-        scaleCalibrationActive = false;
-        scaleCalibrationPoints = [];
-        btnApplyScale.disabled = true;
-        btnCalibrateScale.setAttribute("aria-pressed", "false");
-        btnCalibrateScale.classList.remove("calibration-active");
-        segmentationCanvas.classList.remove("calibration-crosshair");
-        scaleCalibrationStatus.textContent = "Scale calibration cancelled.";
-        if (loadedImageElement) render2DSegmentationCanvas();
-    });
+    if (btnCancelScale) {
+        btnCancelScale.addEventListener("click", () => {
+            scaleCalibrationActive = false;
+            scaleCalibrationPoints = [];
+            if (btnApplyScale) btnApplyScale.disabled = true;
+            if (btnCalibrateScale) {
+                btnCalibrateScale.setAttribute("aria-pressed", "false");
+                btnCalibrateScale.classList.remove("calibration-active");
+            }
+            if (segmentationCanvas) segmentationCanvas.classList.remove("calibration-crosshair");
+            if (scaleCalibrationStatus) scaleCalibrationStatus.textContent = "Scale calibration cancelled.";
+            if (loadedImageElement) render2DSegmentationCanvas();
+        });
+    }
 
     btnApplyScale.addEventListener("click", () => {
         const knownMeters = Number(knownLength.value);
@@ -1261,7 +1342,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // -------------------------------------------------------------
     // Load Demo Hackathon Floor Plan
     // -------------------------------------------------------------
-    btnLoadDemo.addEventListener("click", async () => {
+    if (btnLoadDemo) btnLoadDemo.addEventListener("click", async () => {
         try {
             btnLoadDemo.disabled = true;
             btnLoadDemo.textContent = "Loading Demo...";
@@ -1293,7 +1374,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
-    btnLoadTwoStoryDemo.addEventListener("click", async () => {
+    if (btnLoadTwoStoryDemo) btnLoadTwoStoryDemo.addEventListener("click", async () => {
         try {
             viewer.showLoadingState();
             btnLoadTwoStoryDemo.disabled = true;
@@ -1323,7 +1404,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // -------------------------------------------------------------
     // Process uploads through a real job/status API.
     // -------------------------------------------------------------
-    btnGenerate.addEventListener("click", async () => {
+    if (btnGenerate) btnGenerate.addEventListener("click", async () => {
         if (!selectedFile) {
             alert("Please select a floor plan image first.");
             return;
@@ -1513,7 +1594,7 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    btnProcessBuilding.addEventListener("click", async () => {
+    if (btnProcessBuilding) btnProcessBuilding.addEventListener("click", async () => {
         if (selectedFiles.length < 2) return;
         btnProcessBuilding.disabled = true;
         btnGenerate.disabled = true;
@@ -1631,7 +1712,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // 2D AI Segmentation Canvas Renderer
     // -------------------------------------------------------------
     function render2DSegmentationCanvas() {
-        if (!loadedImageElement) return;
+        if (!loadedImageElement || !segmentationCanvas || !segCtx) return;
 
         const img = loadedImageElement;
         segmentationCanvas.width = img.naturalWidth || 800;
@@ -1826,7 +1907,7 @@ document.addEventListener("DOMContentLoaded", () => {
         [editRoomName, editRoomType, btnSaveRoomEdit, btnDeleteRoom, btnEditBoundary].forEach(control => { if (control) control.disabled = false; });
     };
 
-    btnSaveRoomEdit.addEventListener("click", () => {
+    if (btnSaveRoomEdit) btnSaveRoomEdit.addEventListener("click", () => {
         const room = (currentSceneData?.rooms || []).find(item => item.id === selectedRoomId);
         const name = editRoomName.value.trim();
         if (!room || !name) {
@@ -1839,7 +1920,7 @@ document.addEventListener("DOMContentLoaded", () => {
         showMessage("Room edit saved to the scene. Export scene.json or GLB to keep it.");
     });
 
-    btnDeleteRoom.addEventListener("click", () => {
+    if (btnDeleteRoom) btnDeleteRoom.addEventListener("click", () => {
         if (!currentSceneData || !selectedRoomId) return;
         const deletedId = selectedRoomId;
         currentSceneData.rooms = currentSceneData.rooms.filter(room => room.id !== deletedId);
@@ -1854,7 +1935,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // -------------------------------------------------------------
     // Copy & Download scene.json
     // -------------------------------------------------------------
-    btnCopyJson.addEventListener("click", () => {
+    if (btnCopyJson) btnCopyJson.addEventListener("click", () => {
         if (!currentSceneData) return;
         navigator.clipboard.writeText(JSON.stringify(currentSceneData, null, 2))
             .then(() => {
@@ -1865,7 +1946,7 @@ document.addEventListener("DOMContentLoaded", () => {
             .catch(err => alert("Copy failed: " + err));
     });
 
-    btnDownloadJson.addEventListener("click", () => {
+    if (btnDownloadJson) btnDownloadJson.addEventListener("click", () => {
         if (!currentSceneData) return;
         const jsonStr = JSON.stringify(currentSceneData, null, 2);
         const blob = new Blob([jsonStr], { type: "application/json" });
