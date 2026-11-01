@@ -39,7 +39,6 @@ def create_hero_png():
 
     # Palette
     ink = (26, 25, 23, 255)            # #1A1917
-    ink_shadow = (26, 25, 23, 50)       # Drop shadow
     wall_top = (231, 227, 218, 255)     # #E7E3DA
     wall_left = (180, 175, 165, 255)    # Shaded left face
     wall_right = (205, 200, 190, 255)   # Shaded right face

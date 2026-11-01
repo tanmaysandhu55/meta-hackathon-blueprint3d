@@ -40,7 +40,7 @@ for dirpath, dirnames, filenames in os.walk(root_dir):
                             'codepoint': codepoint,
                             'content': line.strip()
                         })
-        except Exception as e:
+        except Exception:
             pass
 
 print(f"=== TOTAL HITS: {len(hits)} ===")

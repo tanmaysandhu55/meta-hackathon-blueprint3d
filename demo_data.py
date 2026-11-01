@@ -5,9 +5,7 @@ so beginners can test and demo the 3D viewer immediately, even before configurin
 their partner-cloud API keys.
 """
 
-import io
 import os
-import base64
 import copy
 import json
 

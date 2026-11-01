@@ -6,7 +6,6 @@ Provides structured metadata for the 'Plans Processed' work table.
 
 import json
 import os
-import glob
 
 def generate_index():
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
