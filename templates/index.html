@@ -325,303 +325,317 @@
                 </div>
             </div>
 
-            <div class="flex items-center gap-2">
-                <div id="processing-mode-badge" class="hidden rounded-none px-3 py-1 text-xs font-bold uppercase tracking-wider" role="status" aria-live="polite"></div>
-                <div class="status-badge px-3 py-1 text-xs font-bold uppercase tracking-wider {% if processing_mode == 'LIVE' %}is-live{% else %}is-offline{% endif %}">
-                    {% if processing_mode == 'MOCK' %}MOCK MODE{% else %}{% if sam_ready %}SAM 3.1 segmentation{% else %}Local OpenCV segmentation{% endif %} · {% if labeling_ready %}Muse labels on{% else %}Generic labels{% endif %}{% endif %}
-                </div>
-            </div>
+
         </div>
 
         <!-- Main App Layout: Sidebar (Left) + Viewport Tabs (Right) -->
         <div class="flex min-h-0 flex-1 overflow-hidden">
 
             <!-- Left Sidebar: Controls & Upload -->
-            <aside aria-label="Floor plan controls" class="studio-sidebar h-full min-h-0 w-80 max-w-[45vw] shrink-0 overflow-y-auto overscroll-contain xl:w-96">
-                <div class="space-y-4 p-4 pb-10">
+            <!-- Left Sidebar: Controls & Upload -->
+            <aside id="sidebar" aria-label="Floor plan controls" class="studio-sidebar relative flex flex-col h-full min-h-0 shrink-0">
+                <!-- Mobile Drag Handle -->
+                <div id="sidebar-sheet-handle" class="sidebar-sheet-handle"></div>
 
-                    <!-- 1. Quick Hackathon Demo Action -->
-                    <div>
-                        <button id="btn-load-demo" type="button" class="flex w-full items-center justify-center gap-2 px-4 py-2.5 text-xs font-bold uppercase tracking-wider active:scale-95">
-                            <span>⚡ Load Hackathon Demo Plan</span>
-                        </button>
-                        <button id="btn-load-two-story-demo" type="button" class="mt-2 flex w-full items-center justify-center gap-2 px-4 py-2 text-xs font-bold uppercase tracking-wider active:scale-95">
-                            <span>🏢 Load Two-Story Demo</span>
-                        </button>
-                        <button id="btn-sidebar-evac" type="button" class="mt-2 flex w-full items-center justify-center gap-2 px-4 py-2 text-xs font-bold uppercase tracking-wider active:scale-95">
-                            <span>Preview Egress Connectivity</span>
-                        </button>
-                        <p class="mono-caption text-center mt-1.5" style="font-size: 10px;">
-                            Prepared one- and two-story examples work without API keys.
-                        </p>
+                <!-- Desktop Collapse Toggle -->
+                <button id="btn-toggle-sidebar" type="button" aria-label="Toggle sidebar collapse" aria-expanded="true" class="sidebar-collapse-toggle">‹</button>
+
+                <!-- 1. Sticky Header -->
+                <div class="sidebar-header shrink-0">
+                    <div class="flex items-center gap-2">
+                        <select id="sidebar-samples-select" class="sidebar-select flex-1" aria-label="Prepared sample plans">
+                            <option value="" disabled selected>Samples...</option>
+                            <option value="demo">Hackathon demo plan</option>
+                            <option value="two-story">Two-story demo</option>
+                            <option value="evac">Preview egress connectivity</option>
+                        </select>
+                        <div class="relative">
+                            <button id="btn-judge-help" type="button" class="btn-help-popover" aria-label="Judge walkthrough steps" aria-expanded="false" title="Walkthrough steps">?</button>
+                            <div id="popover-judge-walkthrough" class="judge-walkthrough-popover hidden" role="dialog" aria-labelledby="popover-walkthrough-title">
+                                <div class="flex items-center justify-between border-b border-hairline pb-2 mb-2">
+                                    <span id="popover-walkthrough-title" class="mono-label text-[10.5px]">Judge Walkthrough</span>
+                                    <button id="btn-close-walkthrough-popover" type="button" class="text-xs px-1.5 py-0.5 border border-hairline" aria-label="Close walkthrough popover">✕</button>
+                                </div>
+                                <ol class="list-decimal space-y-1.5 pl-4 text-[11px] leading-relaxed">
+                                    <li>Load the one-story demo, then compare its 2D detections with the original plan.</li>
+                                    <li>Use the review checklist; edit a room outline if needed.</li>
+                                    <li>Load the two-story demo and inspect the story selector and stairs.</li>
+                                    <li>Show a route, area summary, and export.</li>
+                                </ol>
+                                <p class="mt-2.5 mono-caption text-[10px]">Both demos and the review flow work without API keys.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-2 flex items-center">
+                        <div id="processing-mode-badge" class="sidebar-status-chip truncate" role="status" aria-live="polite" title="{% if sam_ready %}Meta SAM 3.1 ready{% else %}OpenCV analyzes plans locally{% endif %}">{% if processing_mode == 'MOCK' %}MOCK MODE{% elif sam_ready %}SAM 3.1 SEGMENTATION{% else %}LOCAL OPENCV SEGMENTATION{% endif %}</div>
+                    </div>
+                    <!-- Hidden DOM hooks for existing demo buttons -->
+                    <div class="hidden" aria-hidden="true">
+                        <button id="btn-load-demo" type="button"></button>
+                        <button id="btn-load-two-story-demo" type="button"></button>
+                        <button id="btn-sidebar-evac" type="button"></button>
+                    </div>
+                </div>
+
+                <!-- 2. Sticky Tab Bar -->
+                <div class="sidebar-tab-bar shrink-0" role="tablist" aria-label="Sidebar navigation">
+                    <button id="sidebar-tab-input" role="tab" aria-selected="true" aria-controls="sidebar-panel-input" tabindex="0" class="sidebar-tab-btn active" data-tab="input">INPUT</button>
+                    <button id="sidebar-tab-review" role="tab" aria-selected="false" aria-controls="sidebar-panel-review" tabindex="-1" class="sidebar-tab-btn" data-tab="review">REVIEW</button>
+                    <button id="sidebar-tab-explore" role="tab" aria-selected="false" aria-controls="sidebar-panel-explore" tabindex="-1" class="sidebar-tab-btn" data-tab="explore">EXPLORE</button>
+                    <button id="sidebar-tab-tune" role="tab" aria-selected="false" aria-controls="sidebar-panel-tune" tabindex="-1" class="sidebar-tab-btn" data-tab="tune">TUNE</button>
+                </div>
+
+                <!-- 3. Scrolling Content Container -->
+                <div id="sidebar-content" class="sidebar-content">
+                    <!-- Tab 1: INPUT -->
+                    <div id="sidebar-panel-input" role="tabpanel" aria-labelledby="sidebar-tab-input" class="sidebar-panel space-y-4">
+                        <div class="sidebar-block">
+                            <div class="block-title">Upload Floor Plan</div>
+                            <div id="drop-zone" class="drop-zone group cursor-pointer p-4 text-center transition-colors">
+                                <input id="file-input" type="file" accept="image/png, image/jpeg, image/webp" multiple class="hidden">
+                                <div id="drop-zone-prompt" class="space-y-2">
+                                    <div class="mx-auto flex h-10 w-10 items-center justify-center text-[var(--ink)]">
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                                        </svg>
+                                    </div>
+                                    <p class="text-xs font-semibold">Click to browse or drag & drop</p>
+                                    <p class="mono-caption text-[10px]">PNG, JPG, or WEBP (up to 10MB). Select multiple plans in ground-to-top order.</p>
+                                </div>
+                                <div id="image-preview-container" class="hidden relative">
+                                    <img id="image-preview" src="" alt="Floor Plan Preview" class="max-h-40 mx-auto object-contain">
+                                    <button id="btn-remove-image" type="button" aria-label="Remove uploaded floor plan" class="btn-remove-image">✕</button>
+                                </div>
+                            </div>
+                            <button id="btn-generate" type="button" disabled class="btn-primary-tab w-full mt-3">
+                                <span>{% if processing_mode == 'MOCK' %}Run Mock Pipeline{% elif sam_ready %}Process with Meta AI{% else %}Process locally{% endif %}</span>
+                            </button>
+                            <button id="btn-process-building" type="button" disabled class="btn-outline-tab mt-2 hidden w-full disabled:cursor-not-allowed disabled:opacity-40">Process selected plans as stories</button>
+                            <p id="building-upload-status" class="hidden text-[10px] leading-relaxed mt-1.5" aria-live="polite"></p>
+                            <div id="progress-container" class="hidden mt-3 space-y-1.5">
+                                <div class="w-full h-1.5 overflow-hidden" style="background: var(--ground-2);">
+                                    <div id="progress-bar" class="h-1.5 w-0 transition-[width] duration-300" style="background: var(--ink);"></div>
+                                </div>
+                                <p id="progress-status" class="mono-caption text-center text-[10.5px]">Starting AI pipeline...</p>
+                            </div>
+                        </div>
+
+                        <details class="sidebar-accordion">
+                            <summary class="cursor-pointer font-mono text-[10.5px] uppercase tracking-wider flex items-center justify-between text-[var(--muted)]">
+                                <span>Needs API key</span>
+                                <span class="badge-locked">LOCKED</span>
+                            </summary>
+                            <div class="space-y-3 pt-3">
+                                <div class="space-y-1.5">
+                                    <label for="muse-image-prompt" class="block text-xs font-semibold">Create a draft with Muse</label>
+                                    <p class="mono-caption text-[11px]">Describe a layout; review generated drawing before processing.</p>
+                                    <textarea id="muse-image-prompt" maxlength="500" rows="2" placeholder="One-story home with two bedrooms, a kitchen, and central hallway" class="sidebar-input w-full" {% if not image_generation_ready %}disabled{% endif %}></textarea>
+                                    <button id="btn-muse-image" type="button" class="btn-outline-tab w-full" {% if not image_generation_ready %}disabled{% endif %}>Generate draft floor plan</button>
+                                    <p id="muse-image-status" class="mono-caption text-[10px]" aria-live="polite">{% if image_generation_ready %}Muse Image is ready.{% else %}Available after adding META_API_KEY.{% endif %}</p>
+                                </div>
+                                <div class="space-y-1.5 border-t border-hairline pt-2">
+                                    <label for="map-audio-input" class="block text-xs font-semibold">Ask by voice (WAV)</label>
+                                    <input id="map-audio-input" type="file" accept="audio/wav,.wav" class="sidebar-input w-full text-[10px]" {% if not voice_transcription_ready %}disabled{% endif %}>
+                                    <button id="btn-transcribe-map" type="button" class="btn-outline-tab w-full" {% if not voice_transcription_ready %}disabled{% endif %}>Transcribe question</button>
+                                </div>
+                            </div>
+                        </details>
                     </div>
 
-                    <!-- Area Summary -->
-                    <section id="area-summary-panel" class="studio-card space-y-2 p-3.5" aria-labelledby="area-summary-title">
-                        <h2 id="area-summary-title" class="mono-label">Area Summary</h2>
-                        <p id="area-summary-total" class="font-mono text-xs">Load a plan to calculate areas.</p>
-                        <div class="space-y-2 border border-hairline p-2 text-[11px] leading-relaxed">
-                            <div id="map-quality-report" role="status" aria-live="polite">Readiness checks appear after loading a scene.</div>
-                            <ul id="map-quality-checks" class="space-y-1" aria-label="Plan review checklist"></ul>
-                            <ul id="map-quality-warnings" class="space-y-1" aria-label="Items to review"></ul>
-                            <div class="flex flex-wrap gap-1.5 pt-1">
-                                <button id="btn-ai-plan-review" type="button" class="px-2 py-1 text-[10px] font-semibold">AI plan review</button>
-                                <button id="btn-building-summary" type="button" class="px-2 py-1 text-[10px] font-semibold">Summarize building</button>
-                                <button id="btn-review-2d" type="button" class="px-2 py-1 text-[10px] font-semibold">Review 2D detections</button>
-                                <button id="btn-review-room" type="button" class="px-2 py-1 text-[10px] font-semibold">Edit a room outline</button>
+                    <!-- Tab 2: REVIEW -->
+                    <div id="sidebar-panel-review" role="tabpanel" aria-labelledby="sidebar-tab-review" class="sidebar-panel hidden space-y-4">
+                        <div id="area-summary-panel" class="sidebar-block space-y-3">
+                            <h2 id="area-summary-title" class="hidden">Area Summary</h2>
+                            <h2 id="area-summary-total" class="font-serif text-[20px] leading-tight text-[var(--ink)]">Load a plan to calculate areas.</h2>
+                            <div class="checklist-section space-y-1.5 text-[12.5px]">
+                                <div id="map-quality-report" role="status" aria-live="polite" class="checklist-item text-[12.5px] text-[var(--secondary-ink)]">Readiness checks appear after loading a scene.</div>
+                                <ul id="map-quality-checks" class="space-y-1 checklist-list" aria-label="Plan review checklist"></ul>
+                                <ul id="map-quality-warnings" class="space-y-1 checklist-list" aria-label="Items to review"></ul>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2 pt-1">
+                                <button id="btn-ai-plan-review" type="button" class="btn-primary-tab text-xs">Plan review</button>
+                                <button id="btn-building-summary" type="button" class="btn-outline-tab text-xs">Summarize</button>
+                                <button id="btn-review-2d" type="button" class="btn-outline-tab text-xs">2D detections</button>
+                                <button id="btn-review-room" type="button" class="btn-outline-tab text-xs">Edit outline</button>
                             </div>
                             <div id="scene-insight-result" class="hidden border-t border-hairline pt-2 text-xs leading-relaxed" role="status" aria-live="polite"></div>
-                        </div>
-                        <details>
-                            <summary class="cursor-pointer text-xs font-semibold">Per-room areas</summary>
-                            <ul id="area-summary-rooms" class="mt-2 max-h-48 space-y-1 overflow-y-auto text-xs"></ul>
-                        </details>
-                    </section>
-
-                    <details class="studio-card p-3.5" open>
-                        <summary class="cursor-pointer mono-label">Quick judge walkthrough</summary>
-                        <ol class="mt-2 list-decimal space-y-1 pl-4 text-[11px] leading-relaxed">
-                            <li>Load the one-story demo, then compare its 2D detections with the original plan.</li>
-                            <li>Use the review checklist; edit a room outline if needed.</li>
-                            <li>Load the two-story demo and inspect the story selector and stairs.</li>
-                            <li>Show a route, area summary, and export.</li>
-                        </ol>
-                        <p class="mt-2 mono-caption" style="font-size: 10px;">Both demos and the review flow work without API keys.</p>
-                    </details>
-
-                    {% if not sam_ready or not labeling_ready %}
-                    <div class="studio-card p-3 text-xs leading-relaxed">
-                        <strong class="block mb-1">{% if sam_ready %}SAM segmentation ready{% else %}Local segmentation ready{% endif %}</strong>
-                        {% if sam_ready %}SAM 3.1 will segment uploads.{% else %}Uploads use local OpenCV until a separate Meta API key is configured.{% endif %}
-                        {% if not labeling_ready %}Room labels use generic names until Baseten key is configured.{% endif %}
-                    </div>
-                    {% endif %}
-
-                    <div id="app-message" role="status" aria-live="polite" class="hidden border border-hairline p-3 text-xs leading-relaxed"></div>
-
-                    <!-- 2. Image Upload Card -->
-                    <div class="studio-card space-y-3 p-3.5">
-                        <label class="mono-label block">Upload 2D Floor Plan</label>
-
-                        <!-- Drop Zone -->
-                        <div id="drop-zone" class="group cursor-pointer p-4 text-center transition-colors">
-                            <input id="file-input" type="file" accept="image/png, image/jpeg, image/webp" multiple class="hidden">
-                            
-                            <div id="drop-zone-prompt" class="space-y-2">
-                                <div class="mx-auto flex h-10 w-10 items-center justify-center text-[var(--ink)]">
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                                    </svg>
-                                </div>
-                                <p class="text-xs font-semibold">Click to browse or drag & drop</p>
-                                <p class="mono-caption" style="font-size: 10px;">PNG, JPG, or WEBP (up to 10MB). Select multiple plans in ground-to-top order.</p>
-                            </div>
-
-                            <div id="image-preview-container" class="hidden relative">
-                                <img id="image-preview" src="" alt="Floor Plan Preview" class="max-h-40 mx-auto object-contain">
-                                <button id="btn-remove-image" type="button" aria-label="Remove uploaded floor plan" class="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center text-xs">
-                                    ✕
-                                </button>
-                            </div>
-                        </div>
-                        <button id="btn-process-building" type="button" disabled class="mt-2 hidden w-full px-4 py-2 text-xs font-bold uppercase tracking-wider disabled:cursor-not-allowed disabled:opacity-40">Process selected plans as stories</button>
-                        <p id="building-upload-status" class="hidden text-[10px] leading-relaxed" aria-live="polite"></p>
-                    </div>
-
-                    <!-- Muse Image Draft Section -->
-                    <section class="studio-card space-y-2 p-3.5" aria-labelledby="muse-image-title">
-                        <h2 id="muse-image-title" class="mono-label">Create a draft with Muse Image</h2>
-                        <p class="mono-body" style="font-size: 11px;">Describe a layout; review generated drawing before processing.</p>
-                        <textarea id="muse-image-prompt" maxlength="500" rows="2" placeholder="One-story home with two bedrooms, a kitchen, and central hallway" class="w-full px-2 py-2 text-xs" {% if not image_generation_ready %}disabled{% endif %}></textarea>
-                        <button id="btn-muse-image" type="button" class="w-full px-3 py-2 text-xs font-bold uppercase tracking-wider" {% if not image_generation_ready %}disabled{% endif %}>Generate draft floor plan</button>
-                        <p id="muse-image-status" class="mono-caption" style="font-size: 10px;" aria-live="polite">{% if image_generation_ready %}Muse Image is ready.{% else %}Available after adding META_API_KEY.{% endif %}</p>
-                    </section>
-
-                    <!-- 3. Spatial Calibration Sliders -->
-                    <div class="studio-card space-y-3 p-3.5">
-                        <div class="flex items-center justify-between">
-                            <label class="mono-label">Spatial Calibration</label>
-                            <span class="mono-caption px-1.5 py-0.5 border border-hairline">scene.json</span>
-                        </div>
-
-                        <!-- Meters Per Pixel -->
-                        <div class="space-y-1">
-                            <div class="flex justify-between text-xs">
-                                <span>Scale (Meters / Pixel)</span>
-                                <span id="label-mpp" class="font-mono font-bold">0.020 m/px</span>
-                            </div>
-                            <input id="input-mpp" type="range" min="0.005" max="0.08" step="0.005" value="0.02" class="w-full cursor-pointer">
-                            <label class="flex items-center gap-2 text-[11px]">
-                                <input id="chk-auto-scale" type="checkbox" checked>
-                                <span>Estimate scale from detected doors (0.9 m wide)</span>
-                            </label>
-                        </div>
-
-                        <!-- Wall Height -->
-                        <div class="space-y-1">
-                            <div class="flex justify-between text-xs">
-                                <span>Wall Height</span>
-                                <span id="label-wall-height" class="font-mono font-bold">3.0 m</span>
-                            </div>
-                            <input id="input-wall-height" type="range" min="0.8" max="5.0" step="0.1" value="3.0" class="w-full cursor-pointer">
-                        </div>
-
-                        <!-- Wall Thickness -->
-                        <div class="space-y-1">
-                            <div class="flex justify-between text-xs">
-                                <span>Wall Thickness</span>
-                                <span id="label-wall-thickness" class="font-mono font-bold">0.20 m</span>
-                            </div>
-                            <input id="input-wall-thickness" type="range" min="0.1" max="0.5" step="0.02" value="0.2" class="w-full cursor-pointer">
+                            <details class="sidebar-accordion">
+                                <summary class="cursor-pointer font-mono text-[10.5px] uppercase tracking-wider text-[var(--muted)]">Per-room areas</summary>
+                                <ul id="area-summary-rooms" class="mt-2 max-h-48 space-y-1 overflow-y-auto text-xs"></ul>
+                            </details>
                         </div>
                     </div>
 
-                    <!-- Room search and door-based route -->
-                    <div class="studio-card space-y-2.5 p-3.5">
-                        <label class="mono-label block">Find and Route</label>
-                        <div class="flex gap-2">
-                            <select id="room-search" class="min-w-0 flex-1 px-2 py-1.5 text-xs">
-                                <option value="">Choose a room to focus</option>
-                            </select>
-                            <button id="btn-focus-room" type="button" class="px-3 text-xs font-bold uppercase tracking-wider">Focus</button>
-                        </div>
-                        <div class="grid grid-cols-2 gap-2">
-                            <select id="route-from" aria-label="Route from room" class="min-w-0 px-2 py-1.5 text-xs">
-                                <option value="">From room</option>
-                            </select>
-                            <select id="route-to" aria-label="Route to room" class="min-w-0 px-2 py-1.5 text-xs">
-                                <option value="">To room</option>
-                            </select>
-                        </div>
-                        <button id="btn-show-route" type="button" class="w-full px-3 py-2 text-xs font-bold uppercase tracking-wider">Show door-based route</button>
-                        <p id="route-status" role="status" class="mono-caption" style="font-size: 10px;">Load a scene to search rooms and route through detected doors.</p>
-                    </div>
-
-                    <!-- Ask this map -->
-                    <section class="studio-card space-y-2.5 p-3.5" aria-labelledby="map-assistant-title">
-                        <h2 id="map-assistant-title" class="mono-label">Ask this map</h2>
-                        <form id="map-assistant-form" class="space-y-2">
-                            <input id="map-assistant-question" type="text" maxlength="500" placeholder="Where is the computer lab?" class="w-full px-2 py-1.5 text-xs" required>
-                            <button id="map-assistant-submit" type="submit" class="w-full px-3 py-1.5 text-xs font-bold uppercase tracking-wider">Ask map assistant</button>
-                        </form>
-                        <div class="space-y-1.5 border-t border-hairline pt-2">
-                            <label for="map-audio-input" class="block mono-caption">Ask by voice (WAV)</label>
-                            <input id="map-audio-input" type="file" accept="audio/wav,.wav" class="w-full text-[10px]" {% if not voice_transcription_ready %}disabled{% endif %}>
-                            <button id="btn-transcribe-map" type="button" class="w-full px-3 py-1 text-xs font-bold uppercase tracking-wider" {% if not voice_transcription_ready %}disabled{% endif %}>Transcribe question</button>
-                        </div>
-                        <p id="map-assistant-provider" class="mono-caption" style="font-size: 10px;" aria-live="polite">{% if labeling_ready %}Baseten Muse Spark Open{% else %}Offline scene lookup{% endif %}</p>
-                        <p id="map-assistant-answer" class="hidden border border-hairline p-2 text-xs leading-relaxed" role="status" aria-live="polite"></p>
-                    </section>
-
-                    <!-- 4. Generate Button & Progress -->
-                    <div>
-                        <button id="btn-generate" type="button" disabled class="flex w-full items-center justify-center gap-2 px-4 py-3 text-xs font-bold uppercase tracking-wider disabled:cursor-not-allowed disabled:opacity-40">
-                            <span>{% if processing_mode == 'MOCK' %}🧪 Run Mock Pipeline{% elif sam_ready %}✨ Process with Meta AI{% else %}⚙️ Process locally{% endif %}</span>
-                        </button>
-
-                        <div id="progress-container" class="hidden mt-3 space-y-1.5">
-                            <div class="w-full h-1.5 overflow-hidden" style="background: var(--ground-2);">
-                                <div id="progress-bar" class="h-1.5 w-0 transition-[width] duration-300" style="background: var(--ink);"></div>
-                            </div>
-                            <p id="progress-status" class="mono-caption text-center">Starting AI pipeline...</p>
-                        </div>
-                    </div>
-
-                    <!-- 5. 3D Layers Checklist -->
-                    <div class="studio-card space-y-2 p-3.5">
-                        <label class="mono-label block mb-1">3D Layers Visibility</label>
-                        <div class="grid grid-cols-2 gap-2 text-xs">
-                            <label class="flex items-center space-x-2 cursor-pointer">
-                                <input id="chk-walls" type="checkbox" checked>
-                                <span>Walls (3D)</span>
-                            </label>
-                            <label class="flex items-center space-x-2 cursor-pointer">
-                                <input id="chk-floors" type="checkbox" checked>
-                                <span>Floor Slabs</span>
-                            </label>
-                            <label class="flex items-center space-x-2 cursor-pointer">
-                                <input id="chk-roof" type="checkbox">
-                                <span>Roof</span>
-                            </label>
-                            <label class="flex items-center space-x-2 cursor-pointer">
-                                <input id="chk-labels" type="checkbox" checked>
-                                <span>Room Badges</span>
-                            </label>
-                            <label class="flex items-center space-x-2 cursor-pointer">
-                                <input id="chk-openings" type="checkbox" checked>
-                                <span>Doors & Windows</span>
-                            </label>
-                            <label class="flex items-center space-x-2 cursor-pointer col-span-2">
-                                <input id="chk-grid" type="checkbox" checked>
-                                <span>1-Meter Architectural Grid</span>
-                            </label>
-                            <label class="flex items-center space-x-2 cursor-pointer col-span-2">
-                                <input id="chk-furniture" type="checkbox">
-                                <span>Furniture & Props</span>
-                            </label>
-                        </div>
-                    </div>
-
-                    <!-- 6. Room Inspector Card -->
-                    <div class="studio-card p-3.5">
-                        <div class="flex items-center justify-between mb-2">
-                            <label class="mono-label">Room Inspector</label>
-                            <span class="mono-caption">Click room in 3D</span>
-                        </div>
-
-                        <div id="room-inspector-empty" class="mono-body text-center py-4 text-xs">
-                            Click on any room floor slab in the 3D viewer to inspect its architectural data.
-                        </div>
-
-                        <div id="room-inspector-card" class="hidden space-y-2 text-xs">
-                            <div class="flex items-center justify-between border-b border-hairline pb-2">
-                                <h3 id="inspector-title" class="font-bold text-sm">Room Name</h3>
-                                <span id="inspector-type" class="border border-hairline px-2 py-0.5 text-[10px] font-bold uppercase">CLASSROOM</span>
-                            </div>
-                            <div class="space-y-1.5 pt-1">
-                                <div class="flex justify-between">
-                                    <span>Confidence:</span>
-                                    <span id="inspector-conf" class="font-mono">95%</span>
-                                </div>
-                                <div class="flex justify-between">
-                                    <span>Calculated Area:</span>
-                                    <span id="inspector-area" class="font-mono font-bold">48.0 m²</span>
-                                </div>
-                                <div class="flex justify-between">
-                                    <span>Boundary:</span>
-                                    <span id="inspector-points" class="font-mono">4 Vertices</span>
-                                </div>
-                                <div class="flex justify-between">
-                                    <span>Connected Doors:</span>
-                                    <span id="inspector-doors" class="font-mono">d1, d2</span>
-                                </div>
-                                <label for="edit-room-name" class="block pt-2 font-semibold">Room name</label>
-                                <input id="edit-room-name" type="text" maxlength="100" class="w-full px-2 py-1 text-xs" disabled>
-                                <label for="edit-room-type" class="block font-semibold">Room type</label>
-                                <select id="edit-room-type" class="w-full px-2 py-1 text-xs" disabled>
-                                    <option>classroom</option><option>lab</option><option>corridor</option><option>restroom</option><option>stairs</option><option>elevator</option><option>entrance</option><option>bedroom</option><option>office</option><option>kitchen</option><option>living_room</option><option>room</option><option>other</option>
+                    <!-- Tab 3: EXPLORE -->
+                    <div id="sidebar-panel-explore" role="tabpanel" aria-labelledby="sidebar-tab-explore" class="sidebar-panel hidden space-y-4">
+                        <div class="sidebar-block">
+                            <div class="block-title">Find a room</div>
+                            <div class="flex gap-2">
+                                <select id="room-search" class="sidebar-select min-w-0 flex-1">
+                                    <option value="">Choose a room to focus</option>
                                 </select>
-                                <div class="flex gap-2 pt-1">
-                                    <button id="btn-save-room-edit" type="button" class="flex-1 px-2 py-1.5 text-xs font-semibold" disabled>Save edit</button>
-                                    <button id="btn-delete-room" type="button" class="px-2 py-1.5 text-xs font-semibold" disabled>Delete room</button>
+                                <button id="btn-focus-room" type="button" class="btn-outline-tab shrink-0 px-4">Focus</button>
+                            </div>
+                        </div>
+
+                        <div class="sidebar-block">
+                            <div class="block-title">Route</div>
+                            <div class="grid grid-cols-2 gap-2">
+                                <select id="route-from" aria-label="Route from room" class="sidebar-select min-w-0">
+                                    <option value="">From room</option>
+                                </select>
+                                <select id="route-to" aria-label="Route to room" class="sidebar-select min-w-0">
+                                    <option value="">To room</option>
+                                </select>
+                            </div>
+                            <button id="btn-show-route" type="button" class="btn-primary-tab w-full mt-2">Show door-based route</button>
+                            <p id="route-status" role="status" class="mono-caption mt-1.5" style="font-size: 10.5px;">Load a scene to search rooms and route through detected doors.</p>
+                        </div>
+
+                        <section class="sidebar-block" aria-labelledby="map-assistant-title">
+                            <h2 id="map-assistant-title" class="block-title">Ask this map</h2>
+                            <form id="map-assistant-form" class="space-y-2">
+                                <div class="flex gap-2">
+                                    <input id="map-assistant-question" type="text" maxlength="500" placeholder="Where is the computer lab?" class="sidebar-input min-w-0 flex-1" required>
+                                    <button id="map-assistant-submit" type="submit" class="btn-outline-tab shrink-0 px-3">Ask</button>
                                 </div>
-                                <button id="btn-edit-boundary" type="button" class="w-full px-2 py-1.5 text-xs font-semibold" disabled>Edit room outline</button>
-                                <div id="boundary-edit-controls" class="hidden space-y-1.5">
-                                    <p id="boundary-edit-status" class="mono-caption" aria-live="polite">Drag a highlighted point in 2D tab.</p>
-                                    <div class="flex gap-2">
-                                        <button id="btn-boundary-undo" type="button" class="flex-1 px-2 py-1 text-xs" disabled>Undo</button>
-                                        <button id="btn-boundary-done" type="button" class="flex-1 px-2 py-1 text-xs font-semibold">Finish outline</button>
+                            </form>
+                            <p id="map-assistant-provider" class="mono-caption mt-1.5" style="font-size: 10px;" aria-live="polite">{% if labeling_ready %}Baseten Muse Spark Open{% else %}Offline scene lookup{% endif %}</p>
+                            <p id="map-assistant-answer" class="hidden border border-hairline p-2 text-xs leading-relaxed mt-2" role="status" aria-live="polite"></p>
+                        </section>
+                    </div>
+
+                    <!-- Tab 4: TUNE -->
+                    <div id="sidebar-panel-tune" role="tabpanel" aria-labelledby="sidebar-tab-tune" class="sidebar-panel hidden space-y-4">
+                        <div class="sidebar-block">
+                            <div class="block-title">Spatial Calibration</div>
+                            <div class="space-y-3">
+                                <div class="space-y-1">
+                                    <div class="flex justify-between text-xs">
+                                        <span>Scale (Meters / Pixel)</span>
+                                        <span id="label-mpp" class="font-mono font-bold text-right">0.020 m/px</span>
                                     </div>
+                                    <input id="input-mpp" type="range" min="0.005" max="0.08" step="0.005" value="0.02" class="w-full cursor-pointer custom-range">
+                                    <label class="flex items-center gap-2 text-[11px] cursor-pointer pt-1">
+                                        <input id="chk-auto-scale" type="checkbox" checked class="custom-chk">
+                                        <span>Estimate scale from detected doors (0.9 m wide)</span>
+                                    </label>
+                                </div>
+                                <div class="space-y-1">
+                                    <div class="flex justify-between text-xs">
+                                        <span>Wall Height</span>
+                                        <span id="label-wall-height" class="font-mono font-bold text-right">3.0 m</span>
+                                    </div>
+                                    <input id="input-wall-height" type="range" min="0.8" max="5.0" step="0.1" value="3.0" class="w-full cursor-pointer custom-range">
+                                </div>
+                                <div class="space-y-1">
+                                    <div class="flex justify-between text-xs">
+                                        <span>Wall Thickness</span>
+                                        <span id="label-wall-thickness" class="font-mono font-bold text-right">0.20 m</span>
+                                    </div>
+                                    <input id="input-wall-thickness" type="range" min="0.1" max="0.5" step="0.02" value="0.2" class="w-full cursor-pointer custom-range">
                                 </div>
                             </div>
                         </div>
-                    </div>
 
+                        <div class="sidebar-block">
+                            <div class="block-title">3D Layers</div>
+                            <div class="grid grid-cols-2 gap-2.5 text-xs">
+                                <label class="flex items-center space-x-2 cursor-pointer">
+                                    <input id="chk-walls" type="checkbox" checked class="custom-chk">
+                                    <span>Walls (3D)</span>
+                                </label>
+                                <label class="flex items-center space-x-2 cursor-pointer">
+                                    <input id="chk-floors" type="checkbox" checked class="custom-chk">
+                                    <span>Floor Slabs</span>
+                                </label>
+                                <label class="flex items-center space-x-2 cursor-pointer">
+                                    <input id="chk-roof" type="checkbox" class="custom-chk">
+                                    <span>Roof</span>
+                                </label>
+                                <label class="flex items-center space-x-2 cursor-pointer">
+                                    <input id="chk-labels" type="checkbox" checked class="custom-chk">
+                                    <span>Room Badges</span>
+                                </label>
+                                <label class="flex items-center space-x-2 cursor-pointer">
+                                    <input id="chk-openings" type="checkbox" checked class="custom-chk">
+                                    <span>Doors & Windows</span>
+                                </label>
+                                <label class="flex items-center space-x-2 cursor-pointer">
+                                    <input id="chk-grid" type="checkbox" checked class="custom-chk">
+                                    <span>Grid</span>
+                                </label>
+                                <label class="flex items-center space-x-2 cursor-pointer col-span-2">
+                                    <input id="chk-furniture" type="checkbox" class="custom-chk">
+                                    <span>Furniture & Props</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </aside>
 
             <!-- Right Main Content Area: Tabbed Views -->
             <main class="relative flex min-h-0 min-w-0 flex-1 flex-col">
+
+                <!-- Floating Room Inspector Card (Bottom-Left) -->
+                <div id="room-inspector-card" class="room-inspector-floating-card hidden">
+                    <div class="flex items-center justify-between border-b border-hairline pb-2 mb-2.5">
+                        <div class="flex items-center gap-2 min-w-0">
+                            <h3 id="inspector-title" class="font-serif text-[20px] leading-tight truncate">Room Name</h3>
+                            <span id="inspector-type" class="inspector-badge shrink-0">CLASSROOM</span>
+                        </div>
+                        <button id="btn-close-inspector" type="button" aria-label="Close inspector" class="inspector-close-btn">✕</button>
+                    </div>
+
+                    <dl class="inspector-dl text-xs">
+                        <div class="inspector-dl-row">
+                            <dt class="inspector-dt">Confidence</dt>
+                            <dd id="inspector-conf" class="inspector-dd">—</dd>
+                        </div>
+                        <div class="inspector-dl-row">
+                            <dt class="inspector-dt">Area</dt>
+                            <dd id="inspector-area" class="inspector-dd font-bold">—</dd>
+                        </div>
+                        <div class="inspector-dl-row">
+                            <dt class="inspector-dt">Boundary</dt>
+                            <dd id="inspector-points" class="inspector-dd">—</dd>
+                        </div>
+                        <div class="inspector-dl-row">
+                            <dt class="inspector-dt">Doors</dt>
+                            <dd id="inspector-doors" class="inspector-dd">—</dd>
+                        </div>
+                    </dl>
+
+                    <div class="space-y-2 pt-2 border-t border-hairline mt-2">
+                        <div>
+                            <label for="edit-room-name" class="mono-label block text-[10.5px] mb-1">Room Name</label>
+                            <input id="edit-room-name" type="text" maxlength="100" class="sidebar-input w-full" disabled>
+                        </div>
+                        <div>
+                            <label for="edit-room-type" class="mono-label block text-[10.5px] mb-1">Room Type</label>
+                            <select id="edit-room-type" class="sidebar-select w-full" disabled>
+                                <option>classroom</option><option>lab</option><option>corridor</option><option>restroom</option><option>stairs</option><option>elevator</option><option>entrance</option><option>bedroom</option><option>office</option><option>kitchen</option><option>living_room</option><option>room</option><option>other</option>
+                            </select>
+                        </div>
+                        <div class="grid grid-cols-3 gap-1.5 pt-1">
+                            <button id="btn-save-room-edit" type="button" class="btn-outline-tab text-xs px-1" disabled>Save edit</button>
+                            <button id="btn-delete-room" type="button" class="btn-outline-tab text-xs px-1" disabled>Delete room</button>
+                            <button id="btn-edit-boundary" type="button" class="btn-outline-tab text-xs px-1" disabled>Edit outline</button>
+                        </div>
+                        <div id="boundary-edit-controls" class="hidden space-y-1.5 pt-2 border-t border-hairline">
+                            <p id="boundary-edit-status" class="mono-caption text-[10.5px]" aria-live="polite">Drag a highlighted point in 2D tab.</p>
+                            <div class="flex gap-2">
+                                <button id="btn-boundary-undo" type="button" class="btn-outline-tab flex-1 text-xs" disabled>Undo</button>
+                                <button id="btn-boundary-done" type="button" class="btn-outline-tab flex-1 text-xs font-semibold">Finish outline</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div id="room-inspector-empty" class="hidden" aria-hidden="true"></div>
+
+                <!-- Viewer Toast Message (Bottom-Center) -->
+                <div id="app-message" role="status" aria-live="polite" class="viewer-toast hidden"></div>
 
                 <!-- Viewport Header Tabs & Camera Controls -->
                 <div class="studio-toolbar flex min-h-12 shrink-0 items-center justify-between gap-3 overflow-x-auto px-3 sm:px-5">

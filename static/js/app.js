@@ -27,6 +27,41 @@ document.addEventListener("DOMContentLoaded", () => {
     const processingReady = document.body.dataset.processingReady === "true";
     const initialProcessingMode = document.body.dataset.processingMode || "OFFLINE";
     const processingModeBadge = document.getElementById("processing-mode-badge");
+
+    // Sidebar Elements & Tab Controller (Declared early to avoid TDZ issues)
+    const sidebarEl = document.getElementById("sidebar");
+    const sidebarTabBtns = document.querySelectorAll(".sidebar-tab-btn");
+    const sidebarPanels = document.querySelectorAll(".sidebar-panel");
+    const sidebarContent = document.getElementById("sidebar-content");
+    const sidebarSamplesSelect = document.getElementById("sidebar-samples-select");
+    const btnJudgeHelp = document.getElementById("btn-judge-help");
+    const popoverJudgeWalkthrough = document.getElementById("popover-judge-walkthrough");
+    const btnCloseWalkthroughPopover = document.getElementById("btn-close-walkthrough-popover");
+    const btnToggleSidebar = document.getElementById("btn-toggle-sidebar");
+    const sidebarSheetHandle = document.getElementById("sidebar-sheet-handle");
+    const btnCloseInspector = document.getElementById("btn-close-inspector");
+    let activeSidebarTab = "input";
+
+    function switchSidebarTab(tabName) {
+        if (!tabName) return;
+        activeSidebarTab = tabName;
+        sidebarTabBtns.forEach(btn => {
+            const isActive = btn.dataset.tab === tabName;
+            btn.classList.toggle("active", isActive);
+            btn.setAttribute("aria-selected", isActive ? "true" : "false");
+            btn.setAttribute("tabindex", isActive ? "0" : "-1");
+        });
+        sidebarPanels.forEach(panel => {
+            if (panel.id === `sidebar-panel-${tabName}`) {
+                panel.classList.remove("hidden");
+            } else {
+                panel.classList.add("hidden");
+            }
+        });
+        if (sidebarContent) {
+            sidebarContent.scrollTop = 0;
+        }
+    }
     const progressContainer = document.getElementById("progress-container");
     const progressBar = document.getElementById("progress-bar");
     const progressStatus = document.getElementById("progress-status");
@@ -149,19 +184,15 @@ document.addEventListener("DOMContentLoaded", () => {
             MOCK: "MOCK MODE — PREPARED SAMPLE, NOT LIVE AI",
             DEMO: "PREPARED DEMO — NOT A LIVE AI RESULT",
             LIVE: "META SAM 3.1 RESULT",
-            LOCAL: "LOCAL OPENCV SEGMENTATION — LABELING OPTIONAL",
+            LOCAL: "LOCAL OPENCV SEGMENTATION",
         };
-        if (!messages[mode]) {
-            processingModeBadge.classList.add("hidden");
-            processingModeBadge.textContent = "";
-            return;
-        }
-        processingModeBadge.textContent = messages[mode];
-        processingModeBadge.title = mode === "MOCK"
+        const activeMode = messages[mode] ? mode : "LOCAL";
+        processingModeBadge.textContent = messages[activeMode];
+        processingModeBadge.title = activeMode === "MOCK"
             ? "Generated from the prepared sample plan. Uploaded image pixels were not analyzed."
-            : mode === "LOCAL"
+            : activeMode === "LOCAL"
                 ? "OpenCV analyzes plans locally; Meta SAM 3.1 can segment uploads, and Baseten-hosted Muse Spark Open can suggest room labels."
-                : mode === "LIVE"
+                : activeMode === "LIVE"
                     ? "At least one segmentation concept was processed by Meta SAM 3.1. Check scene warnings for local fallback concepts."
                 : "Prepared sample data, not a live provider result.";
         processingModeBadge.classList.remove("hidden");
@@ -169,6 +200,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (initialProcessingMode === "MOCK") setProcessingBadge(initialProcessingMode);
 
+    let appMessageTimer = null;
     function showMessage(message, kind = "info") {
         if (!appMessage) return;
         appMessage.textContent = message;
@@ -176,6 +208,11 @@ document.addEventListener("DOMContentLoaded", () => {
         if (kind === "error") appMessage.classList.add("border-rose-500/40", "text-rose-200");
         else if (kind === "warning") appMessage.classList.add("border-amber-500/40", "text-amber-100");
         else appMessage.classList.add("border-blue-500/40", "text-blue-100");
+
+        if (appMessageTimer) clearTimeout(appMessageTimer);
+        appMessageTimer = setTimeout(() => {
+            clearMessage();
+        }, 4000);
     }
 
     function clearMessage() {
@@ -259,32 +296,36 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function updateAreaSummary() {
         if (!currentSceneData) {
-            areaSummaryTotal.textContent = "Load a plan to calculate areas.";
-            areaSummaryRooms.replaceChildren();
-            mapQualityReport.textContent = "Load a plan to review its detected geometry.";
-            mapQualityChecks.replaceChildren();
-            mapQualityWarnings.replaceChildren();
+            if (areaSummaryTotal) areaSummaryTotal.textContent = "Load a plan to calculate areas.";
+            if (areaSummaryRooms) areaSummaryRooms.replaceChildren();
+            if (mapQualityReport) mapQualityReport.textContent = "Readiness checks appear after loading a scene.";
+            if (mapQualityChecks) mapQualityChecks.replaceChildren();
+            if (mapQualityWarnings) mapQualityWarnings.replaceChildren();
             return;
         }
         const rooms = currentSceneData.rooms || [];
         const meta = currentSceneData.meta || {};
         const totalArea = rooms.reduce((sum, room) => sum + polygonArea(room.polygon), 0);
-        areaSummaryTotal.textContent = `${rooms.length} rooms · ${totalArea.toFixed(1)} m² total`;
-        areaSummaryRooms.replaceChildren();
-        rooms.forEach(room => {
-            const row = document.createElement("li");
-            row.className = "flex justify-between gap-2 border-b border-bauhaus-muted py-1";
-            const name = document.createElement("span");
-            name.textContent = room.label || room.id;
-            const area = document.createElement("span");
-            area.className = "font-mono";
-            area.textContent = `${polygonArea(room.polygon).toFixed(1)} m²`;
-            row.append(name, area);
-            areaSummaryRooms.appendChild(row);
-        });
-        const validRoomCount = rooms.filter(room => (room.polygon || []).length >= 3 && polygonArea(room.polygon) > 0).length;
         const roomLevels = rooms.map(room => Number(room.floorIndex ?? room.level) || 0);
         const floorCount = Math.max(1, (meta.levels || []).length, Number(meta.levelCount) || 0, ...roomLevels.map(level => level + 1));
+        if (areaSummaryTotal) {
+            areaSummaryTotal.textContent = `${rooms.length} rooms, ${floorCount} ${floorCount === 1 ? "floor" : "floors"}, ${totalArea.toFixed(1)} m²`;
+        }
+        if (areaSummaryRooms) {
+            areaSummaryRooms.replaceChildren();
+            rooms.forEach(room => {
+                const row = document.createElement("li");
+                row.className = "flex justify-between gap-2 border-b border-hairline py-1 text-xs";
+                const name = document.createElement("span");
+                name.textContent = room.label || room.id;
+                const area = document.createElement("span");
+                area.className = "font-mono";
+                area.textContent = `${polygonArea(room.polygon).toFixed(1)} m²`;
+                row.append(name, area);
+                areaSummaryRooms.appendChild(row);
+            });
+        }
+        const validRoomCount = rooms.filter(room => (room.polygon || []).length >= 3 && polygonArea(room.polygon) > 0).length;
         const connectorCount = rooms.filter(room => ["stairs", "stair", "elevator"].includes(String(room.type || "").toLowerCase())).length;
         const walls = currentSceneData.walls || [];
         const doors = currentSceneData.doors || [];
@@ -303,27 +344,44 @@ document.addEventListener("DOMContentLoaded", () => {
             { state: floorCount < 2 || connectorCount > 0 ? "ok" : "review", label: "Floor connection", detail: floorCount < 2 ? "Single-story scene." : `${connectorCount} stair/elevator room(s) for ${floorCount} floors.` },
             { state: namedRoomCount === rooms.length && rooms.length > 0 ? "ok" : "review", label: "Room labels", detail: `${namedRoomCount} of ${rooms.length} have non-generic labels.` },
         ];
-        mapQualityChecks.replaceChildren();
-        rows.forEach(item => {
-            const row = document.createElement("li");
-            row.className = "flex gap-1.5";
-            const marker = document.createElement("span");
-            marker.className = item.state === "ok" ? "font-bold text-green-700" : item.state === "review" ? "font-bold text-bauhaus-red" : "font-bold text-bauhaus-blue";
-            marker.textContent = item.state === "ok" ? "✓" : item.state === "review" ? "!" : "i";
-            marker.setAttribute("aria-label", item.state === "ok" ? "Checked" : item.state === "review" ? "Review" : "Information");
-            const text = document.createElement("span");
-            text.textContent = `${item.label}: ${item.detail}`;
-            row.append(marker, text);
-            mapQualityChecks.appendChild(row);
-        });
-        mapQualityWarnings.replaceChildren();
-        const warningItems = warnings.length ? warnings : ["No pipeline warnings recorded."];
-        warningItems.forEach(warning => {
-            const row = document.createElement("li");
-            row.textContent = warnings.length ? `• ${warning}` : warning;
-            mapQualityWarnings.appendChild(row);
-        });
-        mapQualityReport.textContent = `${rooms.length} rooms · ${floorCount} floor(s) · ${totalArea.toFixed(1)} m² estimated area. These are review checks, not an accuracy score.`;
+        if (mapQualityChecks) {
+            mapQualityChecks.replaceChildren();
+            rows.forEach(item => {
+                const row = document.createElement("li");
+                row.className = "flex items-center gap-2 text-[12.5px] truncate cursor-default";
+                row.title = `${item.label}: ${item.detail}`;
+                const marker = document.createElement("span");
+                marker.className = item.state === "ok" ? "mono-check text-[var(--ink)]" : "mono-check text-[var(--pigment)]";
+                marker.textContent = item.state === "ok" ? "✓" : "!";
+                marker.setAttribute("aria-label", item.state === "ok" ? "Checked" : "Review");
+                const text = document.createElement("span");
+                text.className = "truncate text-[var(--secondary-ink)]";
+                text.textContent = `${item.label}: ${item.detail}`;
+                row.append(marker, text);
+                mapQualityChecks.appendChild(row);
+            });
+        }
+        if (mapQualityWarnings) {
+            mapQualityWarnings.replaceChildren();
+            const warningItems = warnings.length ? warnings : ["No pipeline warnings recorded."];
+            warningItems.forEach(warning => {
+                const row = document.createElement("li");
+                row.className = "flex items-center gap-2 text-[12.5px] truncate cursor-default";
+                row.title = String(warning);
+                const marker = document.createElement("span");
+                marker.className = warnings.length ? "mono-check text-[var(--pigment)]" : "mono-check text-[var(--ink)]";
+                marker.textContent = warnings.length ? "!" : "✓";
+                marker.setAttribute("aria-label", warnings.length ? "Warning" : "Checked");
+                const text = document.createElement("span");
+                text.className = "truncate text-[var(--secondary-ink)]";
+                text.textContent = String(warning);
+                row.append(marker, text);
+                mapQualityWarnings.appendChild(row);
+            });
+        }
+        if (mapQualityReport) {
+            mapQualityReport.textContent = `${rooms.length} rooms, ${floorCount} ${floorCount === 1 ? "floor" : "floors"}, ${totalArea.toFixed(1)} m² estimated area.`;
+        }
     }
 
     btnReview2D.addEventListener("click", () => {
@@ -356,11 +414,11 @@ document.addEventListener("DOMContentLoaded", () => {
         updateAreaSummary();
         populateRoomControls(currentSceneData);
         if (loadedImageElement) render2DSegmentationCanvas();
-        inspectorCard.classList.add("hidden");
-        inspectorEmpty.classList.remove("hidden");
+        if (inspectorCard) inspectorCard.classList.add("hidden");
+        if (inspectorEmpty) inspectorEmpty.classList.remove("hidden");
         selectedRoomId = null;
-        [editRoomName, editRoomType, btnSaveRoomEdit, btnDeleteRoom].forEach(control => { control.disabled = true; });
-        btnEditBoundary.disabled = true;
+        [editRoomName, editRoomType, btnSaveRoomEdit, btnDeleteRoom].forEach(control => { if (control) control.disabled = true; });
+        if (btnEditBoundary) btnEditBoundary.disabled = true;
     }
 
     function refreshBoundaryScene() {
@@ -526,6 +584,9 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
         viewer.focusRoom(room);
+        if (typeof window.onFloorPlanRoomSelected === "function") {
+            window.onFloorPlanRoomSelected(room);
+        }
     });
 
     btnShowRoute.addEventListener("click", () => {
@@ -1459,6 +1520,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function handleProcessSuccess(data) {
         currentSceneData = data.scene;
+        window.currentSceneData = currentSceneData;
         floorPlanImages = Array.isArray(data.floorImages) ? data.floorImages : [];
         setProcessingBadge(currentSceneData.meta?.processingMode || "");
         currentOverlays = data.overlays;
@@ -1516,6 +1578,9 @@ document.addEventListener("DOMContentLoaded", () => {
         // 3. Switch to 3D tab
         document.querySelector('[data-tab="3d"]').click();
         updateAreaSummary();
+        if (typeof switchSidebarTab === "function") {
+            switchSidebarTab("review");
+        }
     }
 
     // -------------------------------------------------------------
@@ -1674,16 +1739,18 @@ document.addEventListener("DOMContentLoaded", () => {
     window.onFloorPlanRoomSelected = (room) => {
         if (!room) return;
         selectedRoomId = room.id;
-        inspectorEmpty.classList.add("hidden");
-        inspectorCard.classList.remove("hidden");
+        if (inspectorEmpty) inspectorEmpty.classList.add("hidden");
+        if (inspectorCard) inspectorCard.classList.remove("hidden");
 
-        inspectorTitle.textContent = room.label || `Room ${room.id}`;
-        inspectorType.textContent = (room.type || "room").toUpperCase();
+        if (inspectorTitle) inspectorTitle.textContent = room.label || `Room ${room.id}`;
+        if (inspectorType) inspectorType.textContent = (room.type || "room").toUpperCase();
         
         const confidence = Number(room.confidence);
-        inspectorConf.textContent = Number.isFinite(confidence) && confidence > 0
-            ? `${Math.round(confidence * 100)}% Confidence`
-            : "Unclassified";
+        if (inspectorConf) {
+            inspectorConf.textContent = Number.isFinite(confidence) && confidence > 0
+                ? `${Math.round(confidence * 100)}%`
+                : "—";
+        }
 
         // Calculate approximate area in sq meters
         const poly = room.polygon || [];
@@ -1693,20 +1760,26 @@ document.addEventListener("DOMContentLoaded", () => {
         inspectorPoints.textContent = `${poly.length} Vertices`;
 
         // Connected doors check
-        if (currentSceneData && currentSceneData.doors) {
-            const connected = currentSceneData.doors.filter(d => (d.connects || []).includes(room.id));
-            if (connected.length > 0) {
-                inspectorDoors.textContent = `${connected.length} Door(s) (${connected.map(d => d.id).join(", ")})`;
+        if (inspectorDoors) {
+            if (currentSceneData && currentSceneData.doors) {
+                const connected = currentSceneData.doors.filter(d => (d.connects || []).includes(room.id));
+                if (connected.length > 0) {
+                    inspectorDoors.textContent = connected.map(d => d.id).join(", ");
+                } else {
+                    inspectorDoors.textContent = "None";
+                }
             } else {
-                inspectorDoors.textContent = "None detected";
+                inspectorDoors.textContent = "None";
             }
         }
 
-        editRoomName.value = room.label || "";
-        const typeOption = Array.from(editRoomType.options).find(option => option.value === (room.type || "room"));
-        if (!typeOption) editRoomType.add(new Option(room.type || "room", room.type || "room"));
-        editRoomType.value = room.type || "room";
-        [editRoomName, editRoomType, btnSaveRoomEdit, btnDeleteRoom, btnEditBoundary].forEach(control => { control.disabled = false; });
+        if (editRoomName) editRoomName.value = room.label || "";
+        if (editRoomType) {
+            const typeOption = Array.from(editRoomType.options).find(option => option.value === (room.type || "room"));
+            if (!typeOption) editRoomType.add(new Option(room.type || "room", room.type || "room"));
+            editRoomType.value = room.type || "room";
+        }
+        [editRoomName, editRoomType, btnSaveRoomEdit, btnDeleteRoom, btnEditBoundary].forEach(control => { if (control) control.disabled = false; });
     };
 
     btnSaveRoomEdit.addEventListener("click", () => {
@@ -1930,5 +2003,105 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (btnCloseEvacuation) {
         btnCloseEvacuation.addEventListener("click", stopEvacuationSimulation);
+    }
+
+    // Wire up sidebar tabs, samples, collapse toggle, walkthrough, inspector
+    sidebarTabBtns.forEach((btn, index) => {
+        btn.addEventListener("click", () => {
+            switchSidebarTab(btn.dataset.tab);
+        });
+        btn.addEventListener("keydown", (e) => {
+            let targetIdx = index;
+            if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+                targetIdx = (index + 1) % sidebarTabBtns.length;
+            } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+                targetIdx = (index - 1 + sidebarTabBtns.length) % sidebarTabBtns.length;
+            } else if (e.key === "Home") {
+                targetIdx = 0;
+            } else if (e.key === "End") {
+                targetIdx = sidebarTabBtns.length - 1;
+            } else {
+                return;
+            }
+            e.preventDefault();
+            const targetBtn = sidebarTabBtns[targetIdx];
+            if (targetBtn) {
+                targetBtn.focus();
+                switchSidebarTab(targetBtn.dataset.tab);
+            }
+        });
+    });
+
+    if (sidebarSamplesSelect) {
+        sidebarSamplesSelect.addEventListener("change", (e) => {
+            const val = e.target.value;
+            if (val === "demo" && btnLoadDemo) {
+                btnLoadDemo.click();
+            } else if (val === "two-story" && btnLoadTwoStoryDemo) {
+                btnLoadTwoStoryDemo.click();
+            } else if (val === "evac" && btnSidebarEvac) {
+                btnSidebarEvac.click();
+            }
+        });
+    }
+
+    if (btnJudgeHelp && popoverJudgeWalkthrough) {
+        btnJudgeHelp.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const isHidden = popoverJudgeWalkthrough.classList.toggle("hidden");
+            btnJudgeHelp.setAttribute("aria-expanded", !isHidden);
+        });
+        if (btnCloseWalkthroughPopover) {
+            btnCloseWalkthroughPopover.addEventListener("click", (e) => {
+                e.stopPropagation();
+                popoverJudgeWalkthrough.classList.add("hidden");
+                btnJudgeHelp.setAttribute("aria-expanded", "false");
+            });
+        }
+        document.addEventListener("click", (e) => {
+            if (!popoverJudgeWalkthrough.contains(e.target) && e.target !== btnJudgeHelp) {
+                popoverJudgeWalkthrough.classList.add("hidden");
+                btnJudgeHelp.setAttribute("aria-expanded", "false");
+            }
+        });
+        document.addEventListener("keydown", (e) => {
+            if (e.key === "Escape" && !popoverJudgeWalkthrough.classList.contains("hidden")) {
+                popoverJudgeWalkthrough.classList.add("hidden");
+                btnJudgeHelp.setAttribute("aria-expanded", "false");
+            }
+        });
+    }
+
+    if (btnToggleSidebar && sidebarEl) {
+        btnToggleSidebar.addEventListener("click", () => {
+            const isCollapsed = sidebarEl.classList.toggle("is-collapsed");
+            btnToggleSidebar.textContent = isCollapsed ? "›" : "‹";
+            btnToggleSidebar.setAttribute("aria-expanded", !isCollapsed);
+            btnToggleSidebar.setAttribute("aria-label", isCollapsed ? "Expand sidebar" : "Collapse sidebar");
+            window.dispatchEvent(new Event("resize"));
+        });
+    }
+
+    if (sidebarSheetHandle && sidebarEl) {
+        sidebarSheetHandle.addEventListener("click", () => {
+            sidebarEl.classList.toggle("sheet-expanded");
+        });
+    }
+
+    if (btnCloseInspector && inspectorCard) {
+        btnCloseInspector.addEventListener("click", () => {
+            inspectorCard.classList.add("hidden");
+            if (inspectorEmpty) inspectorEmpty.classList.remove("hidden");
+            selectedRoomId = null;
+            if (viewer && typeof viewer.clearRoomSelection === "function") {
+                viewer.clearRoomSelection();
+            }
+            [editRoomName, editRoomType, btnSaveRoomEdit, btnDeleteRoom].forEach(control => {
+                if (control) control.disabled = true;
+            });
+            if (btnEditBoundary) btnEditBoundary.disabled = true;
+            const bControls = document.getElementById("boundary-edit-controls");
+            if (bControls) bControls.classList.add("hidden");
+        });
     }
 });
