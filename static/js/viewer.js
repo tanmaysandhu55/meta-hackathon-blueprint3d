@@ -346,9 +346,10 @@ class FloorPlanViewer {
         this.currentSceneData = sceneData;
         this.wallHeight = Number(sceneData.meta.wallHeight) || 3.0;
         this.floorHeight = this.wallHeight;
-        this.levelCount = Math.max(1, Number(sceneData.meta.levelCount) || (sceneData.meta.levels || []).length || 1);
+        const rawLevels = Array.isArray(sceneData.meta.levels) ? sceneData.meta.levels : [];
+        this.levelCount = Math.max(1, Number(sceneData.meta.levelCount) || rawLevels.length || 1);
         this.syncFloorSpacing();
-        const declaredElevations = (sceneData.meta.levels || []).map(level => Number(level.elevation)).filter(Number.isFinite);
+        const declaredElevations = rawLevels.map(level => Number(level.elevation)).filter(Number.isFinite);
         const highestFloor = declaredElevations.length
             ? Math.max(...declaredElevations)
             : (this.levelCount - 1) * this.floorHeight;
@@ -379,7 +380,7 @@ class FloorPlanViewer {
         this.buildWalls(sceneData.walls || []);
         this.buildDoors(sceneData.doors || []);
         this.buildWindows(sceneData.windows || []);
-        this.buildFurniture(sceneData.rooms || []);
+        this.buildFurniture(sceneData.rooms || [], sceneData.furniture || []);
         this.buildInteriorLights(sceneData.rooms || []);
         this.setTimeOfDay(this.timeOfDay || 13.0);
 
@@ -518,7 +519,8 @@ class FloorPlanViewer {
     }
 
     createFloorGroups(sceneData) {
-        const levels = new Set((sceneData.meta.levels || []).map(item => Number(item.floorIndex ?? item.level) || 0));
+        const rawLevels = Array.isArray(sceneData.meta?.levels) ? sceneData.meta.levels : [];
+        const levels = new Set(rawLevels.map(item => Number(item.floorIndex ?? item.level) || 0));
         ["rooms", "walls", "doors", "windows"].forEach(collection => {
             (sceneData[collection] || []).forEach(item => levels.add(this.getItemFloorIndex(item)));
         });
@@ -758,7 +760,8 @@ class FloorPlanViewer {
         // values in sync prevents a visible vertical gap when the height is changed.
         this.floorHeight = this.wallHeight;
         this.currentSceneData.meta.floorHeight = this.floorHeight;
-        (this.currentSceneData.meta.levels || []).forEach(level => {
+        const metaLevels = Array.isArray(this.currentSceneData.meta.levels) ? this.currentSceneData.meta.levels : [];
+        metaLevels.forEach(level => {
             const index = Math.max(0, Number(level.floorIndex ?? level.level) || 0);
             level.elevation = index * this.floorHeight;
         });
@@ -1316,7 +1319,7 @@ class FloorPlanViewer {
         return Math.abs(twiceArea) / 2;
     }
 
-    buildFurniture(rooms) {
+    buildFurniture(rooms, explicitFurniture = []) {
         const materials = {
             wood: new THREE.MeshStandardMaterial({ color: 0x9a6842, roughness: 0.82 }),
             fabric: new THREE.MeshStandardMaterial({ color: 0x8794a6, roughness: 0.95 }),
@@ -1384,6 +1387,20 @@ class FloorPlanViewer {
             }
             this.getFloorLayer(this.getItemFloorIndex(room), "furniture")?.add(furniture);
         });
+        if (Array.isArray(explicitFurniture)) {
+            explicitFurniture.forEach(item => {
+                if (!item.center) return;
+                const pt = this.toWorldCoords(item.center[0], item.center[1]);
+                const w = item.width || 1.4;
+                const d = item.depth || 0.8;
+                const angle = item.angle || 0;
+                const furnGroup = new THREE.Group();
+                furnGroup.position.set(pt.x, 0, pt.z);
+                furnGroup.rotation.y = -angle;
+                addBox(furnGroup, materials.wood, 0, 0.35, 0, w, 0.65, d);
+                this.getFloorLayer(0, "furniture")?.add(furnGroup);
+            });
+        }
         const usedMaterials = new Set();
         this.floorGroups.forEach(floorGroup => {
             floorGroup.getObjectByName("furniture")?.traverse(object => {

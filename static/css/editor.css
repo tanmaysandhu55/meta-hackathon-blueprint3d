@@ -4,7 +4,7 @@
  */
 
 /* --------------------------------------------------------------------------
- * 1. Root Editor Layout: 52px top bar, 56px left rail, center canvas, 28px status
+ * 1. Root Editor Layout: 52px top bar, 56px left rail, 260px library, center canvas, 280px props, 28px status
  * -------------------------------------------------------------------------- */
 #editor-view {
     position: fixed;
@@ -13,11 +13,11 @@
     height: 100vh;
     display: grid;
     grid-template-rows: 52px 1fr 28px;
-    grid-template-columns: 56px 1fr;
+    grid-template-columns: 56px var(--library-width, 260px) 1fr var(--props-width, 0px);
     grid-template-areas:
-        "top top"
-        "rail canvas"
-        "status status";
+        "top top top top"
+        "rail library canvas props"
+        "status status status status";
     background-color: var(--ground, #E7E3DA);
     color: var(--ink, #1F1E1B);
     overflow: hidden;
@@ -26,6 +26,14 @@
 
 #editor-view.view-hidden {
     display: none !important;
+}
+
+#editor-view.has-props-open {
+    --props-width: 280px;
+}
+
+#editor-view.is-library-collapsed {
+    --library-width: 0px;
 }
 
 /* --------------------------------------------------------------------------
@@ -41,7 +49,7 @@
     background-color: var(--ground, #E7E3DA);
     border-bottom: 1px solid var(--hairline, #D0CAC0);
     user-select: none;
-    z-index: 20;
+    z-index: 25;
 }
 
 .editor-plan-name {
@@ -98,6 +106,13 @@
 
 .editor-btn-icon:last-child {
     border-right: none;
+}
+
+.editor-btn-icon:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    background-color: transparent !important;
+    color: var(--ink-2, #5F5C55) !important;
 }
 
 .editor-btn-primary {
@@ -187,7 +202,161 @@
 }
 
 /* --------------------------------------------------------------------------
- * 4. Center SVG Canvas & Container
+ * 4. 260px Left Object Library Panel
+ * -------------------------------------------------------------------------- */
+.editor-library-panel {
+    grid-area: library;
+    width: var(--library-width, 260px);
+    height: 100%;
+    background-color: var(--ground, #E7E3DA);
+    border-right: 1px solid var(--hairline, #D0CAC0);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    user-select: none;
+    z-index: 15;
+    transition: width 0.15s ease;
+}
+
+.editor-library-panel.is-collapsed {
+    width: 0 !important;
+    border-right: none;
+}
+
+.editor-library-header {
+    height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--hairline, #D0CAC0);
+    background-color: var(--ground, #E7E3DA);
+    flex-shrink: 0;
+}
+
+.editor-panel-close-btn {
+    background: transparent;
+    border: none;
+    padding: 4px;
+    color: var(--ink-2, #5F5C55);
+    cursor: pointer;
+    border-radius: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.editor-panel-close-btn:hover {
+    color: var(--ink, #1F1E1B);
+}
+
+.editor-library-content {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-bottom: 24px;
+}
+
+.editor-accordion-group {
+    border-bottom: 1px solid var(--hairline, #D0CAC0);
+}
+
+.editor-accordion-header {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    font-family: 'Azeret Mono', monospace;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ink, #1F1E1B);
+    transition: background-color 0.15s;
+}
+
+.editor-accordion-header:hover {
+    background-color: var(--ground-2, #DDD8CF);
+}
+
+.accordion-chevron {
+    transition: transform 0.2s ease;
+}
+
+.editor-accordion-header[aria-expanded="false"] .accordion-chevron {
+    transform: rotate(-90deg);
+}
+
+.editor-accordion-header[aria-expanded="false"] + .editor-accordion-body {
+    display: none;
+}
+
+.editor-accordion-body {
+    padding: 6px 10px 10px 10px;
+}
+
+.editor-items-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+}
+
+.editor-lib-cell {
+    aspect-ratio: 1 / 1;
+    min-height: 64px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    background-color: var(--ground, #E7E3DA);
+    border: 1px solid var(--hairline-2, #B8B0A2);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 0;
+    transition: background-color 0.15s, border-color 0.15s;
+    user-select: none;
+}
+
+.editor-lib-cell:hover {
+    background-color: var(--ground-2, #DDD8CF);
+    border-color: var(--ink, #1F1E1B);
+}
+
+/* Armed or Active item has pigment border and tinted ground */
+.editor-lib-cell.is-active,
+.editor-lib-cell.is-armed {
+    border: 2px solid var(--pigment, #9B3418) !important;
+    background-color: var(--ground-2, #DDD8CF);
+}
+
+.lib-icon {
+    width: 26px;
+    height: 26px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 1.5;
+    stroke-linecap: square;
+    pointer-events: none;
+}
+
+.lib-label {
+    font-family: 'Azeret Mono', monospace;
+    font-size: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--ink, #1F1E1B);
+    line-height: 1;
+    pointer-events: none;
+    text-align: center;
+}
+
+/* --------------------------------------------------------------------------
+ * 5. Center SVG Canvas & Container
  * -------------------------------------------------------------------------- */
 .editor-canvas-container {
     grid-area: canvas;
@@ -208,7 +377,7 @@
 }
 
 /* --------------------------------------------------------------------------
- * 5. Critical Text & Stroke Rules
+ * 6. Critical Text & Stroke Rules
  * -------------------------------------------------------------------------- */
 /* vector-effect: non-scaling-stroke on all hairlines, grid lines, outlines, selection */
 .editor-grid-line,
@@ -217,7 +386,9 @@
 .editor-selection-box,
 .editor-snap-marker,
 .editor-ruler-tick,
-.editor-ruler-base {
+.editor-ruler-base,
+.editor-dimension-line,
+.editor-handle {
     vector-effect: non-scaling-stroke !important;
 }
 
@@ -249,6 +420,7 @@
 
 .editor-length-label {
     font-size: 11px;
+    fill: var(--pigment, #9B3418) !important;
 }
 
 .editor-room-label {
@@ -257,7 +429,239 @@
 }
 
 /* --------------------------------------------------------------------------
- * 6. Bottom-Left Metric Scale Bar
+ * 7. Interactive Drawing & Selection Elements in Canvas
+ * -------------------------------------------------------------------------- */
+.editor-hit-area {
+    stroke: transparent !important;
+    fill: transparent !important;
+    stroke-width: 14px !important;
+    cursor: pointer;
+    pointer-events: stroke !important;
+}
+
+.editor-wall-body {
+    fill: #5F5C55;
+    stroke: #1F1E1B;
+    stroke-width: 0.04;
+    transition: fill 0.1s;
+}
+
+.editor-wall-body.is-selected {
+    fill: #85402B !important;
+    stroke: var(--pigment, #9B3418) !important;
+}
+
+.editor-room-polygon {
+    fill: #D9D4C7;
+    fill-opacity: 0.6;
+    stroke: #9B3418;
+    stroke-width: 0.04;
+    cursor: pointer;
+    transition: fill-opacity 0.15s;
+}
+
+.editor-room-polygon.is-selected {
+    fill-opacity: 0.85 !important;
+    stroke-width: 0.08 !important;
+}
+
+.editor-door-symbol,
+.editor-window-symbol,
+.editor-furniture-symbol {
+    cursor: pointer;
+}
+
+.editor-door-symbol.is-selected,
+.editor-window-symbol.is-selected,
+.editor-furniture-symbol.is-selected {
+    outline: 2px solid var(--pigment, #9B3418);
+}
+
+.editor-preview-line {
+    stroke: var(--pigment, #9B3418);
+    stroke-width: 2px;
+    stroke-dasharray: 4 4;
+    pointer-events: none;
+    vector-effect: non-scaling-stroke;
+}
+
+.editor-ghost {
+    opacity: 0.55;
+    pointer-events: none;
+}
+
+.editor-selection-rect {
+    fill: rgba(155, 52, 24, 0.08);
+    stroke: var(--pigment, #9B3418);
+    stroke-width: 1px;
+    stroke-dasharray: 4 4;
+    pointer-events: none;
+    vector-effect: non-scaling-stroke;
+}
+
+.editor-handle {
+    fill: #FFFFFF;
+    stroke: var(--pigment, #9B3418);
+    stroke-width: 1.5;
+    cursor: pointer;
+}
+
+.editor-rotate-handle {
+    fill: var(--pigment, #9B3418);
+    stroke: #FFFFFF;
+    stroke-width: 1.5;
+    cursor: grab;
+}
+
+/* --------------------------------------------------------------------------
+ * 8. 280px Right Properties Panel
+ * -------------------------------------------------------------------------- */
+.editor-properties-panel {
+    grid-area: props;
+    width: var(--props-width, 280px);
+    height: 100%;
+    background-color: var(--ground, #E7E3DA);
+    border-left: 1px solid var(--hairline, #D0CAC0);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    z-index: 20;
+    user-select: none;
+    transition: width 0.15s ease;
+}
+
+.editor-properties-panel.is-hidden {
+    display: none !important;
+}
+
+.editor-prop-header {
+    height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--hairline, #D0CAC0);
+    background-color: var(--ground, #E7E3DA);
+    flex-shrink: 0;
+}
+
+.editor-prop-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.prop-section-title {
+    font-family: 'Instrument Serif', Georgia, serif;
+    font-size: 18px;
+    color: var(--ink, #1F1E1B);
+    margin: 0;
+    line-height: 1.2;
+}
+
+.prop-field-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.prop-field-label {
+    font-family: 'Azeret Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ink-2, #5F5C55);
+}
+
+.prop-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.editor-text-input,
+.editor-number-input {
+    background-color: var(--ground-2, #DDD8CF);
+    color: var(--ink, #1F1E1B);
+    border: 1px solid var(--hairline-2, #B8B0A2);
+    height: 32px;
+    padding: 0 8px;
+    font-family: 'Azeret Mono', monospace;
+    font-size: 11px;
+    border-radius: 0;
+    outline: none;
+    width: 100%;
+}
+
+.editor-text-input:focus,
+.editor-number-input:focus {
+    border-color: var(--ink, #1F1E1B);
+}
+
+.editor-prop-btn {
+    height: 32px;
+    font-size: 11px;
+    font-family: inherit;
+    border: 1px solid var(--ink, #1F1E1B);
+    background-color: var(--ground, #E7E3DA);
+    color: var(--ink, #1F1E1B);
+    cursor: pointer;
+    border-radius: 0;
+    padding: 0 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    transition: background-color 0.15s, color 0.15s;
+}
+
+.editor-prop-btn:hover {
+    background-color: var(--ink, #1F1E1B);
+    color: var(--ground, #E7E3DA);
+}
+
+.editor-prop-btn-danger {
+    border-color: #B91C1C;
+    color: #B91C1C;
+}
+
+.editor-prop-btn-danger:hover {
+    background-color: #B91C1C;
+    color: #FFFFFF;
+}
+
+/* --------------------------------------------------------------------------
+ * 9. Room Naming & Classification Dialog Dialog
+ * -------------------------------------------------------------------------- */
+.editor-dialog-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(31, 30, 27, 0.45);
+    backdrop-filter: blur(2px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 150;
+}
+
+.editor-dialog-overlay.is-hidden {
+    display: none !important;
+}
+
+.editor-dialog-card {
+    background-color: var(--ground, #E7E3DA);
+    border: 1px solid var(--ink, #1F1E1B);
+    padding: 20px;
+    width: 320px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+}
+
+/* --------------------------------------------------------------------------
+ * 10. Bottom-Left Metric Scale Bar
  * -------------------------------------------------------------------------- */
 .editor-scale-bar {
     position: absolute;
@@ -286,7 +690,7 @@
 }
 
 /* --------------------------------------------------------------------------
- * 7. Empty State Card
+ * 11. Empty State Card
  * -------------------------------------------------------------------------- */
 .editor-empty-state {
     position: absolute;
@@ -340,7 +744,7 @@
 }
 
 /* --------------------------------------------------------------------------
- * 8. 28px Bottom Status Bar
+ * 12. 28px Bottom Status Bar
  * -------------------------------------------------------------------------- */
 .editor-status-bar {
     grid-area: status;
@@ -354,5 +758,5 @@
     font-size: 11px;
     color: var(--ink, #1F1E1B);
     user-select: none;
-    z-index: 20;
+    z-index: 25;
 }

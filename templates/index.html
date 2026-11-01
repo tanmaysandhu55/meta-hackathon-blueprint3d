@@ -39,7 +39,7 @@
     <!-- Custom CSS & Editorial Studio System -->
     <link rel="stylesheet" href="/static/css/custom.css">
     <link rel="stylesheet" href="/static/css/styles.css?v=20261031-editorial">
-    <link rel="stylesheet" href="/static/css/editor.css?v=20261101">
+    <link rel="stylesheet" href="/static/css/editor.css?v=20261101-complete">
 
     <!-- Pinned Three.js r128 via CDN (cdnjs) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -987,7 +987,13 @@
 
         <!-- 56px Left Tool Rail -->
         <aside class="editor-tool-rail" id="editor-tool-rail" role="toolbar" aria-label="Editor Tools">
-            <button type="button" class="editor-tool-btn is-active" data-tool="select" title="Select (V)" aria-label="Select Tool">
+            <button type="button" class="editor-tool-btn is-active" id="btn-rail-library" data-tool="library" title="Object Library (L)" aria-label="Object Library">
+                <svg class="w-5 h-5 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square">
+                    <rect x="4" y="4" width="16" height="16"/><line x1="4" y1="9" x2="20" y2="9"/><line x1="9" y1="9" x2="9" y2="20"/>
+                </svg>
+                <span class="tool-label">Library</span>
+            </button>
+            <button type="button" class="editor-tool-btn" data-tool="select" title="Select (V)" aria-label="Select Tool">
                 <svg class="w-5 h-5 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square">
                     <path d="M3 3l7 18 3-7 7-3L3 3z"/>
                 </svg>
@@ -1032,6 +1038,205 @@
                 </svg>
                 <span class="tool-label">Delete</span>
             </button>
+        </aside>
+
+        <!-- 260px Left Object Library Panel (Collapsible) -->
+        <aside class="editor-library-panel" id="editor-library-panel" aria-label="Object Library">
+            <div class="editor-library-header">
+                <span class="mono-label text-[11px] uppercase tracking-wider font-semibold">Object Library</span>
+                <button type="button" class="editor-panel-close-btn" id="btn-toggle-library" title="Collapse Library" aria-label="Collapse Library">
+                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="editor-library-content">
+                <!-- 1. STRUCTURE -->
+                <div class="editor-accordion-group" data-group="structure">
+                    <button type="button" class="editor-accordion-header" aria-expanded="true">
+                        <span class="mono-label">Structure</span>
+                        <svg class="w-3.5 h-3.5 accordion-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 9l6 6 6-6"/></svg>
+                    </button>
+                    <div class="editor-accordion-body">
+                        <div class="editor-items-grid">
+                            <button type="button" class="editor-lib-cell" data-lib-id="wall.exterior" title="Exterior Wall (0.20 m)">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><path d="M4 20V4h16v6h-10v10H4z"/></svg>
+                                <span class="lib-label">Ext Wall</span>
+                            </button>
+                            <button type="button" class="editor-lib-cell" data-lib-id="wall.interior" title="Interior Wall (0.12 m)">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><path d="M4 10h16v4H4z"/></svg>
+                                <span class="lib-label">Int Wall</span>
+                            </button>
+                            <button type="button" class="editor-lib-cell" data-lib-id="struct.railing" title="Railing">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><line x1="3" y1="12" x2="21" y2="12"/><line x1="6" y1="8" x2="6" y2="16"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="18" y1="8" x2="18" y2="16"/></svg>
+                                <span class="lib-label">Railing</span>
+                            </button>
+                            <button type="button" class="editor-lib-cell" data-lib-id="struct.column" title="Structural Column">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><rect x="6" y="6" width="12" height="12"/><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+                                <span class="lib-label">Column</span>
+                            </button>
+                            <button type="button" class="editor-lib-cell" data-lib-id="struct.stairs_l" title="L-Shaped Stairs">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><path d="M5 19h8v-8h6V5h-4v4h-6v6H5z"/><path d="M11 11l4-4M15 7l-2 0M15 7l0 2"/></svg>
+                                <span class="lib-label">Stairs L</span>
+                            </button>
+                            <button type="button" class="editor-lib-cell" data-lib-id="struct.stairs" title="Straight Stairs">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><rect x="6" y="4" width="12" height="16"/><line x1="6" y1="7" x2="18" y2="7"/><line x1="6" y1="10" x2="18" y2="10"/><line x1="6" y1="13" x2="18" y2="13"/><line x1="6" y1="16" x2="18" y2="16"/><path d="M12 17V7m-2 2l2-2 2 2"/></svg>
+                                <span class="lib-label">Stairs</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. DOORS -->
+                <div class="editor-accordion-group" data-group="doors">
+                    <button type="button" class="editor-accordion-header" aria-expanded="true">
+                        <span class="mono-label">Doors</span>
+                        <svg class="w-3.5 h-3.5 accordion-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 9l6 6 6-6"/></svg>
+                    </button>
+                    <div class="editor-accordion-body">
+                        <div class="editor-items-grid">
+                            <button type="button" class="editor-lib-cell" data-lib-id="door.single" title="Single Swing Door">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><path d="M5 19V5h3v14M8 5a11 11 0 0 1 11 11v3"/></svg>
+                                <span class="lib-label">Single</span>
+                            </button>
+                            <button type="button" class="editor-lib-cell" data-lib-id="door.double" title="Double Swing Door">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><path d="M4 19V6m16 13V6M4 6a8 8 0 0 1 8 8v5M20 6a8 8 0 0 0-8 8v5"/></svg>
+                                <span class="lib-label">Double</span>
+                            </button>
+                            <button type="button" class="editor-lib-cell" data-lib-id="door.sliding" title="Sliding Pocket Door">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><rect x="3" y="8" width="10" height="3"/><rect x="11" y="13" width="10" height="3"/><line x1="2" y1="6" x2="22" y2="6"/></svg>
+                                <span class="lib-label">Sliding</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. WINDOWS -->
+                <div class="editor-accordion-group" data-group="windows">
+                    <button type="button" class="editor-accordion-header" aria-expanded="true">
+                        <span class="mono-label">Windows</span>
+                        <svg class="w-3.5 h-3.5 accordion-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 9l6 6 6-6"/></svg>
+                    </button>
+                    <div class="editor-accordion-body">
+                        <div class="editor-items-grid">
+                            <button type="button" class="editor-lib-cell" data-lib-id="window.single" title="Single Window">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><rect x="4" y="9" width="16" height="6"/><line x1="4" y1="12" x2="20" y2="12"/></svg>
+                                <span class="lib-label">Single</span>
+                            </button>
+                            <button type="button" class="editor-lib-cell" data-lib-id="window.double" title="Double Window">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><rect x="3" y="9" width="18" height="6"/><line x1="12" y1="9" x2="12" y2="15"/><line x1="3" y1="12" x2="21" y2="12"/></svg>
+                                <span class="lib-label">Double</span>
+                            </button>
+                            <button type="button" class="editor-lib-cell" data-lib-id="window.wide" title="Wide Triple Window">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><rect x="2" y="9" width="20" height="6"/><line x1="8.5" y1="9" x2="8.5" y2="15"/><line x1="15.5" y1="9" x2="15.5" y2="15"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
+                                <span class="lib-label">Wide</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. LIVING & BEDROOM -->
+                <div class="editor-accordion-group" data-group="living">
+                    <button type="button" class="editor-accordion-header" aria-expanded="true">
+                        <span class="mono-label">Living &amp; Bedroom</span>
+                        <svg class="w-3.5 h-3.5 accordion-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 9l6 6 6-6"/></svg>
+                    </button>
+                    <div class="editor-accordion-body">
+                        <div class="editor-items-grid">
+                            <button type="button" class="editor-lib-cell" data-lib-id="furn.bed" title="Bed">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><rect x="5" y="4" width="14" height="16" rx="1"/><rect x="7" y="6" width="4" height="3"/><rect x="13" y="6" width="4" height="3"/><line x1="5" y1="11" x2="19" y2="11"/></svg>
+                                <span class="lib-label">Bed</span>
+                            </button>
+                            <button type="button" class="editor-lib-cell" data-lib-id="furn.sofa" title="Sofa">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><rect x="4" y="6" width="16" height="12" rx="1"/><path d="M4 10h16M7 10v6M12 10v6M17 10v6M4 8v8M20 8v8"/></svg>
+                                <span class="lib-label">Sofa</span>
+                            </button>
+                            <button type="button" class="editor-lib-cell" data-lib-id="furn.table_coffee" title="Coffee Table">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><rect x="4" y="8" width="16" height="8" rx="1"/><rect x="6" y="10" width="12" height="4"/></svg>
+                                <span class="lib-label">Table</span>
+                            </button>
+                            <button type="button" class="editor-lib-cell" data-lib-id="furn.chairs" title="Chairs Set">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><rect x="7" y="8" width="10" height="8"/><rect x="9" y="4" width="6" height="2"/><rect x="9" y="18" width="6" height="2"/><rect x="3" y="9" width="2" height="6"/><rect x="19" y="9" width="2" height="6"/></svg>
+                                <span class="lib-label">Chairs</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 5. KITCHEN & BATH -->
+                <div class="editor-accordion-group" data-group="kitchen_bath">
+                    <button type="button" class="editor-accordion-header" aria-expanded="true">
+                        <span class="mono-label">Kitchen &amp; Bath</span>
+                        <svg class="w-3.5 h-3.5 accordion-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 9l6 6 6-6"/></svg>
+                    </button>
+                    <div class="editor-accordion-body">
+                        <div class="editor-items-grid">
+                            <button type="button" class="editor-lib-cell" data-lib-id="furn.sink" title="Sink">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><rect x="4" y="5" width="16" height="14"/><rect x="7" y="8" width="10" height="8" rx="1"/><circle cx="12" cy="12" r="1.5"/></svg>
+                                <span class="lib-label">Sink</span>
+                            </button>
+                            <button type="button" class="editor-lib-cell" data-lib-id="furn.toilet" title="Toilet">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><rect x="7" y="4" width="10" height="4"/><path d="M8 8h8v5a4 4 0 0 1-8 0V8z"/></svg>
+                                <span class="lib-label">Toilet</span>
+                            </button>
+                            <button type="button" class="editor-lib-cell" data-lib-id="furn.bathtub" title="Bathtub">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><rect x="5" y="4" width="14" height="16" rx="4"/><rect x="7" y="6" width="10" height="12" rx="3"/><circle cx="12" cy="8" r="1"/></svg>
+                                <span class="lib-label">Tub</span>
+                            </button>
+                            <button type="button" class="editor-lib-cell" data-lib-id="furn.stove" title="Cooktop / Stove">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><rect x="5" y="5" width="14" height="14"/><circle cx="9" cy="9" r="2"/><circle cx="15" cy="9" r="2"/><circle cx="9" cy="15" r="2"/><circle cx="15" cy="15" r="2"/></svg>
+                                <span class="lib-label">Stove</span>
+                            </button>
+                            <button type="button" class="editor-lib-cell" data-lib-id="furn.fridge" title="Refrigerator">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><rect x="6" y="4" width="12" height="16"/><line x1="6" y1="10" x2="18" y2="10"/><line x1="16" y1="7" x2="16" y2="9"/><line x1="16" y1="12" x2="16" y2="15"/></svg>
+                                <span class="lib-label">Fridge</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 6. DINING & OFFICE -->
+                <div class="editor-accordion-group" data-group="dining_office">
+                    <button type="button" class="editor-accordion-header" aria-expanded="true">
+                        <span class="mono-label">Dining &amp; Office</span>
+                        <svg class="w-3.5 h-3.5 accordion-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 9l6 6 6-6"/></svg>
+                    </button>
+                    <div class="editor-accordion-body">
+                        <div class="editor-items-grid">
+                            <button type="button" class="editor-lib-cell" data-lib-id="furn.desk" title="Office Desk">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><rect x="4" y="6" width="16" height="12"/><line x1="14" y1="6" x2="14" y2="18"/><line x1="14" y1="10" x2="20" y2="10"/><line x1="14" y1="14" x2="20" y2="14"/></svg>
+                                <span class="lib-label">Desk</span>
+                            </button>
+                            <button type="button" class="editor-lib-cell" data-lib-id="furn.office_chair" title="Office Chair">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><rect x="7" y="5" width="10" height="4" rx="1"/><path d="M8 11a4 4 0 0 0 8 0v-2H8v2z"/><circle cx="12" cy="16" r="2.5"/><line x1="12" y1="13" x2="12" y2="16"/></svg>
+                                <span class="lib-label">Office Chair</span>
+                            </button>
+                            <button type="button" class="editor-lib-cell" data-lib-id="furn.dining_table" title="Dining Table Set">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><rect x="7" y="6" width="10" height="12"/><rect x="9" y="3" width="6" height="2"/><rect x="9" y="19" width="6" height="2"/><rect x="3" y="7" width="2" height="4"/><rect x="3" y="13" width="2" height="4"/><rect x="19" y="7" width="2" height="4"/><rect x="19" y="13" width="2" height="4"/></svg>
+                                <span class="lib-label">Dining</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 7. TEXT -->
+                <div class="editor-accordion-group" data-group="text">
+                    <button type="button" class="editor-accordion-header" aria-expanded="true">
+                        <span class="mono-label">Text</span>
+                        <svg class="w-3.5 h-3.5 accordion-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 9l6 6 6-6"/></svg>
+                    </button>
+                    <div class="editor-accordion-body">
+                        <div class="editor-items-grid">
+                            <button type="button" class="editor-lib-cell" data-lib-id="text.label" title="Text Label">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><path d="M5 18l4-12h2l4 12M6.5 14h7"/><path d="M16 11c1.5-1 3-1 3 1v6m0-3a2 2 0 1 0-3 2c0 1 1 1 3 1"/></svg>
+                                <span class="lib-label">Label</span>
+                            </button>
+                            <button type="button" class="editor-lib-cell" data-lib-id="text.dimension" title="Dimension Line">
+                                <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><line x1="3" y1="7" x2="3" y2="17"/><line x1="21" y1="7" x2="21" y2="17"/><line x1="3" y1="12" x2="21" y2="12"/><path d="M7 9.5L4.5 12 7 14.5M17 9.5L19.5 12 17 14.5"/></svg>
+                                <span class="lib-label">Dimension</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </aside>
 
         <!-- Center SVG Canvas Area -->
@@ -1087,6 +1292,54 @@
             </div>
         </main>
 
+        <!-- 280px Right Properties Panel -->
+        <aside class="editor-properties-panel is-hidden" id="editor-properties-panel" aria-label="Properties">
+            <div class="editor-prop-header">
+                <span class="mono-label text-[11px] uppercase tracking-wider font-semibold">Properties</span>
+                <button type="button" class="editor-panel-close-btn" id="btn-close-properties" title="Close Properties" aria-label="Close Properties">
+                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="editor-prop-content" id="editor-prop-content">
+                <!-- Dynamically populated based on selection -->
+            </div>
+        </aside>
+
+        <!-- Room Naming / Classification Popover Dialog -->
+        <div id="editor-room-dialog" class="editor-dialog-overlay is-hidden">
+            <div class="editor-dialog-card">
+                <span class="mono-label text-[10px] uppercase text-stone-500 tracking-wider">Enclosed Space</span>
+                <h3 class="font-serif text-lg font-normal mt-1 mb-3">Create Room</h3>
+                <div class="flex flex-col gap-3">
+                    <div>
+                        <label for="editor-room-name-input" class="mono-label text-[10px] block mb-1">Room Name</label>
+                        <input type="text" id="editor-room-name-input" class="editor-text-input w-full" placeholder="e.g. Master Bedroom" />
+                    </div>
+                    <div>
+                        <label for="editor-room-type-select" class="mono-label text-[10px] block mb-1">Room Classification</label>
+                        <select id="editor-room-type-select" class="editor-select w-full">
+                            <option value="living" selected>Living</option>
+                            <option value="bedroom">Bedroom</option>
+                            <option value="kitchen">Kitchen</option>
+                            <option value="dining">Dining</option>
+                            <option value="bathroom">Bathroom</option>
+                            <option value="office">Office</option>
+                            <option value="classroom">Classroom</option>
+                            <option value="lab">Lab</option>
+                            <option value="corridor">Corridor</option>
+                            <option value="stairs">Stairs</option>
+                            <option value="entrance">Entrance</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                    <div class="flex items-center gap-2 mt-2">
+                        <button type="button" class="editor-card-btn editor-card-btn-primary flex-1" id="btn-save-room">Save Room</button>
+                        <button type="button" class="editor-card-btn flex-1" id="btn-cancel-room">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- 28px Bottom Status Bar -->
         <footer class="editor-status-bar" id="editor-status-bar">
             <div class="flex items-center gap-4">
@@ -1107,7 +1360,7 @@
     <!-- Application Controllers & Landing Scripts -->
     <script src="/static/js/viewer.js?v=20261028-route-polish"></script>
     <script src="/static/js/app.js?v=20261028-route-polish"></script>
-    <script src="/static/js/editor.js?v=20261101"></script>
-    <script src="/static/js/landing.js?v=20261101"></script>
+    <script src="/static/js/editor.js?v=20261101-complete"></script>
+    <script src="/static/js/landing.js?v=20261101-complete"></script>
 </body>
 </html>
