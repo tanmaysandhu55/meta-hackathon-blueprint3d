@@ -26,7 +26,7 @@ CONCEPT_PROMPTS = {
 
 
 def is_sam_configured():
-    api_key = os.getenv("META_API_KEY", "").strip() or os.getenv("MODEL_API_KEY", "").strip()
+    api_key = os.getenv("MODEL_API_KEY", "").strip() or os.getenv("META_API_KEY", "").strip()
     return bool(
         api_key
         and os.getenv("SAM_MODEL", "sam-3.1").strip()
@@ -98,7 +98,7 @@ def query_sam_concept(image_bytes, concept, image_size, timeout=75):
     prompt = CONCEPT_PROMPTS[concept]
     size, data_url = _prepare_image(image_bytes)
     deadline = time.monotonic() + timeout
-    api_key = os.getenv("META_API_KEY", "").strip() or os.getenv("MODEL_API_KEY", "").strip()
+    api_key = os.getenv("MODEL_API_KEY", "").strip() or os.getenv("META_API_KEY", "").strip()
     client = OpenAI(
         api_key=api_key,
         base_url=os.getenv("META_API_BASE_URL", os.getenv("MODEL_BASE_URL", "https://api.meta.ai/v1")).strip(),

@@ -11,7 +11,7 @@ from PIL import Image
 
 
 def _configured(model_env, default):
-    api_key = os.getenv("META_API_KEY", "").strip() or os.getenv("MODEL_API_KEY", "").strip()
+    api_key = os.getenv("MODEL_API_KEY", "").strip() or os.getenv("META_API_KEY", "").strip()
     return bool(api_key and os.getenv(model_env, default).strip())
 
 
@@ -26,7 +26,7 @@ def voice_transcription_ready():
 def generate_floorplan(prompt):
     if not image_generation_ready():
         raise RuntimeError("Muse Image is not configured.")
-    api_key = os.getenv("META_API_KEY", "").strip() or os.getenv("MODEL_API_KEY", "").strip()
+    api_key = os.getenv("MODEL_API_KEY", "").strip() or os.getenv("META_API_KEY", "").strip()
     client = OpenAI(
         api_key=api_key,
         base_url=os.getenv("META_API_BASE_URL", os.getenv("MODEL_BASE_URL", "https://api.meta.ai/v1")).strip(),
@@ -71,7 +71,7 @@ def transcribe_audio(audio_bytes, filename):
         raise ValueError("Choose a supported WAV audio recording.") from exc
 
     request_body = {"mode": "PUSH_TO_TALK", "model": os.getenv("MUSE_VOICE_MODEL", "muse-voice-transcribe-1.0").strip(), "audioEncoding": "WAV"}
-    api_key = os.getenv("META_API_KEY", "").strip() or os.getenv("MODEL_API_KEY", "").strip()
+    api_key = os.getenv("MODEL_API_KEY", "").strip() or os.getenv("META_API_KEY", "").strip()
     response = httpx.post(
         os.getenv("META_API_BASE_URL", os.getenv("MODEL_BASE_URL", "https://api.meta.ai/v1")).rstrip("/") + "/asr/transcribe",
         headers={"Authorization": "Bearer " + api_key},

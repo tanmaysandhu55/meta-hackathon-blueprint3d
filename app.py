@@ -671,7 +671,7 @@ def health():
 
 @app.route("/api/usage", methods=["GET"])
 def provider_usage():
-    return jsonify({"success": True, "provider": "Baseten", "usage": get_provider_usage()})
+    return jsonify({"success": True, "provider": "Meta Model API", "usage": get_provider_usage()})
 
 
 @app.route("/api/scene/ask", methods=["POST"])
@@ -800,7 +800,7 @@ def generate_floorplan_image():
     if retry_after:
         return jsonify({"success": False, "error": "Generation rate limit reached. Please wait before trying again."}), 429
     if not image_generation_ready():
-        return jsonify({"success": False, "error": "Muse Image requires META_API_KEY."}), 503
+        return jsonify({"success": False, "error": "Muse Image requires MODEL_API_KEY or META_API_KEY."}), 503
     payload = request.get_json(silent=True) or {}
     prompt = payload.get("prompt")
     if not isinstance(prompt, str) or not 8 <= len(prompt.strip()) <= 500:
@@ -820,7 +820,7 @@ def transcribe_map_question():
     if retry_after:
         return jsonify({"success": False, "error": "Transcription rate limit reached. Please wait before trying again."}), 429
     if not voice_transcription_ready():
-        return jsonify({"success": False, "error": "Muse Voice Transcribe requires META_API_KEY."}), 503
+        return jsonify({"success": False, "error": "Muse Voice Transcribe requires MODEL_API_KEY or META_API_KEY."}), 503
     audio = request.files.get("audio")
     if not audio or not audio.filename:
         return jsonify({"success": False, "error": "Choose a WAV recording first."}), 400

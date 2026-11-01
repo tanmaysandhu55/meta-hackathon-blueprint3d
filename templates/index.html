@@ -478,7 +478,7 @@
                                     <p class="mono-caption text-[11px]">Describe a layout; review generated drawing before processing.</p>
                                     <textarea id="muse-image-prompt" maxlength="500" rows="2" placeholder="One-story home with two bedrooms, a kitchen, and central hallway" class="sidebar-input w-full" {% if not image_generation_ready %}disabled{% endif %}></textarea>
                                     <button id="btn-muse-image" type="button" class="btn-outline-tab w-full" {% if not image_generation_ready %}disabled{% endif %}>Generate draft floor plan</button>
-                                    <p id="muse-image-status" class="mono-caption text-[10px]" aria-live="polite">{% if image_generation_ready %}Muse Image is ready.{% else %}Available after adding META_API_KEY.{% endif %}</p>
+                                    <p id="muse-image-status" class="mono-caption text-[10px]" aria-live="polite">{% if image_generation_ready %}Muse Image is ready.{% else %}Available after adding MODEL_API_KEY.{% endif %}</p>
                                 </div>
                                 <div class="space-y-1.5 border-t border-hairline pt-2">
                                     <label for="map-audio-input" class="block text-xs font-semibold">Ask by voice (WAV)</label>
@@ -548,7 +548,7 @@
                                     <button id="map-assistant-submit" type="submit" class="btn-outline-tab shrink-0 px-3">Ask</button>
                                 </div>
                             </form>
-                            <p id="map-assistant-provider" class="mono-caption mt-1.5" style="font-size: 10px;" aria-live="polite">{% if labeling_ready %}Baseten Muse Spark Open{% else %}Offline scene lookup{% endif %}</p>
+                            <p id="map-assistant-provider" class="mono-caption mt-1.5" style="font-size: 10px;" aria-live="polite">{% if labeling_ready %}Meta Muse Spark{% else %}Offline scene lookup{% endif %}</p>
                             <p id="map-assistant-answer" class="hidden border border-hairline p-2 text-xs leading-relaxed mt-2" role="status" aria-live="polite"></p>
                         </section>
                     </div>
