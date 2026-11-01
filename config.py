@@ -1,23 +1,33 @@
-"""Centralized configuration module for FloorPlan3D.
-
-Exposes unified settings for Meta Model API (SAM 3.1, Muse Spark, Muse Image, Muse Voice),
-system timeouts, mock/live mode logic, and security privacy guards.
-"""
 import logging
 import os
+import re
 from pathlib import Path
-from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
 # Load .env if present; if not present, app falls back cleanly to MOCK_AI=1
 env_path = Path(__file__).resolve().parent / ".env"
-if env_path.is_file():
-    load_dotenv(dotenv_path=env_path)
-else:
-    load_dotenv()
+try:
+    from dotenv import load_dotenv
+    if env_path.is_file():
+        load_dotenv(dotenv_path=env_path)
+    else:
+        load_dotenv()
+except ImportError:
+    # Manual fallback parser for minimal environments without python-dotenv
+    if env_path.is_file():
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip().strip("'\""))
 
 # Unified API Key & Base URL
+if os.getenv("META_API_KEY") and not os.getenv("MODEL_API_KEY"):
+    logger.warning("META_API_KEY is deprecated. Please update your environment to MODEL_API_KEY.")
+
 MODEL_API_KEY = (os.getenv("MODEL_API_KEY") or os.getenv("META_API_KEY") or "").strip()
 MODEL_BASE_URL = os.getenv("MODEL_BASE_URL", "https://api.meta.ai/v1").strip()
 
@@ -62,9 +72,10 @@ SAM_CONCEPTS = [
     "toilet",
 ]
 
-# Budgets & Limits
+# Budgets, Timeouts & Limits
 MAX_IMAGE_SIDE = int(os.getenv("MAX_IMAGE_SIDE", "1500"))
 SAM_TIMEOUT = int(os.getenv("SAM_TIMEOUT", "75"))
+MUSE_TIMEOUT = int(os.getenv("MUSE_TIMEOUT", "30"))
 MAX_PARALLEL = int(os.getenv("MAX_PARALLEL", "4"))
 MAX_SAM_CALLS_PER_UPLOAD = int(os.getenv("MAX_SAM_CALLS_PER_UPLOAD", "12"))
 DEFAULT_METERS_PER_PIXEL = float(os.getenv("DEFAULT_METERS_PER_PIXEL", "0.02"))
