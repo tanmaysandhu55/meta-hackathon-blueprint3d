@@ -484,6 +484,7 @@
                                     <label for="map-audio-input" class="block text-xs font-semibold">Ask by voice (WAV)</label>
                                     <input id="map-audio-input" type="file" accept="audio/wav,.wav" class="sidebar-input w-full text-[10px]" {% if not voice_transcription_ready %}disabled{% endif %}>
                                     <button id="btn-transcribe-map" type="button" class="btn-outline-tab w-full" {% if not voice_transcription_ready %}disabled{% endif %}>Transcribe question</button>
+                                    <p id="map-transcription-status" class="mono-caption text-[10px]" aria-live="polite">{% if voice_transcription_ready %}Voice transcription is ready.{% else %}Available after adding MODEL_API_KEY.{% endif %}</p>
                                 </div>
                             </div>
                         </details>
