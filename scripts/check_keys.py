@@ -12,9 +12,7 @@ Built with Python standard library (urllib.request) for maximum portability.
 """
 
 import argparse
-import base64
 import json
-import os
 import sys
 import urllib.error
 import urllib.request
