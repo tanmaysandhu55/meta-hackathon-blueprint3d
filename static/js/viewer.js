@@ -1,3568 +1,3881 @@
-/**
- * FloorPlan3D - Three.js 3D Interactive Floor Plan Viewer
- * 
- * Renders scene.json (METERS, origin top-left of plan, x right, y down) as a navigable 3D map.
- * Features:
- * - Extruded 3D walls with hole cutouts (real-time height adjustment)
- * - Color-coded room floor slabs based on room types
- * - 3D floating canvas text badges for room labels, types, and confidence scores
- * - 3D door openings and glass windows
- * - Interactive raycasting: click any room to inspect dimensions, area, and connections
- * - Multiple camera modes (Isometric 3D, Top-Down 2D, Eye-Level Orbit)
- * - Measurement grid and scale bar in meters
- * - Layer visibility toggles (walls, floors, labels, doors, grid)
- */
-
-class FloorPlanViewer {
-    constructor(containerId) {
-        this.container = document.getElementById(containerId);
-        if (!this.container) {
-            console.error(`Container #${containerId} not found.`);
-            return;
-        }
-
-        // Core Three.js components
-        this.scene = null;
-        this.camera = null;
-        this.renderer = null;
-        this.controls = null;
-        this.raycaster = new THREE.Raycaster();
-        this.mouse = new THREE.Vector2();
-
-        // 3D Object groups for clean layer toggling
-        this.groups = {
-            grid: new THREE.Group(),
-            route: new THREE.Group(),
-            measurements: new THREE.Group(),
-            evacuation: new THREE.Group(),
-            blueprint: new THREE.Group(),
-        };
-        this.groups.measurements.name = "measurements";
-        this.groups.evacuation.name = "evacuation";
-        this.groups.blueprint.name = "blueprint";
-        this.timeOfDay = 13.0;
-        this.interiorLightsGroup = new THREE.Group();
-        this.interiorLightsGroup.name = "interiorLights";
-        this.blueprintMesh = null;
-        this.blueprintOpacity = 0.0;
-        this.evacuationActive = false;
-        this.evacuationTexture = null;
-        this.floorGroups = new Map();
-        window.viewer = this;
-        this.floorLayerNames = ["walls", "rooms", "labels", "doors", "windows", "furniture", "stairs", "roof", "slabs"];
-        this.layerVisibility = Object.fromEntries(this.floorLayerNames.map(name => [name, true]));
-        this.layerVisibility.furniture = false;
-        this.layerVisibility.roof = false;
-        this.selectableMeshes = [];
-        this.boundaryPreview = null;
-
-        // Scene state & metadata
-        this.currentSceneData = null;
-        this.centerOffset = { x: 0, y: 0 };
-        this.selectedRoomMesh = null;
-        this.selectedRoomOriginalColor = null;
-        this.wallHeight = 3.0; // default in meters
-        this.floorHeight = 3.2;
-        this.levelCount = 1;
-        this.sceneHeight = this.wallHeight;
-        this.visibleLevel = null;
-        this.is2DMode = false;
-        this.isEyeLevelView = false;
-        this.currentIsolatedFloor = null;
-        this.pendingFloorIsolation = null;
-        this.isolationTween = null;
-        this.loadingGroup = null;
-        this.loadingLaser = null;
-        this.animatingMeshes = [];
-        this.walkthroughActive = false;
-        this.walkthroughKeys = new Set();
-        this.walkthroughFloorIndex = 0;
-        this.walkthroughYaw = 0;
-        this.walkthroughPitch = 0;
-        this.walkthroughMouseDown = false;
-        this.walkthroughLastPointer = null;
-        this.walkthroughVelocity = new THREE.Vector3();
-        this.walkthroughEyeHeight = 1.6;
-        this.walkthroughTransition = null;
-        this.walkthroughDoors = [];
-        this.walkthroughHintElement = document.getElementById("walkthrough-hint");
-        this.walkthroughHud = document.getElementById("walkthrough-hud");
-        this.walkthroughStairLinks = [];
-        this.walkthroughNearbyInteraction = null;
-        this.walkthroughBobPhase = 0;
-        this.generatedStairwellOpenings = new Map();
-        this.measurementActive = false;
-        this.measurementPoints = [];
-
-        // Muted architectural colors retain room-type distinction without overpowering the model.
-        this.roomColors = {
-            classroom: 0xCBD0C4,
-            lab:       0xD6C2B4,
-            corridor:  0xE7E3DA,
-            restroom:  0xC3CCCB,
-            stairs:    0xBDB6A6,
-            entrance:  0xD9CDB0,
-            library:   0xCFC4B0,
-            room:      0xD2CDC0,
-            elevator:  0xBDB6A6,
-            other:     0xD2CDC0
-        };
-        window.ROOM_FLOOR_COLORS = this.roomColors;
-
-        // Initialize WebGL scene
-        this.init();
-    }
-
-    init() {
-        const width = this.container.clientWidth || 800;
-        const height = this.container.clientHeight || 600;
-
-        // 1. Scene
-        this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(0xE7E3DA); // Editorial studio bone ground
-
-        // 2. Camera (Perspective)
-        this.camera = new THREE.PerspectiveCamera(45, width / height, 0.05, 1000);
-        this.camera.position.set(15, 20, 20);
-
-        // 3. WebGL Renderer
-        this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
-        this.renderer.setSize(width, height);
-        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        this.renderer.shadowMap.enabled = true;
-        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-        this.container.appendChild(this.renderer.domElement);
-
-        // 4. OrbitControls (pinned CDN)
-        this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
-        this.controls.enableDamping = true;
-        this.controls.dampingFactor = 0.08;
-        this.controls.maxPolarAngle = Math.PI / 2 + 0.05; // Do not go below ground
-        this.controls.minDistance = 2;
-        this.controls.maxDistance = 150;
-
-        // 5. Lighting Setup (Soft architectural illumination)
-        this.setupLighting();
-
-        // 6. Add object groups to scene
-        Object.values(this.groups).forEach(g => this.scene.add(g));
-        this.createFloorInfoPanel();
-        this.populateLegend();
-
-        // 7. Event Listeners
-        window.addEventListener("resize", () => this.onWindowResize());
-        window.addEventListener("keydown", (event) => {
-            this.panWithArrowKeys(event);
-            this.onWalkthroughKeyDown(event);
-        });
-        window.addEventListener("keyup", event => this.onWalkthroughKeyUp(event));
-        window.addEventListener("blur", () => this.walkthroughKeys.clear());
-        document.addEventListener("pointerlockchange", () => this.onPointerLockChange());
-        document.addEventListener("mousemove", event => this.onWalkthroughMouseMove(event));
-        this.renderer.domElement.addEventListener("pointerdown", event => this.onWalkthroughPointerDown(event));
-        this.renderer.domElement.addEventListener("pointermove", event => this.onWalkthroughPointerMove(event));
-        this.renderer.domElement.addEventListener("pointerup", () => {
-            this.walkthroughMouseDown = false;
-            this.walkthroughLastPointer = null;
-        });
-        this.renderer.domElement.addEventListener("click", (e) => this.onPointerClick(e));
-        document.querySelectorAll("[data-walk-key]").forEach(button => {
-            const key = button.dataset.walkKey;
-            button.addEventListener("pointerdown", event => {
-                if (!this.walkthroughActive) return;
-                event.preventDefault();
-                button.setPointerCapture?.(event.pointerId);
-                this.setWalkthroughKey(key, true);
-            });
-            ["pointerup", "pointercancel", "lostpointercapture"].forEach(type => {
-                button.addEventListener(type, () => this.setWalkthroughKey(key, false));
-            });
-        });
-        document.querySelectorAll("[data-walk-interact]").forEach(button => {
-            button.addEventListener("pointerdown", event => {
-                if (!this.walkthroughActive) return;
-                event.preventDefault();
-                this.tryWalkthroughInteraction();
-            });
-        });
-
-        // 8. Start Render Loop
-        this.animate();
-    }
-
-
-    populateLegend() {
-        const container = document.getElementById("room-types-legend-swatches");
-        if (!container) return;
-        container.innerHTML = "";
-        const items = [
-            { key: "classroom", label: "Classroom" },
-            { key: "lab", label: "Lab" },
-            { key: "corridor", label: "Corridor" },
-            { key: "restroom", label: "Restroom" },
-            { key: "stairs", label: "Stairs" },
-            { key: "entrance", label: "Entrance" },
-            { key: "library", label: "Library" },
-            { key: "other", label: "Other" }
-        ];
-        items.forEach(({ key, label }) => {
-            const hex = (this.roomColors[key] || 0xD2CDC0).toString(16).padStart(6, "0");
-            const row = document.createElement("div");
-            row.className = "flex items-center gap-1.5";
-            row.innerHTML = `<span style="display:inline-block;width:10px;height:10px;background-color:#${hex};border:1px solid rgba(26,25,23,0.16);flex-shrink:0;"></span><span class="mono-label" style="font-size:10px;text-transform:uppercase;color:var(--ink-2);">${label}</span>`;
-            container.appendChild(row);
-        });
-    }
-
-    renderBadgeCanvas(canvas, room, isExpanded = false) {
-        const ctx = canvas.getContext("2d");
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        // Bone background at 85% opacity
-        ctx.fillStyle = "rgba(231, 227, 218, 0.85)";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        // 1px hairline border in hairlines rgba(26,25,23,.16)
-        ctx.strokeStyle = "rgba(26, 25, 23, 0.16)";
-        ctx.lineWidth = 2;
-        ctx.strokeRect(1, 1, canvas.width - 2, canvas.height - 2);
-
-        // Azeret Mono uppercase text in #1A1917
-        ctx.fillStyle = "#1A1917";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-
-        const label = (room.label || `Room ${room.id}`).toUpperCase();
-
-        if (isExpanded) {
-            ctx.font = "600 20px 'Azeret Mono', monospace";
-            ctx.fillText(label, canvas.width / 2, 22);
-
-            const confidence = Number(room.confidence);
-            const confText = Number.isFinite(confidence) && confidence > 0
-                ? `${Math.round(confidence * 100)}% CONF`
-                : "UNCLASSIFIED";
-            ctx.fillStyle = "#4A4741";
-            ctx.font = "500 15px 'Azeret Mono', monospace";
-            ctx.fillText(confText, canvas.width / 2, 44);
-        } else {
-            // Constant screen size 11px (22px on 2x canvas)
-            ctx.font = "600 22px 'Azeret Mono', monospace";
-            ctx.fillText(label, canvas.width / 2, canvas.height / 2);
-        }
-    }
-
-    updateBadgeSprite(sprite, isExpanded) {
-        if (!sprite || sprite.userData.isExpanded === isExpanded) return;
-        sprite.userData.isExpanded = isExpanded;
-        const canvas = sprite.userData.canvas;
-        const room = sprite.userData.room;
-        if (canvas && room) {
-            const label = (room.label || `Room ${room.id}`).toUpperCase();
-            const testCtx = canvas.getContext("2d");
-            testCtx.font = isExpanded ? "600 20px 'Azeret Mono', monospace" : "600 22px 'Azeret Mono', monospace";
-            const tw = testCtx.measureText(label).width;
-            canvas.width = Math.max(160, Math.ceil(tw + 36));
-            canvas.height = isExpanded ? 64 : 44;
-            this.renderBadgeCanvas(canvas, room, isExpanded);
-            if (sprite.material.map) {
-                sprite.material.map.needsUpdate = true;
-            }
-        }
-    }
-
-    setupLighting() {
-        // Soft ambient fill light (bone ground reflection)
-        const ambientLight = new THREE.AmbientLight(0xe7e3da, 0.45);
-        this.ambientLight = ambientLight;
-        this.scene.add(ambientLight);
-
-        // Hemisphere light: subtle bone sky vs warm bounce ground
-        const hemiLight = new THREE.HemisphereLight(0xe7e3da, 0xdcd7cb, 0.52);
-        hemiLight.position.set(0, 50, 0);
-        this.hemiLight = hemiLight;
-        this.scene.add(hemiLight);
-
-        // Key directional light with soft architectural shadows
-        const dirLight = new THREE.DirectionalLight(0xfffcf5, 0.95);
-        dirLight.position.set(30, 45, 25);
-        dirLight.castShadow = true;
-        dirLight.shadow.mapSize.width = 4096;
-        dirLight.shadow.mapSize.height = 4096;
-        dirLight.shadow.camera.near = 1;
-        dirLight.shadow.camera.far = 150;
-        const d = 35;
-        dirLight.shadow.camera.left = -d;
-        dirLight.shadow.camera.right = d;
-        dirLight.shadow.camera.top = d;
-        dirLight.shadow.camera.bottom = -d;
-        dirLight.shadow.bias = -0.00025;
-        dirLight.shadow.normalBias = 0.025;
-        dirLight.shadow.radius = 4;
-        this.keyLight = dirLight;
-        this.scene.add(dirLight);
-        this.scene.add(dirLight.target);
-
-        // Soft secondary fill light
-        const fillLight = new THREE.DirectionalLight(0xE7E3DA, 0.25);
-        fillLight.position.set(-25, 25, -20);
-        this.fillLight = fillLight;
-        this.scene.add(fillLight);
-
-        // Group for interior room ceiling lights (illuminates in night mode)
-        this.scene.add(this.interiorLightsGroup);
-    }
-
-    /**
-     * Loads and renders a complete scene.json contract.
-     * @param {Object} sceneData 
-     */
-    loadScene(sceneData, { animateBuild = true, resetCamera = true } = {}) {
-        if (!sceneData || !sceneData.meta) {
-            console.error("Invalid scene.json provided:", sceneData);
-            return;
-        }
-
-        if (this.walkthroughActive) this.toggleWalkthroughMode(false);
-        if (this.measurementActive) this.toggleMeasurementMode(false);
-        this.currentSceneData = sceneData;
-        this.wallHeight = Number(sceneData.meta.wallHeight) || 3.0;
-        this.floorHeight = this.wallHeight;
-        this.levelCount = Math.max(1, Number(sceneData.meta.levelCount) || (sceneData.meta.levels || []).length || 1);
-        this.syncFloorSpacing();
-        const declaredElevations = (sceneData.meta.levels || []).map(level => Number(level.elevation)).filter(Number.isFinite);
-        const highestFloor = declaredElevations.length
-            ? Math.max(...declaredElevations)
-            : (this.levelCount - 1) * this.floorHeight;
-        this.sceneHeight = highestFloor + this.wallHeight;
-        this.visibleLevel = null;
-        this.currentIsolatedFloor = null;
-        this.pendingFloorIsolation = null;
-        this.isolationTween = null;
-        this.selectableMeshes = [];
-        this.animatingMeshes = [];
-        this.hideFloorInfoPanel();
-
-        // Clear existing geometries
-        this.clear();
-
-        // 1. Calculate bounding box of all coordinates to center the model at (0, 0, 0)
-        this.calculateCenterOffset(sceneData);
-        this.configureShadowCamera();
-        this.createFloorGroups(sceneData);
-        this.buildStairs(sceneData.rooms || []);
-
-        // 2. Build 3D elements
-        this.buildGroundAndGrid();
-        this.buildDoorThresholds(sceneData.doors || []);
-        this.buildRooms(sceneData.rooms || []);
-        this.buildSlabsAndRoof(sceneData);
-        this.hideLoadingState();
-        this.buildWalls(sceneData.walls || []);
-        this.buildDoors(sceneData.doors || []);
-        this.buildWindows(sceneData.windows || []);
-        this.buildFurniture(sceneData.rooms || []);
-        this.buildInteriorLights(sceneData.rooms || []);
-        this.setTimeOfDay(this.timeOfDay || 13.0);
-
-        this.updateVisibleLevels();
-        this.refreshSelectableMeshes();
-
-        if (!animateBuild) {
-            this.animatingMeshes.forEach(mesh => {
-                mesh.scale.y = 1;
-                if (mesh.userData.isFloorSurface && mesh.material) {
-                    mesh.material.opacity = 1;
-                    mesh.material.transparent = false;
-                    mesh.material.depthWrite = true;
-                    mesh.material.needsUpdate = true;
-                }
-                if (mesh.userData.buildRevealLabel) {
-                    mesh.userData.buildRevealLabel.userData.buildRevealProgress = 1;
-                }
-            });
-            this.animatingMeshes.length = 0;
-        }
-
-        // 3. Position camera nicely around building center
-        if (resetCamera) this.resetCameraView();
-    }
-
-    showLoadingState() {
-        if (!this.scene) return;
-        this.hideLoadingState();
-
-        const loadingGroup = new THREE.Group();
-        loadingGroup.name = "loadingGroup";
-
-        const blueprintGrid = new THREE.GridHelper(20, 20, 0x1A1917, 0x1A1917);
-        if (blueprintGrid.material) {
-            blueprintGrid.material.transparent = true;
-            blueprintGrid.material.opacity = 0.12;
-        }
-        loadingGroup.add(blueprintGrid);
-
-        const laserGeometry = new THREE.PlaneGeometry(20, 0.2);
-        const laserMaterial = new THREE.MeshStandardMaterial({
-            color: 0x9B3418,
-            emissive: 0x9B3418,
-            emissiveIntensity: 0.65,
-            transparent: true,
-            opacity: 0.8,
-            side: THREE.DoubleSide,
-            depthWrite: false
-        });
-        const laser = new THREE.Mesh(laserGeometry, laserMaterial);
-        laser.rotation.x = -Math.PI / 2;
-        laser.position.y = 0.04;
-        loadingGroup.add(laser);
-
-        this.loadingGroup = loadingGroup;
-        this.loadingLaser = laser;
-        this.scene.add(loadingGroup);
-    }
-
-    hideLoadingState() {
-        if (!this.loadingGroup) return;
-        this.scene?.remove(this.loadingGroup);
-        this.loadingGroup.traverse(object => {
-            if (object.geometry) object.geometry.dispose();
-            if (object.material) {
-                const materials = Array.isArray(object.material) ? object.material : [object.material];
-                materials.forEach(material => {
-                    if (material.map) material.map.dispose();
-                    material.dispose();
-                });
-            }
-        });
-        this.loadingGroup = null;
-        this.loadingLaser = null;
-    }
-
-    disposeObjectResources(root) {
-        const geometries = new Set();
-        const materials = new Set();
-        const textures = new Set();
-        root.traverse(object => {
-            if (object.geometry) geometries.add(object.geometry);
-            const objectMaterials = Array.isArray(object.material) ? object.material : [object.material];
-            objectMaterials.filter(Boolean).forEach(material => {
-                materials.add(material);
-                Object.values(material).forEach(value => {
-                    if (value?.isTexture) textures.add(value);
-                });
-            });
-        });
-        geometries.forEach(geometry => geometry.dispose());
-        materials.forEach(material => material.dispose());
-        textures.forEach(texture => texture.dispose());
-    }
-
-    configureShadowCamera() {
-        if (!this.keyLight || !this.bounds) return;
-
-        const centerX = (this.bounds.minX + this.bounds.maxX) / 2 - this.centerOffset.x;
-        const centerZ = (this.bounds.minY + this.bounds.maxY) / 2 - this.centerOffset.y;
-        const span = Math.max(this.bounds.width, this.bounds.height, 8);
-        const extent = span * 0.7;
-        const shadowCamera = this.keyLight.shadow.camera;
-
-        this.keyLight.position.set(centerX + span, this.sceneHeight + span * 1.5, centerZ + span);
-        this.keyLight.target.position.set(centerX, 0, centerZ);
-        shadowCamera.left = -extent;
-        shadowCamera.right = extent;
-        shadowCamera.top = extent;
-        shadowCamera.bottom = -extent;
-        shadowCamera.far = span * 5;
-        shadowCamera.updateProjectionMatrix();
-    }
-
-    clear() {
-        this.animatingMeshes.length = 0;
-        this.clearRoute();
-        Object.values(this.groups).forEach(g => {
-            while (g.children.length > 0) {
-                const obj = g.children[0];
-                this.disposeObjectResources(obj);
-                g.remove(obj);
-            }
-        });
-        this.floorGroups.forEach(floorGroup => {
-            this.disposeObjectResources(floorGroup);
-            if (floorGroup.parent) floorGroup.parent.remove(floorGroup);
-        });
-        this.floorGroups.clear();
-        this.boundaryPreview = null;
-        this.wallMaterial = null;
-        this.selectableMeshes = [];
-        this.selectedRoomMesh = null;
-        this.selectedRoomOriginalColor = null;
-    }
-
-    createFloorGroups(sceneData) {
-        const levels = new Set((sceneData.meta.levels || []).map(item => Number(item.floorIndex ?? item.level) || 0));
-        ["rooms", "walls", "doors", "windows"].forEach(collection => {
-            (sceneData[collection] || []).forEach(item => levels.add(this.getItemFloorIndex(item)));
-        });
-        if (!levels.size) levels.add(0);
-
-        Array.from(levels).sort((a, b) => a - b).forEach(floorIndex => {
-            const floorGroup = new THREE.Group();
-            floorGroup.name = `floorGroup_${floorIndex}`;
-            floorGroup.floorIndex = floorIndex;
-            floorGroup.userData = { floorIndex, currentIsolationOpacity: 1 };
-            floorGroup.position.y = this.getLevelElevation(floorIndex);
-            this.floorLayerNames.forEach(layerName => {
-                const layer = new THREE.Group();
-                layer.name = layerName;
-                layer.visible = this.layerVisibility[layerName];
-                floorGroup.add(layer);
-            });
-            this.floorGroups.set(floorIndex, floorGroup);
-            this.scene.add(floorGroup);
-        });
-    }
-
-    getWallThickness() {
-        return Math.max(0.05, Number(this.currentSceneData?.meta?.wallThickness) || 0.2);
-    }
-
-    getOpeningRotation(opening, floorIndex) {
-        if (opening && Number.isFinite(Number(opening.rotation))) {
-            return Number(opening.rotation);
-        }
-        const center = opening.center || [0, 0];
-        let bestDistance = Infinity;
-        let rotation = 0;
-
-        (this.currentSceneData?.walls || []).forEach(wall => {
-            if (this.getItemFloorIndex(wall) !== floorIndex || !wall.polygon || wall.polygon.length < 3) return;
-            const xs = wall.polygon.map(point => Number(point[0]));
-            const ys = wall.polygon.map(point => Number(point[1]));
-            const minX = Math.min(...xs), maxX = Math.max(...xs);
-            const minY = Math.min(...ys), maxY = Math.max(...ys);
-            const width = maxX - minX;
-            const height = maxY - minY;
-            if (Math.max(width, height) < Math.max(0.5, Math.min(width, height) * 2)) return;
-
-            const isVertical = height > width;
-            const alongDistance = isVertical
-                ? Math.max(minY - center[1], 0, center[1] - maxY)
-                : Math.max(minX - center[0], 0, center[0] - maxX);
-            const acrossDistance = isVertical
-                ? Math.abs(center[0] - (minX + maxX) / 2)
-                : Math.abs(center[1] - (minY + maxY) / 2);
-            // Weight acrossDistance heavily so intersecting perpendicular walls do not hijack the orientation
-            const distance = Math.hypot(alongDistance, acrossDistance * 4);
-            if (distance < bestDistance) {
-                bestDistance = distance;
-                rotation = isVertical ? Math.PI / 2 : 0;
-            }
-        });
-
-        return rotation;
-    }
-
-    getItemFloorIndex(item) {
-        const value = item && (item.floorIndex ?? item.level);
-        return Number.isFinite(Number(value)) ? Number(value) : 0;
-    }
-
-    getRoomHoles(room) {
-        return [...(Array.isArray(room?.holes) ? room.holes : []), ...(this.generatedStairwellOpenings.get(room) || [])];
-    }
-
-    getFloorLayer(floorIndex, layerName) {
-        return this.floorGroups.get(Number(floorIndex))?.getObjectByName(layerName) || null;
-    }
-
-    previewRoomBoundary(room) {
-        if (!room || !Array.isArray(room.polygon) || room.polygon.length < 3) return;
-        const level = this.getItemFloorIndex(room);
-        const layer = this.getFloorLayer(level, "rooms");
-        if (!layer) return;
-        if (this.boundaryPreview) {
-            this.boundaryPreview.parent?.remove(this.boundaryPreview);
-            this.boundaryPreview.geometry.dispose();
-            this.boundaryPreview.material.dispose();
-            this.boundaryPreview = null;
-        }
-        const points = room.polygon.map(([x, z]) => {
-            const world = this.toWorldCoords(x, z);
-            return new THREE.Vector3(world.x, 0.045, world.z);
-        });
-        const line = new THREE.LineLoop(
-            new THREE.BufferGeometry().setFromPoints(points),
-            new THREE.LineBasicMaterial({ color: 0x9B3418, transparent: true, opacity: 1, depthTest: false })
-        );
-        line.name = "room-boundary-edit-preview";
-        line.renderOrder = 20;
-        line.userData = { roomId: room.id, floorIndex: level };
-        layer.add(line);
-        this.boundaryPreview = line;
-    }
-
-    clearRoomBoundaryPreview() {
-        if (!this.boundaryPreview) return;
-        this.boundaryPreview.parent?.remove(this.boundaryPreview);
-        this.boundaryPreview.geometry.dispose();
-        this.boundaryPreview.material.dispose();
-        this.boundaryPreview = null;
-    }
-
-    createFloorInfoPanel() {
-        const panel = document.createElement("div");
-        panel.className = "floor-info-panel";
-        panel.hidden = true;
-        panel.setAttribute("role", "status");
-        panel.setAttribute("aria-live", "polite");
-
-        const heading = document.createElement("h3");
-        heading.className = "floor-info-title";
-        const details = document.createElement("div");
-        details.className = "floor-info-details";
-        const closeButton = document.createElement("button");
-        closeButton.type = "button";
-        closeButton.className = "floor-info-close";
-        closeButton.textContent = "Close";
-        closeButton.addEventListener("click", () => this.restoreFloorIsolation());
-
-        panel.append(heading, details, closeButton);
-        this.container.appendChild(panel);
-        this.floorInfoPanel = panel;
-        this.floorInfoHeading = heading;
-        this.floorInfoDetails = details;
-    }
-
-    getFloorStats(floorIndex) {
-        const rooms = (this.currentSceneData?.rooms || []).filter(room => this.getItemFloorIndex(room) === floorIndex);
-        const totalArea = rooms.reduce((sum, room) => {
-            const polygon = room.polygon || [];
-            if (polygon.length < 3) return sum;
-            let twiceArea = 0;
-            polygon.forEach((point, index) => {
-                const next = polygon[(index + 1) % polygon.length];
-                twiceArea += point[0] * next[1] - next[0] * point[1];
-            });
-            return sum + Math.abs(twiceArea) / 2;
-        }, 0);
-        const levelInfo = (this.currentSceneData?.meta?.levels || []).find(item => Number(item.floorIndex ?? item.level) === floorIndex);
-        return {
-            name: levelInfo?.name || `Level ${floorIndex + 1}`,
-            roomCount: rooms.length,
-            totalArea
-        };
-    }
-
-    showFloorInfoPanel(floorIndex) {
-        if (!this.floorInfoPanel) return;
-        const stats = this.getFloorStats(floorIndex);
-        this.floorInfoHeading.textContent = stats.name;
-        this.floorInfoDetails.replaceChildren();
-        [
-            [`Rooms`, String(stats.roomCount)],
-            [`Total area`, `${stats.totalArea.toFixed(1)} m²`]
-        ].forEach(([label, value]) => {
-            const row = document.createElement("p");
-            const labelNode = document.createElement("span");
-            const valueNode = document.createElement("strong");
-            labelNode.textContent = label;
-            valueNode.textContent = value;
-            row.append(labelNode, valueNode);
-            this.floorInfoDetails.appendChild(row);
-        });
-        this.floorInfoPanel.hidden = false;
-        requestAnimationFrame(() => this.floorInfoPanel.classList.add("is-visible"));
-    }
-
-    hideFloorInfoPanel() {
-        if (!this.floorInfoPanel) return;
-        this.floorInfoPanel.classList.remove("is-visible");
-        this.floorInfoPanel.hidden = true;
-    }
-
-    calculateCenterOffset(sceneData) {
-        let minX = Infinity, maxX = -Infinity;
-        let minY = Infinity, maxY = -Infinity;
-
-        const checkCoord = (x, y) => {
-            if (x < minX) minX = x;
-            if (x > maxX) maxX = x;
-            if (y < minY) minY = y;
-            if (y > maxY) maxY = y;
-        };
-
-        // Scan rooms
-        (sceneData.rooms || []).forEach(r => {
-            (r.polygon || []).forEach(pt => checkCoord(pt[0], pt[1]));
-        });
-
-        // Scan walls
-        (sceneData.walls || []).forEach(w => {
-            (w.polygon || []).forEach(pt => checkCoord(pt[0], pt[1]));
-        });
-
-        if (minX === Infinity) {
-            minX = 0; maxX = 16;
-            minY = 0; maxY = 12;
-        }
-
-        this.bounds = { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY };
-        this.centerOffset = {
-            x: (minX + maxX) / 2.0,
-            y: (minY + maxY) / 2.0
-        };
-    }
-
-    /**
-     * Converts a 2D scene.json coordinate [x, y] in meters
-     * into 3D world coordinates centered at (0, 0, 0).
-     */
-    toWorldCoords(x, y) {
-        return {
-            x: x - this.centerOffset.x,
-            z: y - this.centerOffset.y
-        };
-    }
-
-    getLevelElevation(level) {
-        const numericLevel = Math.max(0, Number(level) || 0);
-        const levelInfo = (this.currentSceneData?.meta?.levels || []).find(item =>
-            Number(item.floorIndex ?? item.level) === numericLevel
-        );
-        const declaredElevation = Number(levelInfo?.elevation);
-        return Number.isFinite(declaredElevation) ? declaredElevation : numericLevel * this.floorHeight;
-    }
-
-    syncFloorSpacing() {
-        if (!this.currentSceneData?.meta) return;
-        // The wall-height control also defines story-to-story spacing. Keeping both
-        // values in sync prevents a visible vertical gap when the height is changed.
-        this.floorHeight = this.wallHeight;
-        this.currentSceneData.meta.floorHeight = this.floorHeight;
-        (this.currentSceneData.meta.levels || []).forEach(level => {
-            const index = Math.max(0, Number(level.floorIndex ?? level.level) || 0);
-            level.elevation = index * this.floorHeight;
-        });
-    }
-
-    updateVisibleLevels() {
-        this.floorGroups.forEach((group, floorIndex) => {
-            group.visible = this.visibleLevel === null || floorIndex === this.visibleLevel;
-        });
-        this.refreshSelectableMeshes();
-    }
-
-    setVisibleLevel(level) {
-        if (this.walkthroughActive) this.toggleWalkthroughMode(false);
-        if (this.currentIsolatedFloor !== null || this.isolationTween) this.restoreFloorIsolation();
-        this.visibleLevel = level === null || level === "all" ? null : Number(level);
-        this.updateVisibleLevels();
-        if (this.currentSceneData) {
-            if (this.is2DMode) this.setTopDownView();
-            else this.setPerspectiveView();
-        }
-    }
-
-    refreshSelectableMeshes() {
-        this.selectableMeshes = [];
-        this.floorGroups.forEach(floorGroup => {
-            if (!floorGroup.visible) return;
-            ["walls", "rooms"].forEach(layerName => {
-                const layer = floorGroup.getObjectByName(layerName);
-                if (!layer || !layer.visible) return;
-                layer.traverse(object => {
-                    if (object.isMesh && (object.userData.isWall || object.userData.isFloorSurface)) {
-                        this.selectableMeshes.push(object);
-                    }
-                });
-            });
-        });
-    }
-
-    setFloorOpacity(floorGroup, opacity) {
-        floorGroup.traverse(object => {
-            if (!object.material) return;
-            if (!object.userData.floorIsolationOriginalMaterial) {
-                object.userData.floorIsolationOriginalMaterial = object.material;
-                const originals = Array.isArray(object.material) ? object.material : [object.material];
-                object.material = Array.isArray(object.material)
-                    ? originals.map(material => material.clone())
-                    : object.material.clone();
-            }
-            const materials = Array.isArray(object.material) ? object.material : [object.material];
-            materials.forEach(material => {
-                if (material.userData.floorIsolationOriginalTransparent === undefined) {
-                    material.userData.floorIsolationOriginalTransparent = material.transparent;
-                    material.userData.floorIsolationOriginalDepthWrite = material.depthWrite;
-                }
-                material.transparent = opacity < 0.999 || material.userData.floorIsolationOriginalTransparent;
-                material.opacity = opacity;
-                material.depthWrite = opacity >= 0.999
-                    ? material.userData.floorIsolationOriginalDepthWrite
-                    : false;
-                material.needsUpdate = true;
-            });
-        });
-        floorGroup.userData.currentIsolationOpacity = opacity;
-    }
-
-    restoreFloorMaterials(floorGroup) {
-        floorGroup.traverse(object => {
-            const original = object.userData.floorIsolationOriginalMaterial;
-            if (!original) return;
-            const temporary = Array.isArray(object.material) ? object.material : [object.material];
-            temporary.forEach(material => material.dispose());
-            object.material = original;
-            delete object.userData.floorIsolationOriginalMaterial;
-        });
-        floorGroup.userData.currentIsolationOpacity = 1;
-    }
-
-    startFloorIsolationTween(targetFloorIndex) {
-        const starts = new Map();
-        this.floorGroups.forEach((group, floorIndex) => {
-            starts.set(floorIndex, {
-                y: group.position.y,
-                opacity: targetFloorIndex === null
-                    ? (Number(group.userData.currentIsolationOpacity) || 1)
-                    : (floorIndex === targetFloorIndex ? 1 : 0.05)
-            });
-        });
-        this.isolationTween = {
-            targetFloorIndex,
-            starts,
-            startTime: performance.now(),
-            duration: 650
-        };
-        if (targetFloorIndex === null) {
-            this.currentIsolatedFloor = null;
-            this.hideFloorInfoPanel();
-        } else {
-            this.currentIsolatedFloor = targetFloorIndex;
-            this.showFloorInfoPanel(targetFloorIndex);
-        }
-        this.floorGroups.forEach((group, floorIndex) => {
-            if (targetFloorIndex !== null) {
-                // Hide other levels immediately; waiting for the first animation
-                // frame lets their opaque walls and labels overlap the selected floor.
-                this.setFloorOpacity(group, floorIndex === targetFloorIndex ? 1 : 0.05);
-            }
-            const labels = group.getObjectByName("labels");
-            if (!labels) return;
-            const shouldShowLabels = this.layerVisibility.labels
-                && (targetFloorIndex === null || floorIndex === targetFloorIndex);
-            labels.traverse(label => {
-                if (label !== labels && label.userData.floorIndex !== undefined) {
-                    label.userData.floorIsolationVisible = shouldShowLabels;
-                    label.visible = shouldShowLabels;
-                }
-            });
-        });
-    }
-
-    requestFloorIsolation(floorIndex) {
-        if (!this.floorGroups.has(floorIndex)) return;
-
-        if (this.currentIsolatedFloor !== null) {
-            if (this.currentIsolatedFloor === floorIndex) {
-                this.pendingFloorIsolation = null;
-                this.startFloorIsolationTween(null);
-                return;
-            }
-            this.pendingFloorIsolation = floorIndex;
-            this.startFloorIsolationTween(null);
-            return;
-        }
-
-        if (this.isolationTween) {
-            // A reset is already in progress. Finish it before starting another floor.
-            this.pendingFloorIsolation = floorIndex;
-            return;
-        }
-        this.startFloorIsolationTween(floorIndex);
-    }
-
-    restoreFloorIsolation() {
-        this.pendingFloorIsolation = null;
-        if (this.currentIsolatedFloor !== null || this.isolationTween) {
-            this.startFloorIsolationTween(null);
-        } else {
-            this.hideFloorInfoPanel();
-        }
-    }
-
-    updateFloorIsolation(now) {
-        if (!this.isolationTween) return;
-        const tween = this.isolationTween;
-        const t = Math.min(1, (now - tween.startTime) / tween.duration);
-        const eased = 1 - Math.pow(1 - t, 3);
-
-        this.floorGroups.forEach((group, floorIndex) => {
-            const baseY = this.getLevelElevation(floorIndex);
-            const start = tween.starts.get(floorIndex) || { y: baseY, opacity: 1 };
-            const targetY = tween.targetFloorIndex === floorIndex
-                ? baseY + this.wallHeight * 3
-                : baseY;
-            const targetOpacity = tween.targetFloorIndex !== null && floorIndex !== tween.targetFloorIndex ? 0.05 : 1;
-            group.position.y = THREE.MathUtils.lerp(start.y, targetY, eased);
-            this.setFloorOpacity(group, THREE.MathUtils.lerp(start.opacity, targetOpacity, eased));
-        });
-
-        if (t < 1) return;
-        this.floorGroups.forEach((group, floorIndex) => {
-            const baseY = this.getLevelElevation(floorIndex);
-            group.position.y = tween.targetFloorIndex === floorIndex ? baseY + this.wallHeight * 3 : baseY;
-            if (tween.targetFloorIndex === null) this.restoreFloorMaterials(group);
-            else this.setFloorOpacity(group, floorIndex === tween.targetFloorIndex ? 1 : 0.05);
-        });
-        this.isolationTween = null;
-
-        if (tween.targetFloorIndex === null) {
-            const nextFloor = this.pendingFloorIsolation;
-            this.pendingFloorIsolation = null;
-            if (nextFloor !== null) this.startFloorIsolationTween(nextFloor);
-        }
-    }
-
-    buildGroundAndGrid() {
-        const span = Math.max(this.bounds.width, this.bounds.height, 20);
-        const gridSize = Math.ceil(span * 1.8);
-        const divisions = gridSize; // 1 division = exactly 1 meter!
-
-        // 1-meter architectural grid helper: ink center line, ink cells at ~12% opacity
-        const grid = new THREE.GridHelper(gridSize, divisions, 0x1A1917, 0x1A1917);
-        grid.position.y = -0.01;
-        if (grid.material) {
-            grid.material.transparent = true;
-            grid.material.opacity = 0.12;
-        }
-        this.groups.grid.add(grid);
-
-        // Ground foundation plane: secondary ground #DCD7CB
-        const groundGeo = new THREE.PlaneGeometry(gridSize * 1.5, gridSize * 1.5);
-        const groundMat = new THREE.MeshStandardMaterial({
-            color: 0xDCD7CB,
-            roughness: 0.95,
-            metalness: 0.05
-        });
-        const ground = new THREE.Mesh(groundGeo, groundMat);
-        ground.rotation.x = -Math.PI / 2;
-        ground.position.y = -0.02;
-        ground.receiveShadow = true;
-        this.groups.grid.add(ground);
-    }
-
-    buildDoorThresholds(doors) {
-        const thresholdMaterial = new THREE.MeshStandardMaterial({
-            color: 0xDCD7CB,
-            roughness: 0.95,
-            metalness: 0.05,
-        });
-        const wallThickness = this.getWallThickness();
-        doors.forEach(door => {
-            if (!Array.isArray(door.center) || door.center.length < 2) return;
-            const level = this.getItemFloorIndex(door);
-            const center = this.toWorldCoords(door.center[0], door.center[1]);
-            const width = Math.max(0.55, Number(door.width) || 0.9);
-            const rot = this.getOpeningRotation(door, level);
-            const patch = new THREE.Mesh(
-                new THREE.BoxGeometry(width + 0.08, 0.018, wallThickness + 0.24),
-                thresholdMaterial
-            );
-            patch.position.set(center.x, 0.008, center.z);
-            patch.rotation.y = rot;
-            patch.receiveShadow = true;
-            patch.userData = { isDoorThreshold: true, floorIndex: level };
-            this.getFloorLayer(level, "rooms")?.add(patch);            // For exterior exit doors on ground floor, add entrance marker: #9B3418 outline (line, not fill)
-            if (Array.isArray(door.connects) && door.connects.includes("outside") && level === 0) {
-                const halfW = (width + 0.08) / 2;
-                const halfD = (wallThickness + 0.24) / 2;
-                const markerPts = [
-                    new THREE.Vector3(-halfW, 0.022, -halfD),
-                    new THREE.Vector3(halfW, 0.022, -halfD),
-                    new THREE.Vector3(halfW, 0.022, halfD),
-                    new THREE.Vector3(-halfW, 0.022, halfD)
-                ];
-                const markerGeo = new THREE.BufferGeometry().setFromPoints(markerPts);
-                const markerMat = new THREE.LineBasicMaterial({ color: 0x9B3418, linewidth: 2 });
-                const entranceOutline = new THREE.LineLoop(markerGeo, markerMat);
-                entranceOutline.position.set(center.x, 0, center.z);
-                entranceOutline.rotation.y = rot;
-                this.getFloorLayer(level, "doors")?.add(entranceOutline);
-            }
-        });
-    }
-
-    /**
-     * Builds extruded 3D walls from scene.json walls array.
-     * Supports holes (openings) and dynamic height updates.
-     */
-    buildWalls(walls) {
-        const wallMat = this.wallMaterial || (this.wallMaterial = new THREE.MeshStandardMaterial({
-            color: 0xF1EEE6,      // Matte bone plaster (#F1EEE6)
-            roughness: 0.95,
-            metalness: 0.05,
-            side: THREE.DoubleSide
-        }));
-
-        walls.forEach(wall => {
-            const poly = wall.polygon || [];
-            if (poly.length < 3) return;
-
-            // In our mathematical mapping:
-            // u = x - Cx, v = -(y - Cy)
-            // Extrude along +z, then rotateX(-Math.PI / 2):
-            // Results in X = x - Cx, Y = height (0 to wallHeight), Z = y - Cy!
-            const shape = new THREE.Shape();
-            const p0 = this.toWorldCoords(poly[0][0], poly[0][1]);
-            shape.moveTo(p0.x, -p0.z);
-
-            for (let i = 1; i < poly.length; i++) {
-                const pt = this.toWorldCoords(poly[i][0], poly[i][1]);
-                shape.lineTo(pt.x, -pt.z);
-            }
-            shape.closePath();
-
-            // Add holes if any exist in the wall polygon
-            if (wall.holes && wall.holes.length > 0) {
-                wall.holes.forEach(holePoly => {
-                    if (holePoly.length < 3) return;
-                    const holePath = new THREE.Path();
-                    const hp0 = this.toWorldCoords(holePoly[0][0], holePoly[0][1]);
-                    holePath.moveTo(hp0.x, -hp0.z);
-                    for (let j = 1; j < holePoly.length; j++) {
-                        const hpt = this.toWorldCoords(holePoly[j][0], holePoly[j][1]);
-                        holePath.lineTo(hpt.x, -hpt.z);
-                    }
-                    holePath.closePath();
-                    shape.holes.push(holePath);
-                });
-            }
-
-            const extrudeSettings = {
-                depth: this.wallHeight,
-                bevelEnabled: false,
-                steps: 1
-            };
-
-            const wallGeom = new THREE.ExtrudeGeometry(shape, extrudeSettings);
-            wallGeom.rotateX(-Math.PI / 2); // Rotate extrusion vertically along +Y
-
-            const wallMesh = new THREE.Mesh(wallGeom, wallMat);
-            const level = this.getItemFloorIndex(wall);
-            wallMesh.position.y = 0;
-            wallMesh.scale.set(1, 0.001, 1);
-            wallMesh.castShadow = true;
-            wallMesh.receiveShadow = true;
-            wallMesh.userData = { isWall: true, wallId: wall.id, level, floorIndex: level };
-
-            // Architectural drafting edge lines: thin #1A1917 EdgesGeometry
-            const wallEdges = new THREE.EdgesGeometry(wallGeom, 25);
-            const wallEdgeMat = new THREE.LineBasicMaterial({ color: 0x1A1917, linewidth: 1 });
-            const wallEdgeLines = new THREE.LineSegments(wallEdges, wallEdgeMat);
-            wallMesh.add(wallEdgeLines);
-
-            this.getFloorLayer(level, "walls")?.add(wallMesh);
-            this.animatingMeshes.push(wallMesh);
-        });
-    }
-
-    /**
-     * Builds floor slabs and floating label badges for each room.
-     */
-        /**
-     * Builds inter-story 0.2m separating slabs and top floor roof.
-     * Roof layer is off by default, toggled via Roof checkbox.
-     */
-    buildSlabsAndRoof(sceneData) {
-        const rooms = sceneData.rooms || [];
-        const slabThickness = 0.2; // 0.2 m slab
-        const slabMat = new THREE.MeshStandardMaterial({
-            color: 0xDCD7CB, // Ground / concrete tone
-            roughness: 0.9,
-            metalness: 0.05,
-            side: THREE.DoubleSide
-        });
-        const edgeMat = new THREE.LineBasicMaterial({
-            color: 0x1A1917,
-            transparent: true,
-            opacity: 0.22
-        });
-
-        // 1. Separate stories with a visible 0.2 m slab
-        for (let level = 1; level < this.levelCount; level++) {
-            const levelRooms = rooms.filter(r => this.getItemFloorIndex(r) === level);
-            const slabGroup = new THREE.Group();
-            slabGroup.name = `inter_story_slab_l${level}`;
-
-            levelRooms.forEach(room => {
-                // Do not cover stairwells so stairs pass through
-                if (["stair", "stairs"].includes(String(room.type || "").toLowerCase())) return;
-                const poly = room.polygon || [];
-                if (poly.length < 3) return;
-
-                const shape = new THREE.Shape();
-                const p0 = this.toWorldCoords(poly[0][0], poly[0][1]);
-                shape.moveTo(p0.x, -p0.z);
-                for (let i = 1; i < poly.length; i++) {
-                    const pt = this.toWorldCoords(poly[i][0], poly[i][1]);
-                    shape.lineTo(pt.x, -pt.z);
-                }
-                shape.closePath();
-
-                this.getRoomHoles(room).forEach(hole => {
-                    if (!Array.isArray(hole) || hole.length < 3) return;
-                    const first = this.toWorldCoords(hole[0][0], hole[0][1]);
-                    const holePath = new THREE.Path();
-                    holePath.moveTo(first.x, -first.z);
-                    hole.slice(1).forEach(pt => {
-                        const c = this.toWorldCoords(pt[0], pt[1]);
-                        holePath.lineTo(c.x, -c.z);
-                    });
-                    holePath.closePath();
-                    shape.holes.push(holePath);
-                });
-
-                const extrudeGeo = new THREE.ExtrudeGeometry(shape, {
-                    depth: slabThickness,
-                    bevelEnabled: false
-                });
-                extrudeGeo.rotateX(-Math.PI / 2);
-                const slabMesh = new THREE.Mesh(extrudeGeo, slabMat);
-                // Position so top of slab is at y = 0.0 and bottom at y = -0.2 (filling gap from below)
-                slabMesh.position.y = -slabThickness;
-                slabMesh.receiveShadow = true;
-                slabMesh.castShadow = true;
-                slabMesh.userData = { isSlab: true, floorIndex: level };
-
-                const edges = new THREE.LineSegments(new THREE.EdgesGeometry(extrudeGeo, 25), edgeMat);
-                slabMesh.add(edges);
-                slabGroup.add(slabMesh);
-            });
-
-            this.getFloorLayer(level, "slabs")?.add(slabGroup);
-        }
-
-        // 2. Top Floor Roof: off by default, visible when Roof checkbox is checked
-        const topLevel = this.levelCount - 1;
-        const topRooms = rooms.filter(r => this.getItemFloorIndex(r) === topLevel);
-        const roofGroup = new THREE.Group();
-        roofGroup.name = "top_floor_roof";
-
-        topRooms.forEach(room => {
-            const poly = room.polygon || [];
-            if (poly.length < 3) return;
-            const shape = new THREE.Shape();
-            const p0 = this.toWorldCoords(poly[0][0], poly[0][1]);
-            shape.moveTo(p0.x, -p0.z);
-            for (let i = 1; i < poly.length; i++) {
-                const pt = this.toWorldCoords(poly[i][0], poly[i][1]);
-                shape.lineTo(pt.x, -pt.z);
-            }
-            shape.closePath();
-
-            const roofExtrude = new THREE.ExtrudeGeometry(shape, {
-                depth: slabThickness,
-                bevelEnabled: false
-            });
-            roofExtrude.rotateX(-Math.PI / 2);
-            const roofMesh = new THREE.Mesh(roofExtrude, slabMat);
-            roofMesh.position.y = this.wallHeight;
-            roofMesh.receiveShadow = true;
-            roofMesh.castShadow = true;
-            roofMesh.userData = { isRoof: true, floorIndex: topLevel };
-
-            const roofEdges = new THREE.LineSegments(new THREE.EdgesGeometry(roofExtrude, 25), edgeMat);
-            roofMesh.add(roofEdges);
-            roofGroup.add(roofMesh);
-        });
-
-        this.getFloorLayer(topLevel, "roof")?.add(roofGroup);
-    }
-
-    buildRooms(rooms) {
-        rooms.forEach(room => {
-            const poly = room.polygon || [];
-            if (poly.length < 3) return;
-
-            const shape = new THREE.Shape();
-            const p0 = this.toWorldCoords(poly[0][0], poly[0][1]);
-            shape.moveTo(p0.x, -p0.z);
-
-            for (let i = 1; i < poly.length; i++) {
-                const pt = this.toWorldCoords(poly[i][0], poly[i][1]);
-                shape.lineTo(pt.x, -pt.z);
-            }
-            shape.closePath();
-            this.getRoomHoles(room).forEach(hole => {
-                if (!Array.isArray(hole) || hole.length < 3) return;
-                const first = this.toWorldCoords(hole[0][0], hole[0][1]);
-                const holePath = new THREE.Path();
-                holePath.moveTo(first.x, -first.z);
-                hole.slice(1).forEach(point => {
-                    const converted = this.toWorldCoords(point[0], point[1]);
-                    holePath.lineTo(converted.x, -converted.z);
-                });
-                holePath.closePath();
-                shape.holes.push(holePath);
-            });
-
-            // Room floor geometry
-            const roomGeo = new THREE.ShapeGeometry(shape);
-            roomGeo.rotateX(-Math.PI / 2); // Lay flat on ground
-
-            // Pick color based on room type
-            const colorHex = this.roomColors[room.type] || this.roomColors.other;
-            const roomMat = new THREE.MeshStandardMaterial({
-                color: colorHex,
-                roughness: 0.90,
-                metalness: 0.02,
-                transparent: true,
-                opacity: 0,
-                depthWrite: false,
-                side: THREE.DoubleSide
-            });
-
-            const roomMesh = new THREE.Mesh(roomGeo, roomMat);
-            const level = this.getItemFloorIndex(room);
-            roomMesh.position.y = 0.02; // Floor group supplies the level elevation.
-            roomMesh.scale.set(1, 0.001, 1);
-            roomMesh.castShadow = true;
-            roomMesh.receiveShadow = true;
-            roomMesh.userData = {
-                isRoom: true,
-                level,
-                floorIndex: level,
-                isFloorSurface: true,
-                roomData: room,
-                originalColor: colorHex
-            };
-
-            this.getFloorLayer(level, "rooms")?.add(roomMesh);
-            this.animatingMeshes.push(roomMesh);
-
-            // Calculate centroid for floating label badge
-            const [centroidPlanX, centroidPlanY] = this.getPolygonCentroid(poly);
-            const centroid = this.toWorldCoords(centroidPlanX, centroidPlanY);
-
-            // Calculate polygonal area for label overlap resolution (keep larger room)
-            let roomArea = 0;
-            for (let i = 0; i < poly.length; i++) {
-                const next = poly[(i + 1) % poly.length];
-                roomArea += poly[i][0] * next[1] - next[0] * poly[i][1];
-            }
-            roomArea = Math.abs(roomArea) / 2;
-
-            // Create floating 3D text badge at centroid at floor height + 0.1 m
-            const badgeSprite = this.createRoomBadgeSprite(room);
-            badgeSprite.position.set(centroid.x, 0.1, centroid.z);
-            badgeSprite.userData.roomArea = roomArea;
-            badgeSprite.userData.level = level;
-            badgeSprite.userData.floorIndex = level;
-            badgeSprite.userData.confidence = Number(room.confidence) || 0;
-            badgeSprite.userData.floorIsolationVisible = true;
-            badgeSprite.userData.baseLabelOpacity = 1;
-            badgeSprite.userData.buildRevealProgress = 0;
-            badgeSprite.material.opacity = 0;
-            roomMesh.userData.buildRevealLabel = badgeSprite;
-            this.getFloorLayer(level, "labels")?.add(badgeSprite);
-        });
-    }
-
-    getPolygonCentroid(polygon) {
-        let twiceArea = 0;
-        let xSum = 0;
-        let ySum = 0;
-        polygon.forEach((point, index) => {
-            const next = polygon[(index + 1) % polygon.length];
-            const cross = point[0] * next[1] - next[0] * point[1];
-            twiceArea += cross;
-            xSum += (point[0] + next[0]) * cross;
-            ySum += (point[1] + next[1]) * cross;
-        });
-        if (Math.abs(twiceArea) > 1e-8) return [xSum / (3 * twiceArea), ySum / (3 * twiceArea)];
-        return polygon.reduce((sum, point) => [
-            sum[0] + point[0] / polygon.length,
-            sum[1] + point[1] / polygon.length
-        ], [0, 0]);
-    }
-
-    getPolygonArea(polygon) {
-        if (!polygon || polygon.length < 3) return 0;
-        let twiceArea = 0;
-        polygon.forEach((point, index) => {
-            const next = polygon[(index + 1) % polygon.length];
-            twiceArea += point[0] * next[1] - next[0] * point[1];
-        });
-        return Math.abs(twiceArea) / 2;
-    }
-
-    buildFurniture(rooms) {
-        const materials = {
-            wood: new THREE.MeshStandardMaterial({ color: 0x9a6842, roughness: 0.82 }),
-            fabric: new THREE.MeshStandardMaterial({ color: 0x8794a6, roughness: 0.95 }),
-            ceramic: new THREE.MeshStandardMaterial({ color: 0xe8e8e8, roughness: 0.28 }),
-        };
-        const addBox = (group, material, x, y, z, width, height, depth) => {
-            const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), material);
-            mesh.position.set(x, y, z);
-            mesh.castShadow = true;
-            mesh.receiveShadow = true;
-            group.add(mesh);
-            return mesh;
-        };
-        const addDesk = (group, x, z, width, depth) => {
-            addBox(group, materials.wood, x, 0.76, z, width, 0.08, depth);
-            [-1, 1].forEach(sx => [-1, 1].forEach(sz =>
-                addBox(group, materials.wood, x + sx * width * 0.42, 0.37, z + sz * depth * 0.38, 0.06, 0.72, 0.06)
-            ));
-        };
-
-        rooms.forEach(room => {
-            const polygon = room.polygon || [];
-            if (polygon.length < 3) return;
-            const type = String(room.type || "room").toLowerCase();
-            if (["stairs", "stair", "elevator", "corridor", "entrance", "other", "room"].includes(type)) return;
-            const points = polygon.map(point => this.toWorldCoords(point[0], point[1]));
-            const minX = Math.min(...points.map(point => point.x));
-            const maxX = Math.max(...points.map(point => point.x));
-            const minZ = Math.min(...points.map(point => point.z));
-            const maxZ = Math.max(...points.map(point => point.z));
-            const roomWidth = maxX - minX, roomDepth = maxZ - minZ;
-            const [cxPlan, cyPlan] = this.getPolygonCentroid(polygon);
-            const center = this.toWorldCoords(cxPlan, cyPlan);
-            const furniture = new THREE.Group();
-            furniture.name = `furniture_${room.id}`;
-            furniture.userData = { roomId: room.id, floorIndex: this.getItemFloorIndex(room) };
-
-            if (["bedroom", "bed", "hotel_room"].includes(type)) {
-                const bedWidth = Math.min(1.5, roomWidth * 0.48);
-                const bedDepth = Math.min(2.0, roomDepth * 0.58);
-                addBox(furniture, materials.wood, center.x, 0.28, center.z, bedWidth, 0.28, bedDepth);
-                addBox(furniture, materials.fabric, center.x, 0.48, center.z, bedWidth * 0.94, 0.16, bedDepth * 0.9);
-                addBox(furniture, materials.fabric, center.x, 0.62, center.z - bedDepth * 0.32, bedWidth * 0.55, 0.12, bedDepth * 0.18);
-            } else if (["restroom", "bathroom", "toilet"].includes(type)) {
-                const toilet = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.25, 0.36, 16), materials.ceramic);
-                toilet.position.set(center.x, 0.2, center.z);
-                toilet.castShadow = true;
-                furniture.add(toilet);
-                addBox(furniture, materials.ceramic, center.x, 0.55, center.z - 0.34, 0.36, 0.55, 0.16);
-            } else if (["living_room", "lounge", "lounge_room"].includes(type)) {
-                const sofaWidth = Math.min(1.8, roomWidth * 0.5);
-                addBox(furniture, materials.fabric, center.x, 0.35, center.z - roomDepth * 0.18, sofaWidth, 0.55, 0.55);
-                addBox(furniture, materials.fabric, center.x, 0.72, center.z - roomDepth * 0.39, sofaWidth, 0.32, 0.14);
-                addDesk(furniture, center.x, center.z + roomDepth * 0.2, Math.min(0.8, roomWidth * 0.28), 0.45);
-            } else if (["kitchen", "dining_room", "dining"].includes(type)) {
-                addDesk(furniture, center.x, center.z, Math.min(1.2, roomWidth * 0.48), Math.min(0.75, roomDepth * 0.32));
-            } else {
-                const deskCount = type === "classroom" || type === "lab" ? 2 : 1;
-                const deskWidth = Math.min(1.0, roomWidth * 0.25);
-                const deskDepth = Math.min(0.55, roomDepth * 0.2);
-                for (let index = 0; index < deskCount; index++) {
-                    const offset = (index - (deskCount - 1) / 2) * Math.min(1.4, roomWidth * 0.35);
-                    addDesk(furniture, center.x + offset, center.z, deskWidth, deskDepth);
-                }
-            }
-            this.getFloorLayer(this.getItemFloorIndex(room), "furniture")?.add(furniture);
-        });
-        const usedMaterials = new Set();
-        this.floorGroups.forEach(floorGroup => {
-            floorGroup.getObjectByName("furniture")?.traverse(object => {
-                if (object.material) usedMaterials.add(object.material);
-            });
-        });
-        Object.values(materials).forEach(material => { if (!usedMaterials.has(material)) material.dispose(); });
-    }
-
-    buildStairs(rooms) {
-        this.generatedStairwellOpenings = new Map();
-        const stairRooms = rooms.filter(room => ["stair", "stairs"].includes(String(room.type || "").toLowerCase()));
-        const byLevel = new Map();
-        stairRooms.forEach(room => {
-            const level = this.getItemFloorIndex(room);
-            if (!byLevel.has(level)) byLevel.set(level, []);
-            byLevel.get(level).push(room);
-        });
-        const levels = [...byLevel.keys()].sort((a, b) => a - b);
-        this.walkthroughStairLinks = [];
-
-        for (let index = 0; index < levels.length - 1; index++) {
-            const lowerLevel = levels[index], upperLevel = levels[index + 1];
-            const lowerRoom = byLevel.get(lowerLevel)?.[0];
-            const upperRoom = byLevel.get(upperLevel)?.[0];
-            if (!lowerRoom || !upperRoom) continue;
-            const lowerPoly = lowerRoom.polygon || [], upperPoly = upperRoom.polygon || [];
-            if (lowerPoly.length < 3 || upperPoly.length < 3) continue;
-
-            const boundsFor = polygon => ({
-                minX: Math.min(...polygon.map(point => point[0])),
-                maxX: Math.max(...polygon.map(point => point[0])),
-                minY: Math.min(...polygon.map(point => point[1])),
-                maxY: Math.max(...polygon.map(point => point[1])),
-            });
-            const bounds = boundsFor(lowerPoly);
-            const width = bounds.maxX - bounds.minX;
-            const depth = bounds.maxY - bounds.minY;
-            const centerX = (bounds.minX + bounds.maxX) / 2;
-            const centerY = (bounds.minY + bounds.maxY) / 2;
-            const runStart = bounds.maxY - Math.min(0.25, depth * 0.08);
-            const runEnd = bounds.minY + Math.min(1.05, depth * 0.3);
-            const runLength = runStart - runEnd;
-            const rise = this.getLevelElevation(upperLevel) - this.getLevelElevation(lowerLevel);
-            if (width < 1.55 || depth < 2.2 || runLength < 1.5 || rise <= 0) continue;
-
-            const stairGroup = new THREE.Group();
-            stairGroup.name = `stairFlight_${lowerLevel}_${upperLevel}`;
-            stairGroup.userData = { floorIndex: lowerLevel, connectsLevels: [lowerLevel, upperLevel] };
-            const stepMaterial = new THREE.MeshStandardMaterial({ color: 0x9a8064, roughness: 0.83 });
-            const railMaterial = new THREE.MeshStandardMaterial({ color: 0x5e4635, roughness: 0.68 });
-            const flightWidth = Math.min(0.62, width * 0.28);
-            const laneOffset = Math.min(width * 0.2, 0.42);
-            const flightCount = 8;
-            const flightRun = runLength / flightCount;
-            const halfRise = rise / 2;
-            const addStep = (laneX, startY, direction, baseY, stepIndex) => {
-                const top = baseY + halfRise * (stepIndex + 1) / flightCount;
-                const planY = startY + direction * flightRun * (stepIndex + 0.5);
-                const world = this.toWorldCoords(laneX, planY);
-                const tread = new THREE.Mesh(
-                    new THREE.BoxGeometry(flightWidth, Math.max(0.055, halfRise / flightCount), flightRun + 0.025),
-                    stepMaterial
-                );
-                tread.position.set(world.x, (baseY + top) / 2, world.z);
-                tread.castShadow = true;
-                tread.receiveShadow = true;
-                stairGroup.add(tread);
-            };
-            const addBeam = (start, end, radius, material) => {
-                const delta = end.clone().sub(start);
-                const beam = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, delta.length(), 8), material);
-                beam.position.copy(start).add(end).multiplyScalar(0.5);
-                beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.normalize());
-                beam.castShadow = true;
-                stairGroup.add(beam);
-                return beam;
-            };
-            const addRail = (laneX, startY, direction, baseY, heightEnd) => {
-                const first = this.toWorldCoords(laneX, startY);
-                const last = this.toWorldCoords(laneX, startY + direction * runLength);
-                addBeam(
-                    new THREE.Vector3(first.x, baseY + 0.88, first.z),
-                    new THREE.Vector3(last.x, heightEnd + 0.88, last.z),
-                    0.035, railMaterial
-                );
-                for (let post = 0; post <= flightCount; post += 2) {
-                    const t = post / flightCount;
-                    const planY = startY + direction * runLength * t;
-                    const world = this.toWorldCoords(laneX, planY);
-                    const bottomY = baseY + (heightEnd - baseY) * t + 0.12;
-                    addBeam(
-                        new THREE.Vector3(world.x, bottomY, world.z),
-                        new THREE.Vector3(world.x, baseY + (heightEnd - baseY) * t + 0.88, world.z),
-                        0.022, railMaterial
-                    );
-                }
-            };
-
-            const lowerLaneX = centerX - laneOffset;
-            const upperLaneX = centerX + laneOffset;
-            const landingPlanY = (runStart + runEnd) / 2;
-            for (let step = 0; step < flightCount; step++) {
-                addStep(lowerLaneX, runEnd, 1, 0, step);
-                addStep(upperLaneX, runStart, -1, halfRise, step);
-            }
-            const landingWorld = this.toWorldCoords(centerX, landingPlanY);
-            const landing = new THREE.Mesh(
-                new THREE.BoxGeometry(flightWidth * 2 + laneOffset * 2, 0.12, Math.max(0.45, flightRun * 1.4)),
-                stepMaterial
-            );
-            landing.position.set(landingWorld.x, halfRise - 0.06, landingWorld.z);
-            landing.castShadow = true;
-            landing.receiveShadow = true;
-            stairGroup.add(landing);
-            addRail(lowerLaneX - flightWidth / 2 + 0.06, runEnd, 1, 0, halfRise);
-            addRail(upperLaneX + flightWidth / 2 - 0.06, runStart, -1, halfRise, rise);
-
-            // Upper landing bridges the stair opening to the existing stairwell door.
-            const upperDoorSideX = bounds.minX + Math.min(0.72, width * 0.34);
-            const upperLandingPlanX = (upperLaneX + upperDoorSideX) / 2;
-            const upperLanding = new THREE.Mesh(
-                new THREE.BoxGeometry(Math.max(0.9, Math.abs(upperLaneX - upperDoorSideX) + 0.35), 0.14, Math.max(0.5, flightRun * 1.8)),
-                stepMaterial
-            );
-            const upperLandingWorld = this.toWorldCoords(upperLandingPlanX, runEnd);
-            upperLanding.position.set(upperLandingWorld.x, rise - 0.07, upperLandingWorld.z);
-            upperLanding.castShadow = true;
-            upperLanding.receiveShadow = true;
-            stairGroup.add(upperLanding);
-
-            const layer = this.getFloorLayer(lowerLevel, "stairs");
-            // Stair marker: ink #1A1917 outline around stair footprint
-            const stairOutlinePts = [
-                this.toWorldCoords(bounds.minX, bounds.minY),
-                this.toWorldCoords(bounds.maxX, bounds.minY),
-                this.toWorldCoords(bounds.maxX, bounds.maxY),
-                this.toWorldCoords(bounds.minX, bounds.maxY)
-            ].map(p => new THREE.Vector3(p.x, 0.03, p.z));
-            const stairOutlineGeo = new THREE.BufferGeometry().setFromPoints(stairOutlinePts);
-            const stairOutlineMat = new THREE.LineBasicMaterial({ color: 0x1A1917, linewidth: 2 });
-            const stairOutline = new THREE.LineLoop(stairOutlineGeo, stairOutlineMat);
-            stairGroup.add(stairOutline);
-
-            layer?.add(stairGroup);
-
-            const lowerEntryPlan = this.toWorldCoords(lowerLaneX, runEnd);
-            const upperExitPlan = this.toWorldCoords(upperDoorSideX, runEnd);
-            const upperBounds = boundsFor(upperPoly);
-            const holeWidth = Math.min(1.65, (upperBounds.maxX - upperBounds.minX) * 0.78);
-            const holeCenterX = (upperBounds.minX + upperBounds.maxX) / 2 + laneOffset;
-            const holeMinX = holeCenterX - holeWidth / 2;
-            const holeMaxX = holeCenterX + holeWidth / 2;
-            const holeMinY = runEnd;
-            const holeMaxY = runStart;
-            if (!this.generatedStairwellOpenings.has(upperRoom)) {
-                // THREE.Shape holes need the opposite winding from their outer ring.
-                this.generatedStairwellOpenings.set(upperRoom, [[
-                    [holeMinX, holeMinY], [holeMinX, holeMaxY], [holeMaxX, holeMaxY], [holeMaxX, holeMinY]
-                ]]);
-            }
-            this.walkthroughStairLinks.push({
-                lowerLevel, upperLevel,
-                lowerPoint: new THREE.Vector3(lowerEntryPlan.x, this.getLevelElevation(lowerLevel) + 1.6, lowerEntryPlan.z),
-                middlePoint: new THREE.Vector3(landingWorld.x, this.getLevelElevation(lowerLevel) + halfRise + 1.6, landingWorld.z),
-                upperPoint: new THREE.Vector3(upperExitPlan.x, this.getLevelElevation(upperLevel) + 1.6, upperExitPlan.z),
-                lowerYaw: Math.PI / 2,
-                upperYaw: Math.PI / 2,
-                roomCenter: [centerX, centerY],
-            });
-        }
-    }
-
-    /**
-     * Creates an architectural text badge sprite using an HTML5 2D canvas.
-     */
-    createRoomBadgeSprite(room) {
-        const canvas = document.createElement("canvas");
-        const label = (room.label || `Room ${room.id}`).toUpperCase();
-        const testCtx = canvas.getContext("2d");
-        testCtx.font = "600 22px 'Azeret Mono', monospace";
-        const tw = testCtx.measureText(label).width;
-        canvas.width = Math.max(160, Math.ceil(tw + 36));
-        canvas.height = 44;
-        this.renderBadgeCanvas(canvas, room, false);
-
-        const texture = new THREE.CanvasTexture(canvas);
-        texture.minFilter = THREE.LinearFilter;
-        texture.generateMipmaps = false;
-
-        const spriteMat = new THREE.SpriteMaterial({
-            map: texture,
-            transparent: true,
-            depthTest: true,
-            depthWrite: false
-        });
-
-        const sprite = new THREE.Sprite(spriteMat);
-        sprite.center.set(0.5, 0.0);
-        sprite.scale.set(1.3, 0.24, 1.0);
-        sprite.userData.canvas = canvas;
-        sprite.userData.room = room;
-        sprite.userData.isExpanded = false;
-        return sprite;
-    }
-
-    /**
-     * Builds 3D door openings and subtle swinging door panels.
-     */
-    buildDoors(doors) {
-        const wallMat = this.wallMaterial || new THREE.MeshStandardMaterial({
-            color: 0xF1EEE6,
-            roughness: 0.8,
-            metalness: 0.1,
-            side: THREE.DoubleSide
-        });
-        this.wallMaterial = wallMat;
-        const doorPanelMat = new THREE.MeshStandardMaterial({ color: 0x5A4636, roughness: 0.85, metalness: 0 });
-        const knobMat = new THREE.MeshStandardMaterial({ color: 0x1A1917, metalness: 0.8, roughness: 0.2 });
-
-        this.walkthroughDoors = [];
-
-        doors.forEach(door => {
-            const center = door.center || [0, 0];
-            const pt = this.toWorldCoords(center[0], center[1]);
-            const width = Math.max(0.6, door.width || 0.9);
-            const doorHeight = 2.1; // Standard door height in meters
-            const wallThickness = this.getWallThickness();
-
-            // Door frame group
-            const doorGroup = new THREE.Group();
-            const level = this.getItemFloorIndex(door);
-            doorGroup.position.set(pt.x, 0, pt.z);
-            doorGroup.rotation.y = this.getOpeningRotation(door, level);
-            doorGroup.userData = {
-                level, floorIndex: level, doorId: door.id,
-                planCenter: center.slice(), width, open: Boolean(door.open),
-                wallThickness, height: doorHeight
-            };
-
-            // Simple white jambs make the wall opening read as a framed doorway.
-            [-1, 1].forEach(side => {
-                const jamb = new THREE.Mesh(
-                    new THREE.BoxGeometry(0.09, doorHeight, wallThickness), wallMat
-                );
-                jamb.position.set(side * (width / 2 - 0.045), doorHeight / 2, 0);
-                jamb.castShadow = true;
-                jamb.receiveShadow = true;
-                jamb.scale.set(1, 0.001, 1);
-                jamb.userData = { isWall: true, floorIndex: level, level, openingFiller: "door-jamb" };
-                doorGroup.add(jamb);
-                this.animatingMeshes.push(jamb);
-            });
-
-            const headerHeight = Math.max(0, this.wallHeight - doorHeight);
-            if (headerHeight > 0) {
-                const header = new THREE.Mesh(
-                    new THREE.BoxGeometry(width, headerHeight, wallThickness),
-                    wallMat
-                );
-                header.position.y = doorHeight + headerHeight / 2;
-                header.castShadow = true;
-                header.receiveShadow = true;
-                header.scale.set(1, 0.001, 1);
-                header.userData = { isWall: true, floorIndex: level, level, openingFiller: "door-header" };
-                doorGroup.add(header);
-                this.animatingMeshes.push(header);
-            }
-
-            // Hinged wood door. The leaf rotates only when the user presses E nearby.
-            const hinge = new THREE.Group();
-            hinge.position.set(-width / 2 + 0.045, 0, 0);
-            const panelGeo = new THREE.BoxGeometry(width - 0.09, doorHeight, 0.05);
-            const panelMesh = new THREE.Mesh(panelGeo, doorPanelMat);
-            panelMesh.position.set((width - 0.09) / 2, doorHeight / 2, 0);
-            panelMesh.castShadow = true;
-            panelMesh.receiveShadow = true;
-            hinge.add(panelMesh);
-            const knob = new THREE.Mesh(new THREE.SphereGeometry(0.045, 12, 8), knobMat);
-            knob.position.set(width - 0.18, 1.0, 0.04);
-            panelMesh.add(knob);
-            const backKnob = knob.clone();
-            backKnob.position.z = -0.04;
-            panelMesh.add(backKnob);
-            hinge.rotation.y = doorGroup.userData.open ? Math.PI / 2 : 0;
-            doorGroup.add(hinge);
-            doorGroup.userData.hinge = hinge;
-            doorGroup.userData.targetAngle = doorGroup.userData.open ? Math.PI / 2 : 0;
-            this.walkthroughDoors.push({ data: door, group: doorGroup, hinge, level, width });
-
-            this.getFloorLayer(level, "doors")?.add(doorGroup);
-        });
-    }
-
-    /**
-     * Builds translucent glass windows and architectural window frames.
-     */
-    buildWindows(windows) {
-        const wallMat = this.wallMaterial || new THREE.MeshStandardMaterial({
-            color: 0xF1EEE6,
-            roughness: 0.8,
-            metalness: 0.1,
-            side: THREE.DoubleSide
-        });
-        this.wallMaterial = wallMat;
-        const glassMat = new THREE.MeshStandardMaterial({
-            color: 0xA9B4B6,
-            transparent: true,
-            opacity: 0.55,
-            depthWrite: false
-        });
-
-        windows.forEach(win => {
-            const center = win.center || [0, 0];
-            const pt = this.toWorldCoords(center[0], center[1]);
-            const width = Math.max(0.8, win.width || 1.2);
-            const sillHeight = 0.9;
-            const windowTop = 1.5;
-            const winHeight = windowTop - sillHeight;
-            const wallThickness = this.getWallThickness();
-
-            const winGroup = new THREE.Group();
-            const level = this.getItemFloorIndex(win);
-            winGroup.position.set(pt.x, 0, pt.z);
-            winGroup.rotation.y = this.getOpeningRotation(win, level);
-            winGroup.userData.level = level;
-            winGroup.userData.floorIndex = level;
-
-            // Glass pane fills the 0.9m to 1.5m opening and protrudes slightly past the wall.
-            const paneDepth = wallThickness + 0.05;
-            const glassGeo = new THREE.BoxGeometry(width, winHeight, paneDepth);
-            const glassMesh = new THREE.Mesh(glassGeo, glassMat);
-            glassMesh.position.y = (sillHeight + windowTop) / 2;
-
-            // Hairline frame in #1A1917
-            const glassEdges = new THREE.EdgesGeometry(glassGeo);
-            const frameMat = new THREE.LineBasicMaterial({ color: 0x1A1917, linewidth: 1 });
-            const glassFrame = new THREE.LineSegments(glassEdges, frameMat);
-            glassMesh.add(glassFrame);
-
-            winGroup.add(glassMesh);
-
-            // The white sill and header meet the pane exactly and match wall thickness.
-            const sillWall = new THREE.Mesh(
-                new THREE.BoxGeometry(width, sillHeight, wallThickness),
-                wallMat
-            );
-            sillWall.position.y = sillHeight / 2;
-            sillWall.castShadow = true;
-            sillWall.receiveShadow = true;
-            sillWall.scale.set(1, 0.001, 1);
-            sillWall.userData = { isWall: true, floorIndex: level, level, windowFiller: "sill" };
-            winGroup.add(sillWall);
-            this.animatingMeshes.push(sillWall);
-
-            const headerHeight = Math.max(0, this.wallHeight - windowTop);
-            if (headerHeight > 0) {
-                const header = new THREE.Mesh(
-                    new THREE.BoxGeometry(width, headerHeight, wallThickness),
-                    wallMat
-                );
-                header.position.y = windowTop + headerHeight / 2;
-                header.castShadow = true;
-                header.receiveShadow = true;
-                header.scale.set(1, 0.001, 1);
-                header.userData = { isWall: true, floorIndex: level, level, windowFiller: "header" };
-                winGroup.add(header);
-                this.animatingMeshes.push(header);
-            }
-
-            this.getFloorLayer(level, "windows")?.add(winGroup);
-        });
-    }
-
-    clearOpeningLayer(layerName) {
-        const staleMaterials = new Set();
-        this.floorGroups.forEach(group => {
-            const layer = group.getObjectByName(layerName);
-            if (!layer) return;
-            const oldChildren = new Set(layer.children);
-            this.animatingMeshes = this.animatingMeshes.filter(mesh => {
-                let ancestor = mesh;
-                while (ancestor && ancestor.parent !== layer) ancestor = ancestor.parent;
-                return !(ancestor && oldChildren.has(ancestor));
-            });
-            layer.traverse(object => {
-                if (object.geometry) object.geometry.dispose();
-                if (!object.material) return;
-                const materials = Array.isArray(object.material) ? object.material : [object.material];
-                materials.forEach(material => {
-                    if (material !== this.wallMaterial) staleMaterials.add(material);
-                });
-            });
-            layer.clear();
-        });
-        staleMaterials.forEach(material => material.dispose());
-    }
-
-    /**
-     * Interactively updates wall height across all walls.
-     */
-    setWallHeight(heightMeters, { syncFloors = true } = {}) {
-        if (!this.currentSceneData) return;
-        this.wallHeight = Math.max(0.2, parseFloat(heightMeters) || 3.0);
-        if (syncFloors) {
-            this.currentSceneData.meta.wallHeight = this.wallHeight;
-            this.syncFloorSpacing();
-        }
-        const floorIndices = Array.from(this.floorGroups.keys());
-        const highestFloor = floorIndices.length
-            ? Math.max(...floorIndices.map(index => this.getLevelElevation(index)))
-            : 0;
-        this.sceneHeight = highestFloor + this.wallHeight;
-        this.floorGroups.forEach((group, floorIndex) => {
-            group.position.y = this.getLevelElevation(floorIndex);
-        });
-        
-        this.rebuildWallAndOpeningGeometry();
-    }
-
-    setWallThickness(thicknessMeters) {
-        if (!this.currentSceneData) return;
-        this.currentSceneData.meta.wallThickness = Math.max(0.05, parseFloat(thicknessMeters) || 0.2);
-        this.rebuildWallAndOpeningGeometry();
-    }
-
-    rebuildWallAndOpeningGeometry() {
-        if (!this.currentSceneData) return;
-        this.floorGroups.forEach(group => {
-            const wallLayer = group.getObjectByName("walls");
-            while (wallLayer.children.length > 0) {
-                const obj = wallLayer.children[0];
-                if (obj.geometry) obj.geometry.dispose();
-                wallLayer.remove(obj);
-            }
-        });
-        this.buildWalls(this.currentSceneData.walls || []);
-        this.clearOpeningLayer("doors");
-        this.clearOpeningLayer("windows");
-        this.buildDoors(this.currentSceneData.doors || []);
-        this.buildWindows(this.currentSceneData.windows || []);
-        this.configureShadowCamera();
-        this.updateVisibleLevels();
-        this.refreshSelectableMeshes();
-    }
-
-    /**
-     * Raycasting click handler: highlights selected room and notifies UI.
-     */
-    onPointerClick(event) {
-        const rect = this.renderer.domElement.getBoundingClientRect();
-        this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-        this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-        this.raycaster.setFromCamera(this.mouse, this.camera);
-        const intersects = this.raycaster.intersectObjects(this.selectableMeshes, false);
-
-        if (this.measurementActive) {
-            if (intersects.length) this.handleMeasurementClick(intersects[0]);
-            else this.onMeasurementUpdate?.("Click a visible floor or wall surface to measure.");
-            return;
-        }
-
-        if (!intersects.length) {
-            this.restoreFloorIsolation();
-            return;
-        }
-
-        const hitObject = intersects[0].object;
-        let floorGroup = hitObject;
-        while (floorGroup && !(floorGroup.isGroup
-            && floorGroup.name.startsWith("floorGroup_")
-            && Number.isFinite(Number(floorGroup.userData.floorIndex)))) {
-            floorGroup = floorGroup.parent;
-        }
-        if (!floorGroup) {
-            this.restoreFloorIsolation();
-            return;
-        }
-        if (hitObject.userData.isFloorSurface) this.selectRoom(hitObject);
-        this.requestFloorIsolation(Number(floorGroup.userData.floorIndex));
-    }
-
-    selectRoom(roomMesh) {
-        // Clear previously selected room outline
-        if (this.selectedRoomOutline) {
-            if (this.selectedRoomOutline.parent) {
-                this.selectedRoomOutline.parent.remove(this.selectedRoomOutline);
-            }
-            if (this.selectedRoomOutline.geometry) this.selectedRoomOutline.geometry.dispose();
-            if (this.selectedRoomOutline.material) this.selectedRoomOutline.material.dispose();
-            this.selectedRoomOutline = null;
-        }
-
-        if (this.selectedRoomMesh && this.selectedRoomOriginalColor !== null) {
-            this.selectedRoomMesh.material.color.setHex(this.selectedRoomOriginalColor);
-            this.selectedRoomMesh.material.emissive.setHex(0x000000);
-        }
-
-        this.selectedRoomMesh = roomMesh;
-        this.selectedRoomOriginalColor = roomMesh ? roomMesh.userData.originalColor : null;
-
-        // Outline ONLY in pigment #9B3418 (never fill!)
-        if (roomMesh && roomMesh.geometry) {
-            const edges = new THREE.EdgesGeometry(roomMesh.geometry);
-            const outlineMat = new THREE.LineBasicMaterial({
-                color: 0x9B3418,
-                linewidth: 2,
-                depthTest: false
-            });
-            const outline = new THREE.LineSegments(edges, outlineMat);
-            outline.renderOrder = 999;
-            outline.position.y = 0.05;
-            roomMesh.add(outline);
-            this.selectedRoomOutline = outline;
-        }
-
-        // Expand badge for selected room, collapse others
-        const selectedId = roomMesh?.userData?.roomData?.id;
-        this.floorGroups.forEach(floorGroup => {
-            const labelGroup = floorGroup.getObjectByName("labels");
-            if (labelGroup) {
-                labelGroup.children.forEach(sprite => {
-                    const isTarget = sprite.userData?.room?.id === selectedId;
-                    this.updateBadgeSprite(sprite, isTarget);
-                });
-            }
-        });
-
-        // Notify global UI handler
-        if (typeof window.onFloorPlanRoomSelected === "function") {
-            window.onFloorPlanRoomSelected(roomMesh.userData.roomData);
-        }
-    }
-
-    clearRoomSelection() {
-        if (this.selectedRoomOutline) {
-            if (this.selectedRoomOutline.parent) {
-                this.selectedRoomOutline.parent.remove(this.selectedRoomOutline);
-            }
-            if (this.selectedRoomOutline.geometry) this.selectedRoomOutline.geometry.dispose();
-            if (this.selectedRoomOutline.material) this.selectedRoomOutline.material.dispose();
-            this.selectedRoomOutline = null;
-        }
-        if (this.selectedRoomMesh && this.selectedRoomOriginalColor !== null) {
-            this.selectedRoomMesh.material.color.setHex(this.selectedRoomOriginalColor);
-            this.selectedRoomMesh.material.emissive.setHex(0x000000);
-        }
-        this.selectedRoomMesh = null;
-        this.selectedRoomOriginalColor = null;
-
-        this.floorGroups.forEach(floorGroup => {
-            const labelGroup = floorGroup.getObjectByName("labels");
-            if (labelGroup) {
-                labelGroup.children.forEach(sprite => this.updateBadgeSprite(sprite, false));
-            }
-        });
-    }
-
-    /**
-     * Camera View Presets
-     */
-    setPerspectiveView() {
-        if (this.walkthroughActive) this.toggleWalkthroughMode(false);
-        this.is2DMode = false;
-        this.isEyeLevelView = false;
-
-        const width = Math.max(this.bounds ? this.bounds.width : 16, 1);
-        const depth = Math.max(this.bounds ? this.bounds.height : 12, 1);
-        const totalHeight = Math.max(this.sceneHeight || (this.levelCount * this.wallHeight), 1);
-
-        // Azimuth 35 degrees, elevation 40 degrees
-        const azimuth = 35 * Math.PI / 180;
-        const elevation = 40 * Math.PI / 180;
-        const cosEl = Math.cos(elevation);
-        const sinEl = Math.sin(elevation);
-        const viewDirection = new THREE.Vector3(
-            cosEl * Math.sin(azimuth),
-            sinEl,
-            cosEl * Math.cos(azimuth)
-        ).normalize();
-
-        // Orbit target at the center of the bounding box of all floors
-        const target = new THREE.Vector3(0, totalHeight / 2, 0);
-
-        const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), viewDirection).normalize();
-        const cameraUp = new THREE.Vector3().crossVectors(viewDirection, right).normalize();
-        const verticalFov = THREE.MathUtils.degToRad(this.camera.fov || 45);
-        const tanVertical = Math.tan(verticalFov / 2);
-        const tanHorizontal = tanVertical * (this.camera.aspect || 1);
-
-        const halfWidth = width / 2;
-        const halfDepth = depth / 2;
-        let distance = 0;
-        let minAlong = Infinity;
-        let maxAlong = -Infinity;
-
-        [-halfWidth, halfWidth].forEach(x => {
-            [-halfDepth, halfDepth].forEach(z => {
-                [0, totalHeight].forEach(y => {
-                    const offset = new THREE.Vector3(x, y, z).sub(target);
-                    const towardCamera = offset.dot(viewDirection);
-                    const horizontalExtent = Math.abs(offset.dot(right));
-                    const verticalExtent = Math.abs(offset.dot(cameraUp));
-                    distance = Math.max(
-                        distance,
-                        towardCamera + horizontalExtent / tanHorizontal,
-                        towardCamera + verticalExtent / tanVertical
-                    );
-                    minAlong = Math.min(minAlong, towardCamera);
-                    maxAlong = Math.max(maxAlong, towardCamera);
-                });
-            });
-        });
-
-        // Fit with about 15% margin
-        distance = Math.max(5, distance * 1.15);
-
-        this.controls.target.copy(target);
-        this.camera.position.copy(target).addScaledVector(viewDirection, distance);
-
-        // Near / far from the bounding box
-        this.camera.near = Math.max(0.1, (distance + minAlong) * 0.5);
-        this.camera.far = Math.max(100, (distance + maxAlong) * 2.0);
-        this.camera.updateProjectionMatrix();
-
-        // Polar angle clamped so camera never goes below the ground
-        this.controls.maxPolarAngle = Math.PI / 2 - 0.01;
-        this.controls.minPolarAngle = 0.05;
-        this.controls.minDistance = 2;
-        this.controls.maxDistance = Math.max(150, distance * 4);
-        this.controls.update();
-    }
-
-    setTopDownView() {
-        if (this.walkthroughActive) this.toggleWalkthroughMode(false);
-        this.is2DMode = true;
-        this.isEyeLevelView = false;
-        const span = Math.max(this.bounds ? this.bounds.width : 20, this.bounds ? this.bounds.height : 20, 20);
-        const targetY = this.visibleLevel === null ? 0 : this.getLevelElevation(this.visibleLevel);
-        this.controls.target.set(0, targetY, 0);
-        this.camera.position.set(0, targetY + span * 1.6, 0.01); // Look straight down
-        this.controls.update();
-    }
-
-    setEyeLevelView() {
-        if (this.walkthroughActive) this.toggleWalkthroughMode(false);
-
-        const rooms = this.currentSceneData?.rooms || [];
-        const getArea = room => {
-            const polygon = room.polygon || [];
-            if (polygon.length < 3) return 0;
-            let twiceArea = 0;
-            polygon.forEach((point, index) => {
-                const next = polygon[(index + 1) % polygon.length];
-                twiceArea += point[0] * next[1] - next[0] * point[1];
-            });
-            return Math.abs(twiceArea) / 2;
-        };
-        const availableRooms = this.visibleLevel === null
-            ? rooms
-            : rooms.filter(room => this.getItemFloorIndex(room) === this.visibleLevel);
-        const preferredRooms = availableRooms.filter(room => ["corridor", "entrance"].includes(
-            String(room.type || "").toLowerCase()
-        ));
-        const roomCandidates = (preferredRooms.length ? preferredRooms : availableRooms)
-            .slice().sort((a, b) => getArea(b) - getArea(a));
-        let room = null;
-        let planPoint = null;
-        for (const candidate of roomCandidates) {
-            this.walkthroughFloorIndex = this.getItemFloorIndex(candidate);
-            planPoint = this.getWalkthroughInteriorPoint(candidate);
-            if (planPoint) { room = candidate; break; }
-        }
-        if (!room || !planPoint) return;
-        this.is2DMode = false;
-        this.isEyeLevelView = true;
-        const floorIndex = this.getItemFloorIndex(room);
-        const world = this.toWorldCoords(planPoint[0], planPoint[1]);
-        const worldX = world.x;
-        const worldZ = world.z;
-
-        const floorElevation = this.getLevelElevation(floorIndex);
-        const eyeY = floorElevation + 1.7;
-        const span = Math.max(this.bounds?.width || 20, this.bounds?.height || 20, 20);
-        this.camera.near = 0.05;
-        this.camera.far = Math.max(1000, this.sceneHeight + span * 10);
-        this.camera.updateProjectionMatrix();
-        const yaw = this.getWalkthroughYaw(room, planPoint);
-        const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
-        this.controls.target.set(worldX + forward.x * 2, eyeY - 0.12, worldZ + forward.z * 2);
-        this.camera.position.set(worldX, eyeY, worldZ);
-        this.controls.minDistance = 0.1;
-        this.controls.maxDistance = Math.max(150, span * 8);
-        this.controls.update();
-        this.updateRoomLabelVisibility(1 / 60);
-    }
-
-    focusRoom(room) {
-        const polygon = room && room.polygon;
-        if (!polygon || polygon.length < 3) return;
-        const centroid = polygon.reduce((sum, point) => [sum[0] + point[0], sum[1] + point[1]], [0, 0])
-            .map(value => value / polygon.length);
-        const world = this.toWorldCoords(centroid[0], centroid[1]);
-        const targetStart = this.controls.target.clone();
-        const targetEnd = new THREE.Vector3(world.x, this.getLevelElevation(this.getItemFloorIndex(room)), world.z);
-        const span = Math.max(5, Math.min(this.bounds.width, this.bounds.height, 10));
-        const cameraStart = this.camera.position.clone();
-        const cameraEnd = new THREE.Vector3(world.x + span * 0.9, targetEnd.y + span * 0.9, world.z + span * 0.9);
-        const startTime = performance.now();
-        const duration = 700;
-
-        const animateFocus = (now) => {
-            const t = Math.min(1, (now - startTime) / duration);
-            const eased = 1 - Math.pow(1 - t, 3);
-            this.camera.position.lerpVectors(cameraStart, cameraEnd, eased);
-            this.controls.target.lerpVectors(targetStart, targetEnd, eased);
-            this.controls.update();
-            if (t < 1) requestAnimationFrame(animateFocus);
-        };
-        requestAnimationFrame(animateFocus);
-    }
-
-    drawRoute(planCoordinates, level = 0) {
-        this.clearRoute();
-        const group = this.groups.route;
-        if (!planCoordinates || planCoordinates.length < 3) return;
-
-        const pathNodes = planCoordinates.map(node => {
-            const point = Array.isArray(node) ? node : (node.point || [node.x, node.y]);
-            const floorIndex = Array.isArray(node) ? Number(level) || 0 : Number(node.floorIndex ?? level) || 0;
-            const world = this.toWorldCoords(point[0], point[1]);
-            return {
-                floorIndex,
-                position: new THREE.Vector3(world.x, this.getLevelElevation(floorIndex) + 0.1, world.z)
-            };
-        }).filter((node, index, nodes) => {
-            if (index === 0) return true;
-            const previous = nodes[index - 1];
-            return node.floorIndex !== previous.floorIndex
-                || node.position.distanceToSquared(previous.position) > 1e-8;
-        });
-        if (pathNodes.length < 3) return;
-
-        // Keep route legs straight between doors and room centers so the visual
-        // route does not bow through walls. Floor changes remain vertical.
-        const curvePath = new THREE.CurvePath();
-        for (let index = 1; index < pathNodes.length; index++) {
-            const previous = pathNodes[index - 1];
-            const current = pathNodes[index];
-            curvePath.add(new THREE.LineCurve3(previous.position, current.position));
-        }
-        const geometry = new THREE.TubeGeometry(curvePath, Math.max(32, pathNodes.length * 12), 0.055, 8, false);
-        const material = new THREE.MeshStandardMaterial({
-            color: 0x9B3418,
-            emissive: 0x9B3418,
-            emissiveIntensity: 0.45,
-            roughness: 0.45,
-            metalness: 0.05,
-            transparent: true,
-            opacity: 0.95,
-            depthWrite: false,
-            toneMapped: false
-        });
-        const route = new THREE.Mesh(geometry, material);
-        route.castShadow = true;
-        route.userData.level = Number(level) || 0;
-        route.userData.floorIndex = Number(level) || 0;
-        group.add(route);
-        this.activeRouteTexture = null;
-    }
-
-    clearRoute() {
-        const routeGroup = this.groups.route;
-        while (routeGroup.children.length) {
-            const route = routeGroup.children[0];
-            this.scene.remove(route);
-            if (route.parent) route.parent.remove(route);
-            if (route.geometry) route.geometry.dispose();
-            if (route.material) {
-                const materials = Array.isArray(route.material) ? route.material : [route.material];
-                materials.forEach(material => {
-                    if (material.map) material.map.dispose();
-                    material.dispose();
-                });
-            }
-        }
-        this.activeRouteTexture = null;
-    }
-
-    /**
-     * Updates sunlight angle, color temperature, ambient sky light, and interior lights
-     * based on time of day (6.0 = 6:00 AM to 22.0 = 10:00 PM).
-     */
-    setTimeOfDay(hour) {
-        this.timeOfDay = Math.max(6.0, Math.min(22.0, Number(hour) || 13.0));
-        if (!this.keyLight || !this.ambientLight || !this.hemiLight) return;
-
-        const bounds = this.bounds || { minX: 0, maxX: 20, minY: 0, maxY: 15, width: 20, height: 15 };
-        const centerX = (bounds.minX + bounds.maxX) / 2 - this.centerOffset.x;
-        const centerZ = (bounds.minY + bounds.maxY) / 2 - this.centerOffset.y;
-        const span = Math.max(bounds.width, bounds.height, 12);
-
-        // Solar arc: 6:00 AM (East / +X) -> 12:00 PM (Zenith) -> 18:00 (West / -X)
-        const dayProgress = (this.timeOfDay - 6.0) / 12.0;
-        const theta = dayProgress * Math.PI;
-
-        const sunX = centerX + span * 1.6 * Math.cos(theta);
-        const sunY = Math.max(8, span * 1.8 * Math.sin(theta) + 2);
-        const sunZ = centerZ + span * 0.9 * Math.cos(theta * 0.5);
-
-        this.keyLight.position.set(sunX, sunY, sunZ);
-        this.keyLight.target.position.set(centerX, 0, centerZ);
-        this.keyLight.target.updateMatrixWorld();
-
-        const isNight = this.timeOfDay >= 19.5 || this.timeOfDay < 6.5;
-        const isSunset = this.timeOfDay >= 17.5 && this.timeOfDay < 19.5;
-        const isSunrise = this.timeOfDay >= 6.0 && this.timeOfDay < 7.5;
-
-        if (isNight) {
-            this.keyLight.color.setHex(0xdcd7cb);
-            this.keyLight.intensity = 0.18;
-            this.ambientLight.color.setHex(0x3a3832);
-            this.ambientLight.intensity = 0.25;
-            this.hemiLight.color.setHex(0x4a4741);
-            this.hemiLight.groundColor.setHex(0x1a1917);
-            this.hemiLight.intensity = 0.25;
-            if (this.fillLight) this.fillLight.intensity = 0.05;
-            this.interiorLightsGroup.visible = true;
-            this.scene.background = new THREE.Color(0x1A1917);
-        } else if (isSunset) {
-            this.keyLight.color.setHex(0xdfd3c3);
-            this.keyLight.intensity = 0.80;
-            this.ambientLight.color.setHex(0xded7cb);
-            this.ambientLight.intensity = 0.38;
-            this.hemiLight.color.setHex(0xe7e3da);
-            this.hemiLight.groundColor.setHex(0x4a4741);
-            this.hemiLight.intensity = 0.45;
-            if (this.fillLight) this.fillLight.intensity = 0.15;
-            this.interiorLightsGroup.visible = false;
-            this.scene.background = new THREE.Color(0xE7E3DA);
-        } else if (isSunrise) {
-            this.keyLight.color.setHex(0xdfd3c3);
-            this.keyLight.intensity = 0.75;
-            this.ambientLight.color.setHex(0xded7cb);
-            this.ambientLight.intensity = 0.38;
-            this.hemiLight.color.setHex(0xe7e3da);
-            this.hemiLight.groundColor.setHex(0x4a4038);
-            this.hemiLight.intensity = 0.45;
-            if (this.fillLight) this.fillLight.intensity = 0.18;
-            this.interiorLightsGroup.visible = false;
-            this.scene.background = new THREE.Color(0xE7E3DA);
-        } else {
-            this.keyLight.color.setHex(0xfffcf5);
-            this.keyLight.intensity = 0.95;
-            this.ambientLight.color.setHex(0xe7e3da);
-            this.ambientLight.intensity = 0.45;
-            this.hemiLight.color.setHex(0xe7e3da);
-            this.hemiLight.groundColor.setHex(0xdcd7cb);
-            this.hemiLight.intensity = 0.52;
-            if (this.fillLight) this.fillLight.intensity = 0.25;
-            this.interiorLightsGroup.visible = false;
-            this.scene.background = new THREE.Color(0xE7E3DA);
-        }
-    }
-
-    buildInteriorLights(rooms = []) {
-        while (this.interiorLightsGroup.children.length > 0) {
-            const light = this.interiorLightsGroup.children[0];
-            this.disposeObjectResources(light);
-            this.interiorLightsGroup.remove(light);
-        }
-
-        (rooms || []).forEach(room => {
-            if (!room.polygon || room.polygon.length < 3) return;
-            const [cx, cy] = this.getPolygonCentroid(room.polygon);
-            const floorIndex = this.getItemFloorIndex(room);
-            const world = this.toWorldCoords(cx, cy);
-            const ceilingY = this.getLevelElevation(floorIndex) + this.wallHeight - 0.25;
-
-            const light = new THREE.PointLight(0xffecc4, 0.75, 12, 1.5);
-            light.position.set(world.x, ceilingY, world.z);
-            this.interiorLightsGroup.add(light);
-        });
-    }
-
-    /**
-     * Projects the 2D floor plan image directly on the 3D ground plane.
-     */
-    setBlueprintImage(imageUrl, imageSize, metersPerPixel) {
-        if (!imageUrl || !imageSize || !metersPerPixel) return;
-        const group = this.groups.blueprint;
-        while (group.children.length > 0) {
-            const obj = group.children[0];
-            this.disposeObjectResources(obj);
-            group.remove(obj);
-        }
-        this.blueprintMesh = null;
-
-        const width_m = imageSize[0] * metersPerPixel;
-        const height_m = imageSize[1] * metersPerPixel;
-        const centerX = width_m / 2 - this.centerOffset.x;
-        const centerZ = height_m / 2 - this.centerOffset.y;
-
-        const textureLoader = new THREE.TextureLoader();
-        textureLoader.load(imageUrl, texture => {
-            texture.minFilter = THREE.LinearFilter;
-            texture.magFilter = THREE.LinearFilter;
-            const geom = new THREE.PlaneGeometry(width_m, height_m);
-            const mat = new THREE.MeshBasicMaterial({
-                map: texture,
-                transparent: true,
-                opacity: this.blueprintOpacity || 0.0,
-                depthWrite: false,
-                side: THREE.DoubleSide
-            });
-            const mesh = new THREE.Mesh(geom, mat);
-            mesh.rotation.x = -Math.PI / 2;
-            mesh.position.set(centerX, -0.015, centerZ);
-            mesh.name = "blueprintUnderlay";
-            mesh.visible = (this.blueprintOpacity || 0.0) > 0.01;
-            group.add(mesh);
-            this.blueprintMesh = mesh;
-        });
-    }
-
-    setBlueprintOpacity(opacity) {
-        this.blueprintOpacity = Math.max(0, Math.min(1.0, Number(opacity) || 0));
-        if (this.blueprintMesh && this.blueprintMesh.material) {
-            this.blueprintMesh.material.opacity = this.blueprintOpacity;
-            this.blueprintMesh.visible = this.blueprintOpacity > 0.01;
-        }
-    }
-
-    /**
-     * Simulates emergency evacuation paths from all rooms to exterior exit doors.
-     */
-    simulateEvacuation() {
-        if (!this.currentSceneData) return null;
-        this.clearEvacuation();
-        this.evacuationActive = true;
-
-        const rooms = this.currentSceneData.rooms || [];
-        const doors = this.currentSceneData.doors || [];
-        if (!rooms.length) return null;
-
-        const group = this.groups.evacuation;
-
-        // 1. Identify genuine exterior exit doors on level 0 (ground floor)
-        const groundDoors = doors.filter(d => (Number(d.floorIndex ?? d.level) || 0) === 0);
-        const isStrictInteriorDoor = d => {
-            const connects = Array.isArray(d.connects) ? d.connects : [];
-            if (connects.includes("outside")) return false;
-            const interiorRooms = connects.filter(id => rooms.some(r => r.id === id));
-            return interiorRooms.length >= 2;
-        };
-
-        // Exterior exit doors must discharge outside
-        let exitDoors = groundDoors.filter(d => {
-            const connects = Array.isArray(d.connects) ? d.connects : [];
-            return connects.includes("outside");
-        });
-        const hasExplicitExits = exitDoors.length > 0;
-
-        if (!exitDoors.length) {
-            const bounds = this.bounds || { minX: 0, maxX: 20, minY: 0, maxY: 15 };
-            const perimeterDist = d => {
-                const cx = d.center ? d.center[0] : 0;
-                const cy = d.center ? d.center[1] : 0;
-                return Math.min(
-                    Math.abs(cx - bounds.minX), Math.abs(cx - bounds.maxX),
-                    Math.abs(cy - bounds.minY), Math.abs(cy - bounds.maxY)
-                );
-            };
-            const candidates = groundDoors.filter(d => !isStrictInteriorDoor(d));
-            exitDoors = candidates.sort((a, b) => perimeterDist(a) - perimeterDist(b)).slice(0, 2);
-        }
-
-        if (!exitDoors.length && groundDoors.length) {
-            exitDoors = [groundDoors[0]];
-        }
-
-        const exitDoorIds = new Set(exitDoors.map(d => d.id));
-
-        // 2. Build room-door adjacency graph for pathfinding
-        const roomCentroids = new Map();
-        rooms.forEach(room => {
-            if (room.polygon && room.polygon.length >= 3) {
-                const [cx, cy] = this.getPolygonCentroid(room.polygon);
-                roomCentroids.set(room.id, [cx, cy]);
-            } else {
-                roomCentroids.set(room.id, [0, 0]);
-            }
-        });
-
-        const graph = new Map();
-        rooms.forEach(r => graph.set(`room:${r.id}`, []));
-        doors.forEach(d => graph.set(`door:${d.id}`, []));
-
-        doors.forEach(d => {
-            const dNode = `door:${d.id}`;
-            const dCenter = d.center || [0, 0];
-            const connects = Array.isArray(d.connects) ? d.connects : [];
-            connects.forEach(rId => {
-                const rNode = `room:${rId}`;
-                if (graph.has(rNode)) {
-                    const rCenter = roomCentroids.get(rId) || dCenter;
-                    const dist = Math.hypot(dCenter[0] - rCenter[0], dCenter[1] - rCenter[1]);
-                    graph.get(rNode).push({ to: dNode, cost: dist, door: d });
-                    graph.get(dNode).push({ to: rNode, cost: dist, door: d });
-                }
-            });
-        });
-
-        // Link matching stair/elevator rooms on adjacent stories in the preview graph.
-        const connectorsByType = new Map();
-        rooms.forEach(room => {
-            const type = String(room.type || "").toLowerCase();
-            if (!(type.includes("stair") || type === "elevator")) return;
-            const key = type.includes("stair") ? "stairs" : "elevator";
-            if (!connectorsByType.has(key)) connectorsByType.set(key, []);
-            connectorsByType.get(key).push(room);
-        });
-        connectorsByType.forEach(connectors => {
-            connectors.sort((a, b) => this.getItemFloorIndex(a) - this.getItemFloorIndex(b));
-            for (let index = 1; index < connectors.length; index++) {
-                const lower = connectors[index - 1], upper = connectors[index];
-                const lowerLevel = this.getItemFloorIndex(lower), upperLevel = this.getItemFloorIndex(upper);
-                if (lowerLevel === upperLevel) continue;
-                const lowerCenter = roomCentroids.get(lower.id), upperCenter = roomCentroids.get(upper.id);
-                const distance = Math.hypot(lowerCenter[0] - upperCenter[0], lowerCenter[1] - upperCenter[1])
-                    + Math.abs(this.getLevelElevation(upperLevel) - this.getLevelElevation(lowerLevel));
-                graph.get(`room:${lower.id}`).push({ to: `room:${upper.id}`, cost: distance });
-                graph.get(`room:${upper.id}`).push({ to: `room:${lower.id}`, cost: distance });
-            }
-        });
-
-        // Direct door-to-door edges through corridors and shared rooms
-        const roomDoors = new Map();
-        rooms.forEach(r => roomDoors.set(r.id, []));
-        doors.forEach(d => {
-            const connects = Array.isArray(d.connects) ? d.connects : [];
-            connects.forEach(rId => {
-                if (roomDoors.has(rId)) roomDoors.get(rId).push(d);
-            });
-        });
-
-        roomDoors.forEach(doorList => {
-            for (let i = 0; i < doorList.length; i++) {
-                for (let j = i + 1; j < doorList.length; j++) {
-                    const d1 = doorList[i], d2 = doorList[j];
-                    const dist = Math.hypot(d1.center[0] - d2.center[0], d1.center[1] - d2.center[1]);
-                    graph.get(`door:${d1.id}`).push({ to: `door:${d2.id}`, cost: dist });
-                    graph.get(`door:${d2.id}`).push({ to: `door:${d1.id}`, cost: dist });
-                }
-            }
-        });
-
-        // Helper to get exterior safe assembly beacon offset perpendicular to wall
-        const getBeaconOffset = (d, floorIndex) => {
-            const bounds = this.bounds || { minX: 1, maxX: 15, minY: 1, maxY: 11 };
-            const rot = this.getOpeningRotation(d, floorIndex);
-            if (rot !== 0) {
-                // Vertical wall (e.g. West or East facade)
-                const isWestSide = d.center[0] < (bounds.minX + bounds.maxX) / 2;
-                return { outDx: isWestSide ? -2.5 : 2.5, outDz: 0 };
-            } else {
-                // Horizontal wall (e.g. South or North facade)
-                const isSouthSide = d.center[1] > (bounds.minY + bounds.maxY) / 2;
-                return { outDx: 0, outDz: isSouthSide ? 2.5 : -2.5 };
-            }
-        };
-
-        const usedExitDoorIds = new Set();
-        // 3. For each room, find shortest path to the closest exit door
-        let maxTravelDist = 0;
-        let totalTravelDist = 0;
-        let routedRoomsCount = 0;
-
-        // Create glowing animated evacuation texture with directional arrows
-        const canvas = document.createElement("canvas");
-        canvas.width = 128;
-        canvas.height = 32;
-        const ctx = canvas.getContext("2d");
-        ctx.fillStyle = "#9B3418";
-        ctx.fillRect(0, 0, 128, 32);
-        ctx.fillStyle = "#E7E3DA";
-        for (let x = 0; x < 128; x += 32) {
-            ctx.beginPath();
-            ctx.moveTo(x + 4, 4);
-            ctx.lineTo(x + 20, 16);
-            ctx.lineTo(x + 4, 28);
-            ctx.lineTo(x + 12, 28);
-            ctx.lineTo(x + 28, 16);
-            ctx.lineTo(x + 12, 4);
-            ctx.closePath();
-            ctx.fill();
-        }
-        const evacTexture = new THREE.CanvasTexture(canvas);
-        evacTexture.wrapS = THREE.RepeatWrapping;
-        evacTexture.wrapT = THREE.RepeatWrapping;
-        evacTexture.repeat.set(4, 1);
-        this.evacuationTexture = evacTexture;
-
-        const egressMaterial = new THREE.MeshStandardMaterial({
-            map: evacTexture,
-            color: 0x9B3418,
-            emissive: 0x9B3418,
-            emissiveIntensity: 0.95,
-            roughness: 0.3,
-            metalness: 0.1,
-            transparent: true,
-            opacity: 0.95,
-            depthWrite: false,
-        });
-
-        rooms.forEach(room => {
-            const startNode = `room:${room.id}`;
-            const dists = new Map([...graph.keys()].map(k => [k, Infinity]));
-            const prev = new Map();
-            const queue = new Set(graph.keys());
-            dists.set(startNode, 0);
-
-            while (queue.size > 0) {
-                let u = null;
-                for (const node of queue) {
-                    if (u === null || dists.get(node) < dists.get(u)) u = node;
-                }
-                if (u === null || !Number.isFinite(dists.get(u))) break;
-                queue.delete(u);
-
-                if (u.startsWith("door:") && exitDoorIds.has(u.replace("door:", ""))) {
-                    break;
-                }
-
-                for (const edge of graph.get(u) || []) {
-                    const alt = dists.get(u) + edge.cost;
-                    if (alt < dists.get(edge.to)) {
-                        dists.set(edge.to, alt);
-                        prev.set(edge.to, u);
-                    }
-                }
-            }
-
-            let bestExitNode = null;
-            let minExitDist = Infinity;
-            exitDoors.forEach(d => {
-                const node = `door:${d.id}`;
-                if (dists.get(node) < minExitDist) {
-                    minExitDist = dists.get(node);
-                    bestExitNode = node;
-                }
-            });
-
-            if (bestExitNode && Number.isFinite(minExitDist)) {
-                const exitDoorId = bestExitNode.replace("door:", "");
-                usedExitDoorIds.add(exitDoorId);
-
-                const pathNodes = [];
-                let curr = bestExitNode;
-                while (curr) {
-                    pathNodes.unshift(curr);
-                    curr = prev.get(curr);
-                }
-
-                const pathPoints = [];
-                pathNodes.forEach(node => {
-                    if (node.startsWith("room:")) {
-                        const rId = node.replace("room:", "");
-                        const r = rooms.find(item => item.id === rId);
-                        const rFloor = r ? this.getItemFloorIndex(r) : 0;
-                        const pt = roomCentroids.get(rId);
-                        if (pt) {
-                            const w = this.toWorldCoords(pt[0], pt[1]);
-                            const pathRoom = rooms.find(item => item.id === rId);
-                            const level = pathRoom ? this.getItemFloorIndex(pathRoom) : 0;
-                            pathPoints.push(new THREE.Vector3(w.x, this.getLevelElevation(level) + 0.08, w.z));
-                        }
-                    } else if (node.startsWith("door:")) {
-                        const dId = node.replace("door:", "");
-                        const d = doors.find(item => item.id === dId);
-                        if (d && d.center) {
-                            const dFloor = Number(d.floorIndex ?? d.level) || 0;
-                            const w = this.toWorldCoords(d.center[0], d.center[1]);
-                            const level = this.getItemFloorIndex(d);
-                            pathPoints.push(new THREE.Vector3(w.x, this.getLevelElevation(level) + 0.08, w.z));
-                        }
-                    }
-                });
-
-                // Extend path straight through exit door directly to exterior safe assembly beacon
-                const bestExitDoor = doors.find(item => item.id === exitDoorId);
-                if (bestExitDoor && bestExitDoor.center) {
-                    const { outDx, outDz } = getBeaconOffset(bestExitDoor, 0);
-                    const bWorld = this.toWorldCoords(bestExitDoor.center[0] + outDx, bestExitDoor.center[1] + outDz);
-                    pathPoints.push(new THREE.Vector3(bWorld.x, this.getLevelElevation(0) + 0.08, bWorld.z));
-                }
-
-                if (pathPoints.length >= 2) {
-                    const curve = new THREE.CatmullRomCurve3(pathPoints, false, "chordal", 0.1);
-                    const tubeGeom = new THREE.TubeGeometry(curve, Math.max(16, pathPoints.length * 8), 0.045, 6, false);
-                    const mesh = new THREE.Mesh(tubeGeom, egressMaterial);
-                    group.add(mesh);
-
-                    routedRoomsCount++;
-                    totalTravelDist += minExitDist;
-                    if (minExitDist > maxTravelDist) maxTravelDist = minExitDist;
-                }
-            }
-        });
-
-        // 4. Place 3D wall-mounted illuminated EXIT signs and exterior safe assembly beacons
-        exitDoors.forEach(d => {
-            if (!d.center) return;
-            // Only place beacon and sign for exits that actually receive evacuation traffic!
-            if (!usedExitDoorIds.has(d.id)) return;
-
-            const w = this.toWorldCoords(d.center[0], d.center[1]);
-            const floorIndex = Number(d.floorIndex ?? d.level) || 0;
-            const floorElev = this.getLevelElevation(floorIndex);
-            const doorRotation = this.getOpeningRotation(d, floorIndex);
-
-            // Architectural EXIT box sign mounted above the door lintel
-            const signGroup = new THREE.Group();
-            signGroup.position.set(w.x, floorElev + Math.min(2.45, this.wallHeight - 0.35), w.z);
-            signGroup.rotation.y = doorRotation;
-
-            const signCanvas = document.createElement("canvas");
-            signCanvas.width = 256;
-            signCanvas.height = 96;
-            const sCtx = signCanvas.getContext("2d");
-            sCtx.fillStyle = "#E7E3DA";
-            sCtx.fillRect(0, 0, 256, 96);
-            sCtx.lineWidth = 4;
-            sCtx.strokeStyle = "#9B3418";
-            sCtx.strokeRect(4, 4, 248, 88);
-            sCtx.fillStyle = "#9B3418";
-            sCtx.font = "bold 38px 'Azeret Mono', monospace";
-            sCtx.textAlign = "center";
-            sCtx.textBaseline = "middle";
-            sCtx.fillText(hasExplicitExits ? "EXIT" : "EXIT?", 128, 48);
-
-            const signTex = new THREE.CanvasTexture(signCanvas);
-            const signFaceMat = new THREE.MeshStandardMaterial({
-                map: signTex,
-                emissive: 0x9B3418,
-                emissiveMap: signTex,
-                emissiveIntensity: 0.5,
-                roughness: 0.5,
-                metalness: 0.1,
-            });
-            const signHousingMat = new THREE.MeshStandardMaterial({
-                color: 0x1A1917,
-                roughness: 0.6,
-                metalness: 0.4
-            });
-
-            const signMaterials = [
-                signHousingMat, signHousingMat,
-                signHousingMat, signHousingMat,
-                signFaceMat, signFaceMat
-            ];
-            const signBox = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.24, 0.08), signMaterials);
-            signBox.castShadow = true;
-            signGroup.add(signBox);
-
-            const exitLight = new THREE.PointLight(0x9B3418, 0.8, 5, 1.8);
-            exitLight.position.set(0, -0.2, 0);
-            signGroup.add(exitLight);
-            group.add(signGroup);
-
-            // 5. Exterior Safe Assembly Point beacon in the outside yard
-            const { outDx, outDz } = getBeaconOffset(d, floorIndex);
-            const beaconWorld = this.toWorldCoords(d.center[0] + outDx, d.center[1] + outDz);
-            const beaconGroup = new THREE.Group();
-            beaconGroup.position.set(beaconWorld.x, floorElev + 0.02, beaconWorld.z);
-
-            const ringGeo = new THREE.RingGeometry(0.35, 0.65, 32);
-            const ringMat = new THREE.MeshStandardMaterial({
-                color: 0x9B3418,
-                emissive: 0x9B3418,
-                emissiveIntensity: 0.7,
-                side: THREE.DoubleSide
-            });
-            const ringMesh = new THREE.Mesh(ringGeo, ringMat);
-            ringMesh.rotation.x = -Math.PI / 2;
-            beaconGroup.add(ringMesh);
-
-            const postGeo = new THREE.CylinderGeometry(0.03, 0.03, 1.2, 12);
-            const postMat = new THREE.MeshStandardMaterial({ color: 0x1A1917, metalness: 0.5, roughness: 0.5 });
-            const post = new THREE.Mesh(postGeo, postMat);
-            post.position.y = 0.6;
-            beaconGroup.add(post);
-
-            const orbGeo = new THREE.SphereGeometry(0.12, 16, 16);
-            const orbMat = new THREE.MeshStandardMaterial({
-                color: 0x9B3418,
-                emissive: 0x9B3418,
-                emissiveIntensity: 0.8,
-                roughness: 0.3
-            });
-            const orb = new THREE.Mesh(orbGeo, orbMat);
-            orb.position.y = 1.25;
-            beaconGroup.add(orb);
-
-            const outdoorLight = new THREE.PointLight(0x9B3418, 0.9, 6, 1.5);
-            outdoorLight.position.y = 1.3;
-            beaconGroup.add(outdoorLight);
-
-            group.add(beaconGroup);
-        });
-
-        // Dim scene lighting to emergency power level
-        if (this.ambientLight) this.ambientLight.intensity = 0.24;
-        if (this.keyLight) this.keyLight.intensity = 0.42;
-
-        return {
-            success: true,
-            exitCount: exitDoors.length,
-            roomCount: routedRoomsCount,
-            totalRooms: rooms.length,
-            maxDistance: maxTravelDist.toFixed(1),
-            avgDistance: (totalTravelDist / Math.max(1, routedRoomsCount)).toFixed(1),
-            exitSource: hasExplicitExits ? "Scene-marked exterior openings" : "Perimeter candidates inferred; verify",
-            note: "Graph connectivity and estimated route lengths only; not an evacuation, code-compliance, or safety assessment."
-        };
-    }
-
-    clearEvacuation() {
-        this.evacuationActive = false;
-        const group = this.groups.evacuation;
-        while (group.children.length > 0) {
-            const obj = group.children[0];
-            this.disposeObjectResources(obj);
-            group.remove(obj);
-        }
-        if (this.evacuationTexture) {
-            this.evacuationTexture.dispose();
-            this.evacuationTexture = null;
-        }
-        this.setTimeOfDay(this.timeOfDay || 13.0);
-    }
-
-    resetCameraView() {
-        this.setPerspectiveView();
-    }
-
-    panWithArrowKeys(event) {
-        if (this.walkthroughActive || !this.camera || !this.controls || event.altKey || event.ctrlKey || event.metaKey) return;
-        if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
-
-        const target = event.target;
-        const tagName = target && target.tagName ? target.tagName.toLowerCase() : "";
-        if (tagName === "input" || tagName === "textarea" || tagName === "select" || target.isContentEditable) return;
-
-        event.preventDefault();
-
-        // Pan parallel to the floor so arrow keys move across the plan instead of orbiting it.
-        const forward = new THREE.Vector3(
-            this.controls.target.x - this.camera.position.x,
-            0,
-            this.controls.target.z - this.camera.position.z
-        ).normalize();
-        const right = new THREE.Vector3(-forward.z, 0, forward.x);
-        const planSpan = Math.max(this.bounds ? this.bounds.width : 12, this.bounds ? this.bounds.height : 12);
-        const step = Math.max(0.25, Math.min(planSpan * 0.04, 3)) * (event.shiftKey ? 3 : 1);
-        const movement = new THREE.Vector3();
-
-        if (event.key === "ArrowUp") movement.copy(forward);
-        if (event.key === "ArrowDown") movement.copy(forward).negate();
-        if (event.key === "ArrowRight") movement.copy(right);
-        if (event.key === "ArrowLeft") movement.copy(right).negate();
-
-        movement.multiplyScalar(step);
-        this.camera.position.add(movement);
-        this.controls.target.add(movement);
-        this.controls.update();
-    }
-
-    /**
-     * Layer Visibility Toggles
-     */
-    toggleLayer(layerName, isVisible) {
-        this.layerVisibility[layerName] = isVisible;
-        if (this.groups[layerName]) {
-            this.groups[layerName].visible = isVisible;
-        }
-        this.floorGroups.forEach(group => {
-            const layer = group.getObjectByName(layerName);
-            if (layer) layer.visible = isVisible;
-        });
-        this.refreshSelectableMeshes();
-    }
-
-    toggleWalkthroughMode(forceState) {
-        const enable = forceState === undefined ? !this.walkthroughActive : Boolean(forceState);
-        if (enable === this.walkthroughActive) return this.walkthroughActive;
-        if (!enable) {
-            this.walkthroughActive = false;
-            this.walkthroughKeys.clear();
-            this.walkthroughVelocity.set(0, 0, 0);
-            this.walkthroughTransition = null;
-            this.walkthroughMouseDown = false;
-            this.walkthroughPointerLocked = false;
-            if (this.controls) this.controls.enabled = true;
-            this.container.classList.remove("walkthrough-active");
-            this.walkthroughHud?.classList.add("hidden");
-            if (document.pointerLockElement === this.renderer.domElement) document.exitPointerLock();
-            this.setPerspectiveView();
-            if (this.onWalkthroughChange) this.onWalkthroughChange(false);
-            return false;
-        }
-
-        const rooms = this.currentSceneData?.rooms || [];
-        if (!rooms.length) return false;
-        // Keep connected stories visible while walking so the stair flight and its landing remain usable.
-        if (this.walkthroughStairLinks.length && this.visibleLevel !== null) {
-            this.visibleLevel = null;
-            this.updateVisibleLevels();
-            this.onWalkthroughStoryViewChange?.("all");
-        }
-        const allowedRooms = this.visibleLevel === null
-            ? rooms
-            : rooms.filter(room => this.getItemFloorIndex(room) === this.visibleLevel);
-        const preferred = allowedRooms.filter(room => ["corridor", "entrance"].includes(String(room.type || "").toLowerCase()));
-        const candidates = preferred.length ? preferred : allowedRooms;
-        let room = null;
-        let interiorPoint = null;
-        for (const candidate of candidates.slice().sort((a, b) => this.getPolygonArea(b.polygon) - this.getPolygonArea(a.polygon))) {
-            this.walkthroughFloorIndex = this.getItemFloorIndex(candidate);
-            interiorPoint = this.getWalkthroughInteriorPoint(candidate);
-            if (interiorPoint) { room = candidate; break; }
-        }
-        if (!room || !interiorPoint) return false;
-
-        const [planX, planY] = interiorPoint;
-        const world = this.toWorldCoords(planX, planY);
-        this.walkthroughFloorIndex = this.getItemFloorIndex(room);
-        this.walkthroughYaw = this.getWalkthroughYaw(room, [planX, planY]);
-        this.walkthroughPitch = 0;
-        this.camera.position.set(world.x, this.getLevelElevation(this.walkthroughFloorIndex) + this.walkthroughEyeHeight, world.z);
-        this.camera.rotation.order = "YXZ";
-        this.camera.rotation.set(0, this.walkthroughYaw, 0);
-        this.is2DMode = false;
-        this.isEyeLevelView = true;
-        this.walkthroughActive = true;
-        this.walkthroughPointerLocked = false;
-        this.controls.enabled = false;
-        this.container.classList.add("walkthrough-active");
-        this.walkthroughHud?.classList.remove("hidden");
-        this.walkthroughHintElement && (this.walkthroughHintElement.textContent = "WASD / arrows to walk · drag to look · E to interact · Esc to exit");
-        this.camera.updateMatrixWorld();
-        this.updateRoomLabelVisibility(1 / 60);
-        if (this.onWalkthroughChange) this.onWalkthroughChange(true);
-        try {
-            const request = this.renderer.domElement.requestPointerLock?.();
-            if (request && typeof request.catch === "function") request.catch(() => {});
-        } catch (_error) {
-            // Mouse drag fallback remains available when pointer lock is denied.
-        }
-        return true;
-    }
-
-    onPointerLockChange() {
-        if (!this.walkthroughActive) return;
-        const hasLock = document.pointerLockElement === this.renderer.domElement;
-        if (hasLock) {
-            this.walkthroughPointerLocked = true;
-            return;
-        }
-        if (this.walkthroughPointerLocked) this.toggleWalkthroughMode(false);
-    }
-
-    onWalkthroughMouseMove(event) {
-        if (!this.walkthroughActive) return;
-        const locked = document.pointerLockElement === this.renderer.domElement;
-        if (!locked) return;
-        this.applyWalkthroughLook(event.movementX, event.movementY);
-    }
-
-    onWalkthroughPointerDown(event) {
-        if (!this.walkthroughActive) return;
-        this.walkthroughMouseDown = true;
-        this.walkthroughLastPointer = [event.clientX, event.clientY];
-        try { this.renderer.domElement.setPointerCapture(event.pointerId); } catch (_error) {}
-    }
-
-    onWalkthroughPointerMove(event) {
-        if (!this.walkthroughActive || !this.walkthroughMouseDown
-            || document.pointerLockElement === this.renderer.domElement || !this.walkthroughLastPointer) return;
-        const deltaX = event.clientX - this.walkthroughLastPointer[0];
-        const deltaY = event.clientY - this.walkthroughLastPointer[1];
-        this.walkthroughLastPointer = [event.clientX, event.clientY];
-        this.applyWalkthroughLook(deltaX, deltaY);
-    }
-
-    applyWalkthroughLook(deltaX, deltaY) {
-        this.walkthroughYaw -= deltaX * 0.0025;
-        this.walkthroughPitch = THREE.MathUtils.clamp(
-            this.walkthroughPitch - deltaY * 0.002,
-            -Math.PI / 2 + 0.05,
-            Math.PI / 2 - 0.05
-        );
-        this.camera.rotation.set(this.walkthroughPitch, this.walkthroughYaw, 0, "YXZ");
-    }
-
-    onWalkthroughKeyDown(event) {
-        if (!this.walkthroughActive) return;
-        const key = event.key.toLowerCase();
-        const target = event.target;
-        if (target && (target.isContentEditable || ["input", "textarea", "select"].includes(target.tagName?.toLowerCase()))) return;
-        if (key === "e" || event.code === "KeyE") {
-            event.preventDefault();
-            if (event.repeat) return;
-            this.tryWalkthroughInteraction();
-            return;
-        }
-        if (!["w", "a", "s", "d", "shift", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(key)) return;
-        event.preventDefault();
-        this.setWalkthroughKey(key, true);
-    }
-
-    onWalkthroughKeyUp(event) {
-        this.setWalkthroughKey(event.key.toLowerCase(), false);
-    }
-
-    setWalkthroughKey(key, pressed) {
-        const normalized = String(key).toLowerCase();
-        if (!["w", "a", "s", "d", "shift", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(normalized)) return;
-        if (pressed && this.walkthroughActive) this.walkthroughKeys.add(normalized);
-        else this.walkthroughKeys.delete(normalized);
-    }
-
-    getWalkthroughInteriorPoint(room) {
-        const polygon = room.polygon || [];
-        if (polygon.length < 3) return null;
-        const xs = polygon.map(point => point[0]), ys = polygon.map(point => point[1]);
-        const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
-        const span = Math.max(maxX - minX, maxY - minY);
-        const step = Math.max(0.12, Math.min(0.22, span / 32));
-        let best = null;
-        for (let y = minY + step / 2; y < maxY; y += step) {
-            for (let x = minX + step / 2; x < maxX; x += step) {
-                const point = [x, y];
-                if (!this.isPlanPointInRing(point, polygon)) continue;
-                if (this.getRoomHoles(room).some(hole => this.isPlanPointInRing(point, hole))) continue;
-                const world = this.toWorldCoords(x, y);
-                if (this.isWalkPositionBlocked(world.x, world.z)) continue;
-                const roomClearance = this.planPointRingClearance(point, polygon);
-                const wallClearance = (this.currentSceneData?.walls || [])
-                    .filter(wall => this.getItemFloorIndex(wall) === this.walkthroughFloorIndex && wall.polygon?.length >= 3)
-                    .reduce((minimum, wall) => Math.min(minimum, this.planPointRingClearance(point, wall.polygon)), Infinity);
-                const clearance = Math.min(roomClearance, wallClearance);
-                if (!best || clearance > best.clearance) best = { point: [x, y], clearance };
-            }
-        }
-        return best?.point || null;
-    }
-
-    getWalkthroughYaw(room, planPoint) {
-        const origin = this.toWorldCoords(planPoint[0], planPoint[1]);
-        let best = null;
-        const distances = [0.7, 1.2, 1.8];
-        for (let index = 0; index < 24; index++) {
-            const yaw = index * Math.PI * 2 / 24;
-            const forwardX = -Math.sin(yaw);
-            const forwardZ = -Math.cos(yaw);
-            for (const distance of distances) {
-                const candidateWorldX = origin.x + forwardX * distance;
-                const candidateWorldZ = origin.z + forwardZ * distance;
-                const candidatePlan = [candidateWorldX + this.centerOffset.x, candidateWorldZ + this.centerOffset.y];
-                if (!this.isPlanPointInRing(candidatePlan, room.polygon || [])) continue;
-                if (this.getRoomHoles(room).some(hole => this.isPlanPointInRing(candidatePlan, hole))) continue;
-                if (this.isWalkPositionBlocked(candidateWorldX, candidateWorldZ)) continue;
-                const clearance = this.planPointRingClearance(candidatePlan, room.polygon || []);
-                const score = clearance + distance * 0.015;
-                if (!best || score > best.score) best = { yaw, score };
-            }
-        }
-        return best?.yaw ?? 0;
-    }
-
-    isPlanPointInRing(point, ring) {
-        if (!Array.isArray(ring) || ring.length < 3) return false;
-        let inside = false;
-        for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-            const a = ring[i], b = ring[j];
-            if (((a[1] > point[1]) !== (b[1] > point[1]))
-                && point[0] < (b[0] - a[0]) * (point[1] - a[1]) / ((b[1] - a[1]) || 1e-9) + a[0]) inside = !inside;
-        }
-        return inside;
-    }
-
-    planPointRingClearance(point, ring) {
-        let minimum = Infinity;
-        for (let index = 0; index < ring.length; index++) {
-            const a = ring[index], b = ring[(index + 1) % ring.length];
-            const dx = b[0] - a[0], dy = b[1] - a[1];
-            const lengthSquared = dx * dx + dy * dy;
-            const t = lengthSquared
-                ? THREE.MathUtils.clamp(((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / lengthSquared, 0, 1)
-                : 0;
-            minimum = Math.min(minimum, Math.hypot(point[0] - (a[0] + t * dx), point[1] - (a[1] + t * dy)));
-        }
-        return minimum;
-    }
-
-    findNearbyWalkthroughInteraction() {
-        if (!this.walkthroughActive || this.walkthroughTransition) return null;
-        const planX = this.camera.position.x + this.centerOffset.x;
-        const planY = this.camera.position.z + this.centerOffset.y;
-        const nearbyDoors = this.walkthroughDoors
-            .filter(door => door.level === this.walkthroughFloorIndex)
-            .map(door => ({ door, distance: Math.hypot(door.data.center[0] - planX, door.data.center[1] - planY) }))
-            .filter(item => item.distance <= Math.max(1.15, item.door.width / 2 + 0.55))
-            .sort((a, b) => a.distance - b.distance);
-        const closedDoor = nearbyDoors.find(item => !item.door.group.userData.open);
-        if (closedDoor) return { type: "door", ...closedDoor };
-
-        for (const link of this.walkthroughStairLinks) {
-            let endpoint, nextLevel;
-            if (link.lowerLevel === this.walkthroughFloorIndex) {
-                endpoint = link.lowerPoint;
-                nextLevel = link.upperLevel;
-            } else if (link.upperLevel === this.walkthroughFloorIndex) {
-                endpoint = link.upperPoint;
-                nextLevel = link.lowerLevel;
-            } else continue;
-            const distanceToLanding = Math.hypot(endpoint.x - this.camera.position.x, endpoint.z - this.camera.position.z);
-            const planPoint = [planX, planY];
-            const isInsideStairwell = (this.currentSceneData?.rooms || []).some(room =>
-                this.getItemFloorIndex(room) === this.walkthroughFloorIndex
-                && ["stair", "stairs"].includes(String(room.type || "").toLowerCase())
-                && this.isPlanPointInRing(planPoint, room.polygon || [])
-            );
-            // The stair room itself is an interaction zone; the generous landing radius also
-            // covers small differences between detected room bounds and generated stair geometry.
-            if (distanceToLanding < 2.1 || isInsideStairwell) {
-                return { type: "stairs", link, nextLevel };
-            }
-        }
-        const openDoor = nearbyDoors[0];
-        if (openDoor) return { type: "door", ...openDoor };
-        return null;
-    }
-
-    tryWalkthroughInteraction() {
-        const interaction = this.walkthroughNearbyInteraction || this.findNearbyWalkthroughInteraction();
-        if (!interaction) {
-            if (this.walkthroughHintElement) this.walkthroughHintElement.textContent = "Move close to a door or stair landing to interact.";
-            return;
-        }
-        if (interaction.type === "door") {
-            const { group, data } = interaction.door;
-            group.userData.open = !group.userData.open;
-            group.userData.targetAngle = group.userData.open ? Math.PI / 2 : 0;
-            data.open = group.userData.open;
-            this.updateWalkthroughInteractionHint();
-            return;
-        }
-        const { link, nextLevel } = interaction;
-        const ascending = nextLevel > this.walkthroughFloorIndex;
-        const points = ascending
-            ? [link.lowerPoint, link.middlePoint, link.upperPoint]
-            : [link.upperPoint, link.middlePoint, link.lowerPoint];
-        const curve = new THREE.CatmullRomCurve3(points.map(point => point.clone()), false, "centripetal", 0.25);
-        this.walkthroughTransition = {
-            curve, elapsed: 0, duration: 2.4, fromFloor: this.walkthroughFloorIndex,
-            toFloor: nextLevel, direction: ascending ? 1 : -1,
-        };
-        this.walkthroughKeys.clear();
-        this.walkthroughVelocity.set(0, 0, 0);
-        this.walkthroughNearbyInteraction = null;
-        if (this.visibleLevel !== null) {
-            this.visibleLevel = null;
-            this.updateVisibleLevels();
-            this.onWalkthroughLevelChange?.(null);
-        }
-        if (this.walkthroughHintElement) this.walkthroughHintElement.textContent = ascending ? "Walking upstairs…" : "Walking downstairs…";
-    }
-
-    updateWalkthrough(deltaSeconds) {
-        if (!this.walkthroughActive) return;
-        const delta = Math.min(deltaSeconds, 0.05);
-        if (this.walkthroughTransition) {
-            const transition = this.walkthroughTransition;
-            transition.elapsed = Math.min(transition.duration, transition.elapsed + delta);
-            const t = transition.elapsed / transition.duration;
-            const eased = t * t * (3 - 2 * t);
-            this.camera.position.copy(transition.curve.getPoint(eased));
-            const tangent = transition.curve.getTangent(Math.min(0.99, Math.max(0.01, eased)));
-            this.walkthroughYaw = Math.atan2(-tangent.x, -tangent.z);
-            this.walkthroughPitch = Math.atan2(tangent.y, Math.hypot(tangent.x, tangent.z));
-            this.camera.rotation.set(this.walkthroughPitch, this.walkthroughYaw, 0, "YXZ");
-            if (t >= 1) {
-                this.walkthroughFloorIndex = transition.toFloor;
-                this.camera.position.y = this.getLevelElevation(this.walkthroughFloorIndex) + this.walkthroughEyeHeight;
-                this.walkthroughTransition = null;
-                this.walkthroughPitch = 0;
-                this.camera.rotation.set(0, this.walkthroughYaw, 0, "YXZ");
-                this.onWalkthroughFloorChanged?.(this.walkthroughFloorIndex);
-            }
-            return;
-        }
-
-        const forwardAmount = (this.walkthroughKeys.has("w") || this.walkthroughKeys.has("arrowup") ? 1 : 0)
-            - (this.walkthroughKeys.has("s") || this.walkthroughKeys.has("arrowdown") ? 1 : 0);
-        const sideAmount = (this.walkthroughKeys.has("d") || this.walkthroughKeys.has("arrowright") ? 1 : 0)
-            - (this.walkthroughKeys.has("a") || this.walkthroughKeys.has("arrowleft") ? 1 : 0);
-        const forward = new THREE.Vector3(-Math.sin(this.walkthroughYaw), 0, -Math.cos(this.walkthroughYaw));
-        const right = new THREE.Vector3(-forward.z, 0, forward.x);
-        const desired = new THREE.Vector3().addScaledVector(forward, forwardAmount).addScaledVector(right, sideAmount);
-        if (desired.lengthSq()) desired.normalize().multiplyScalar(this.walkthroughKeys.has("shift") ? 3.35 : 1.85);
-        const blend = 1 - Math.exp(-(desired.lengthSq() ? 8.5 : 11.0) * delta);
-        this.walkthroughVelocity.x = THREE.MathUtils.lerp(this.walkthroughVelocity.x, desired.x, blend);
-        this.walkthroughVelocity.z = THREE.MathUtils.lerp(this.walkthroughVelocity.z, desired.z, blend);
-
-        const distance = Math.hypot(this.walkthroughVelocity.x, this.walkthroughVelocity.z) * delta;
-        const substeps = Math.max(1, Math.ceil(distance / 0.075));
-        const stepX = this.walkthroughVelocity.x * delta / substeps;
-        const stepZ = this.walkthroughVelocity.z * delta / substeps;
-        for (let step = 0; step < substeps; step++) {
-            const nextX = this.camera.position.x + stepX;
-            const nextZ = this.camera.position.z + stepZ;
-            if (!this.isWalkPositionBlocked(nextX, nextZ)) {
-                this.camera.position.x = nextX;
-                this.camera.position.z = nextZ;
-            } else {
-                if (this.isWalkPositionBlocked(nextX, this.camera.position.z)) this.walkthroughVelocity.x = 0;
-                else this.camera.position.x = nextX;
-                if (this.isWalkPositionBlocked(this.camera.position.x, nextZ)) this.walkthroughVelocity.z = 0;
-                else this.camera.position.z = nextZ;
-            }
-        }
-        this.camera.position.y = this.getLevelElevation(this.walkthroughFloorIndex) + this.walkthroughEyeHeight;
-        const speed = Math.hypot(this.walkthroughVelocity.x, this.walkthroughVelocity.z);
-        if (speed > 0.08) {
-            this.walkthroughBobPhase += delta * Math.min(1.7, speed / 1.85);
-            this.camera.position.y += Math.sin(this.walkthroughBobPhase * Math.PI * 2) * 0.018 * Math.min(1, speed / 1.85);
-        }
-        this.walkthroughNearbyInteraction = this.findNearbyWalkthroughInteraction();
-        this.updateWalkthroughInteractionHint();
-    }
-
-    updateWalkthroughInteractionHint() {
-        if (!this.walkthroughHintElement) return;
-        if (!this.walkthroughNearbyInteraction) {
-            const isInside = this.isInsideBuilding(this.camera.position.x, this.camera.position.z);
-            if (!isInside && this.walkthroughFloorIndex === 0) {
-                this.walkthroughHintElement.textContent = "Outside Yard · WASD to explore exterior · Drag to look · Walk to door or click 'Go Inside'";
-            } else {
-                this.walkthroughHintElement.textContent = "WASD / arrows to walk · drag to look · E to interact · Esc to exit";
-            }
-        } else if (this.walkthroughNearbyInteraction.type === "door") {
-            const isOpen = this.walkthroughNearbyInteraction.door.group.userData.open;
-            this.walkthroughHintElement.textContent = `Press E to ${isOpen ? "close" : "open"} door`;
-        } else {
-            this.walkthroughHintElement.textContent = this.walkthroughNearbyInteraction.nextLevel > this.walkthroughFloorIndex
-                ? "Press E to go upstairs"
-                : "Press E to go downstairs";
-        }
-    }
-
-    isInsideBuilding(worldX, worldZ) {
-        const px = worldX + this.centerOffset.x;
-        const py = worldZ + this.centerOffset.y;
-        return (this.currentSceneData?.rooms || []).some(room => {
-            if (this.getItemFloorIndex(room) !== this.walkthroughFloorIndex) return false;
-            return this.isPlanPointInRing([px, py], room.polygon || []);
-        });
-    }
-
-    walkOutside() {
-        if (!this.walkthroughActive) {
-            this.toggleWalkthroughMode(true);
-        }
-        if (this.walkthroughFloorIndex !== 0) {
-            this.walkthroughFloorIndex = 0;
-            this.camera.position.y = this.getLevelElevation(0) + this.walkthroughEyeHeight;
-            this.onWalkthroughFloorChanged?.(0);
-        }
-
-        const doors = this.currentSceneData?.doors || [];
-        const extDoor = doors.find(d => (d.connects || []).includes("outside") && (d.id === "d8" || (d.center && d.center[1] > 9)))
-            || doors.find(d => (d.connects || []).includes("outside"))
-            || doors[0];
-
-        if (extDoor && extDoor.center) {
-            const doorWorld = this.toWorldCoords(extDoor.center[0], extDoor.center[1]);
-            const isSouthWall = extDoor.center[1] > 9.0;
-            let posX, posZ, targetYaw;
-
-            if (isSouthWall) {
-                // Standing in south front yard looking North towards the main entrance facade
-                posX = doorWorld.x;
-                posZ = doorWorld.z + 5.5;
-                targetYaw = 0; // Looking towards -Z (North)
-            } else {
-                // Standing in west yard looking East towards the building
-                posX = doorWorld.x - 5.5;
-                posZ = doorWorld.z;
-                targetYaw = -Math.PI / 2; // Looking towards +X (East)
-            }
-
-            this.camera.position.set(posX, this.getLevelElevation(0) + this.walkthroughEyeHeight, posZ);
-            this.walkthroughYaw = targetYaw;
-            this.walkthroughPitch = 0.04;
-            this.camera.rotation.order = "YXZ";
-            this.camera.rotation.set(0, this.walkthroughYaw, 0);
-            this.camera.updateMatrixWorld();
-            if (this.walkthroughHintElement) {
-                this.walkthroughHintElement.textContent = "Outside Yard · WASD to explore exterior · Drag to look · Walk to door or click 'Go Inside'";
-            }
-        }
-    }
-
-    walkInside() {
-        if (!this.walkthroughActive) {
-            this.toggleWalkthroughMode(true);
-        }
-        if (this.walkthroughFloorIndex !== 0) {
-            this.walkthroughFloorIndex = 0;
-            this.camera.position.y = this.getLevelElevation(0) + this.walkthroughEyeHeight;
-            this.onWalkthroughFloorChanged?.(0);
-        }
-
-        const rooms = this.currentSceneData?.rooms || [];
-        const lobby = rooms.find(r => r.type === "entrance" || r.id === "r6")
-            || rooms.find(r => r.type === "corridor")
-            || rooms[0];
-
-        if (lobby && lobby.polygon) {
-            const centroid = this.getWalkthroughInteriorPoint(lobby) || this.getPolygonCentroid(lobby.polygon);
-            const world = this.toWorldCoords(centroid[0], centroid[1]);
-            this.camera.position.set(world.x, this.getLevelElevation(0) + this.walkthroughEyeHeight, world.z);
-            this.walkthroughYaw = this.getWalkthroughYaw(lobby, centroid);
-            this.walkthroughPitch = 0;
-            this.camera.rotation.order = "YXZ";
-            this.camera.rotation.set(0, this.walkthroughYaw, 0);
-            this.camera.updateMatrixWorld();
-            if (this.walkthroughHintElement) {
-                this.walkthroughHintElement.textContent = "Inside Entrance Lobby · WASD to walk · Drag to look · Walk through exit door to view outside";
-            }
-        }
-    }
-
-    updateWalkthroughDoors(deltaSeconds) {
-        const blend = 1 - Math.exp(-9 * Math.min(deltaSeconds, 0.05));
-        this.walkthroughDoors.forEach(({ group }) => {
-            const hinge = group.userData.hinge;
-            hinge.rotation.y = THREE.MathUtils.lerp(hinge.rotation.y, group.userData.targetAngle, blend);
-        });
-    }
-
-    isWalkPositionBlocked(worldX, worldZ) {
-        const px = worldX + this.centerOffset.x;
-        const py = worldZ + this.centerOffset.y;
-        const radius = 0.18;
-        const pointRingDistance = (point, ring) => {
-            let minimum = Infinity;
-            for (let index = 0; index < ring.length; index++) {
-                const a = ring[index], b = ring[(index + 1) % ring.length];
-                const dx = b[0] - a[0], dy = b[1] - a[1];
-                const lengthSq = dx * dx + dy * dy;
-                const t = lengthSq
-                    ? THREE.MathUtils.clamp(((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / lengthSq, 0, 1)
-                    : 0;
-                minimum = Math.min(minimum, Math.hypot(point[0] - (a[0] + t * dx), point[1] - (a[1] + t * dy)));
-            }
-            return minimum;
-        };
-        const onWalkableRoom = (this.currentSceneData?.rooms || []).some(room => {
-            if (this.getItemFloorIndex(room) !== this.walkthroughFloorIndex) return false;
-            const polygon = room.polygon || [];
-            if (polygon.length < 3) return false;
-            const point = [px, py];
-            if (this.getRoomHoles(room).some(hole => this.isPlanPointInRing(point, hole))) return false;
-            // Floor masks leave a narrow gap at many door thresholds. Let the player's center
-            // bridge that gap; wall and closed-door checks below still prevent walking through solids.
-            return this.isPlanPointInRing(point, polygon) || pointRingDistance(point, polygon) <= radius + 0.07;
-        });
-        if (!onWalkableRoom) {
-            if (this.walkthroughFloorIndex === 0) {
-                // On ground floor (level 0), allow walking freely in the exterior yard around the house.
-                const bounds = this.bounds || { minX: 0, maxX: 20, minY: 0, maxY: 15 };
-                const yardMargin = 40;
-                const inYard = px >= bounds.minX - yardMargin && px <= bounds.maxX + yardMargin &&
-                               py >= bounds.minY - yardMargin && py <= bounds.maxY + yardMargin;
-                if (!inYard) return true;
-            } else {
-                // On upper floors, restrain to walkable indoor rooms and stair landings
-                return true;
-            }
-        }
-
-        const pointSegmentDistance = (point, a, b) => {
-            const dx = b[0] - a[0], dy = b[1] - a[1];
-            const lengthSq = dx * dx + dy * dy;
-            const t = lengthSq ? THREE.MathUtils.clamp(((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / lengthSq, 0, 1) : 0;
-            return Math.hypot(point[0] - (a[0] + t * dx), point[1] - (a[1] + t * dy));
-        };
-        return (this.currentSceneData?.walls || []).some(wall => {
-            if (this.getItemFloorIndex(wall) !== this.walkthroughFloorIndex) return false;
-            const polygon = wall.polygon || [];
-            if (polygon.length < 3) return false;
-            const pointInsideRing = ring => {
-                let inside = false;
-                for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-                    const a = ring[i], b = ring[j];
-                    if (((a[1] > py) !== (b[1] > py))
-                        && px < (b[0] - a[0]) * (py - a[1]) / ((b[1] - a[1]) || 1e-9) + a[0]) inside = !inside;
-                    if (pointSegmentDistance([px, py], a, b) < radius) return true;
-                }
-                return inside;
-            };
-            if (pointInsideRing(polygon)) {
-                // Segmentation can represent a doorway as a hole in a wall mask.
-                const inOpening = (wall.holes || []).some(hole => hole.length >= 3 && pointInsideRing(hole));
-                return !inOpening;
-            }
-            return false;
-        }) || this.walkthroughDoors.some(({ group, level, width }) => {
-            if (level !== this.walkthroughFloorIndex || group.userData.open) return false;
-            const dx = px - group.userData.planCenter[0];
-            const dy = py - group.userData.planCenter[1];
-            const angle = group.rotation.y;
-            const along = dx * Math.cos(angle) - dy * Math.sin(angle);
-            const across = dx * Math.sin(angle) + dy * Math.cos(angle);
-            return Math.abs(along) <= width / 2 + radius
-                && Math.abs(across) <= group.userData.wallThickness / 2 + radius;
-        });
-    }
-
-    toggleMeasurementMode(forceState) {
-        this.measurementActive = forceState === undefined ? !this.measurementActive : Boolean(forceState);
-        if (this.measurementActive) this.onMeasurementUpdate?.("Click a first floor or wall point in the 3D view.");
-        if (this.onMeasurementModeChange) this.onMeasurementModeChange(this.measurementActive);
-        return this.measurementActive;
-    }
-
-    clearMeasurement() {
-        const group = this.groups.measurements;
-        while (group?.children.length) {
-            const object = group.children[0];
-            this.disposeObjectResources(object);
-            group.remove(object);
-        }
-        this.measurementPoints = [];
-    }
-
-    addMeasurementMarker(point) {
-        const marker = new THREE.Mesh(
-            new THREE.SphereGeometry(0.08, 12, 8),
-            new THREE.MeshStandardMaterial({ color: 0x9B3418, emissive: 0x9B3418, emissiveIntensity: 0.6 })
-        );
-        marker.position.copy(point);
-        this.groups.measurements.add(marker);
-    }
-
-    handleMeasurementClick(intersection) {
-        if (this.measurementPoints.length >= 2) this.clearMeasurement();
-        const point = intersection.point.clone();
-        this.measurementPoints.push(point);
-        this.addMeasurementMarker(point);
-        if (this.measurementPoints.length === 1) {
-            this.onMeasurementUpdate?.("First point set. Click a second point.");
-            return;
-        }
-        const [start, end] = this.measurementPoints;
-        const geometry = new THREE.BufferGeometry().setFromPoints([start, end]);
-        const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: 0x9B3418, depthTest: false }));
-        this.groups.measurements.add(line);
-        this.onMeasurementUpdate?.(`Distance: ${start.distanceTo(end).toFixed(2)} m · click again to start another measurement.`);
-    }
-
-    /**
-     * Exports the rendered 3D architectural scene as a standard binary .GLB file.
-     * Can be opened in Blender, Windows 3D Viewer, Unity, Unreal Engine, etc.
-     */
-    exportGLB(filename = "floorplan3d_model.glb") {
-        if (!THREE.GLTFExporter) {
-            alert("GLTFExporter is not loaded.");
-            return;
-        }
-
-        // Build a clean export container including walls, floors, doors, and windows
-        const exportScene = new THREE.Scene();
-        this.floorGroups.forEach(floorGroup => {
-            ["walls", "rooms", "doors", "windows", "furniture", "stairs"].forEach(layerName => {
-                if (layerName === "furniture" && !this.layerVisibility.furniture) return;
-                const layer = floorGroup.getObjectByName(layerName);
-                if (!layer) return;
-                layer.children.forEach(child => {
-                    if (child.isMesh || child.isGroup) exportScene.add(child.clone(true));
-                });
-            });
-        });
-
-        const exporter = new THREE.GLTFExporter();
-        exporter.parse(
-            exportScene,
-            (arrayBuffer) => {
-                if (arrayBuffer instanceof ArrayBuffer) {
-                    const blob = new Blob([arrayBuffer], { type: "model/gltf-binary" });
-                    const link = document.createElement("a");
-                    link.href = URL.createObjectURL(blob);
-                    link.download = filename;
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                    window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-                } else {
-                    console.error("Export produced non-binary output:", arrayBuffer);
-                }
-            },
-            { binary: true, embedImages: true }
-        );
-    }
-
-    onWindowResize() {
-        if (!this.container || !this.renderer || !this.camera) return;
-        const width = this.container.clientWidth;
-        const height = this.container.clientHeight;
-        if (width <= 0 || height <= 0) return;
-        this.camera.aspect = width / height;
-        this.camera.updateProjectionMatrix();
-        this.renderer.setSize(width, height);
-    }
-
-    updateRoomLabelVisibility(deltaSeconds) {
-        if (!this.camera || !this.renderer) return;
-        const rect = this.renderer.domElement.getBoundingClientRect();
-        const viewportWidth = rect.width;
-        const viewportHeight = rect.height;
-        if (!viewportWidth || !viewportHeight) return;
-
-        // Hide when camera elevation is below 15 degrees
-        const deltaY = this.camera.position.y - this.controls.target.y;
-        const horizontalDist = Math.hypot(
-            this.camera.position.x - this.controls.target.x,
-            this.camera.position.z - this.controls.target.z
-        );
-        const cameraElevation = Math.atan2(deltaY, horizontalDist);
-        const minElevation = 15 * Math.PI / 180; // 15 degrees
-        if (cameraElevation < minElevation || this.isEyeLevelView || this.walkthroughActive) {
-            this.floorGroups.forEach(fg => {
-                const labelLayer = fg.getObjectByName("labels");
-                if (labelLayer) {
-                    labelLayer.children.forEach(sprite => {
-                        if (sprite.isSprite) {
-                            sprite.visible = false;
-                            if (sprite.material) sprite.material.opacity = 0;
-                        }
-                    });
-                }
-            });
-            return;
-        }
-
-        const candidates = [];
-        const cameraPosition = this.camera.position;
-        const tempWorldPosition = new THREE.Vector3();
-        const verticalFov = THREE.MathUtils.degToRad(this.camera.fov || 45);
-        const tanHalfFov = Math.tan(verticalFov / 2);
-
-        // In isolate floor mode, show only that floor's labels
-        const activeIsolatedFloor = this.visibleLevel !== null ? this.visibleLevel : this.currentIsolatedFloor;
-
-        if (!this.labelRaycaster) this.labelRaycaster = new THREE.Raycaster();
-
-        this.floorGroups.forEach((floorGroup, floorIndex) => {
-            const labelLayer = floorGroup.getObjectByName("labels");
-            if (!labelLayer) return;
-
-            const floorAllowed = floorGroup.visible
-                && labelLayer.visible
-                && (activeIsolatedFloor === null || floorIndex === activeIsolatedFloor)
-                && (spriteFloorVisible => spriteFloorVisible !== false)(floorGroup.userData.currentIsolationOpacity > 0.5);
-
-            labelLayer.children.forEach(sprite => {
-                if (!sprite.isSprite || !sprite.material) return;
-                if (!floorAllowed) {
-                    sprite.visible = false;
-                    sprite.material.opacity = 0;
-                    return;
-                }
-
-                sprite.getWorldPosition(tempWorldPosition);
-
-                const distance = cameraPosition.distanceTo(tempWorldPosition);
-                const cameraSpace = tempWorldPosition.clone().applyMatrix4(this.camera.matrixWorldInverse);
-                const viewDepth = Math.max(0.01, -cameraSpace.z);
-                const projected = tempWorldPosition.clone().project(this.camera);
-                const inFrame = Math.abs(projected.x) <= 1.05 && Math.abs(projected.y) <= 1.05 && viewDepth > 0;
-
-                if (!inFrame) {
-                    sprite.visible = false;
-                    sprite.material.opacity = 0;
-                    return;
-                }
-
-                // Constant screen size 11px:
-                // Target screen height in pixels for the badge (~22px on 2x canvas)
-                const targetBadgeHeightPx = sprite.userData.isExpanded ? 34 : 22;
-                const worldHeight = (targetBadgeHeightPx / viewportHeight) * 2 * tanHalfFov * viewDepth;
-                const aspect = (sprite.userData.canvas?.width || 240) / (sprite.userData.canvas?.height || 44);
-                sprite.scale.set(worldHeight * aspect, worldHeight, 1.0);
-
-                const screenWidthPx = targetBadgeHeightPx * aspect;
-                const centerX = (projected.x + 1) * 0.5 * viewportWidth;
-                const centerY = (1 - projected.y) * 0.5 * viewportHeight;
-
-                sprite.visible = true;
-                sprite.material.opacity = 1;
-
-                candidates.push({
-                    sprite,
-                    floorIndex,
-                    rect: {
-                        left: centerX - screenWidthPx / 2,
-                        right: centerX + screenWidthPx / 2,
-                        top: centerY - targetBadgeHeightPx / 2,
-                        bottom: centerY + targetBadgeHeightPx / 2
-                    },
-                    roomArea: Number(sprite.userData.roomArea) || 0,
-                    distance
-                });
-            });
-        });
-
-        // Overlapping labels: keep higher story first, then larger room's label
-        candidates.sort((a, b) => (b.floorIndex - a.floorIndex) || (b.roomArea - a.roomArea));
-        const accepted = [];
-        candidates.forEach(candidate => {
-            const overlaps = accepted.some(other =>
-                candidate.rect.left < other.rect.right
-                && candidate.rect.right > other.rect.left
-                && candidate.rect.top < other.rect.bottom
-                && candidate.rect.bottom > other.rect.top
-            );
-            if (overlaps) {
-                candidate.sprite.visible = false;
-                candidate.sprite.material.opacity = 0;
-            } else {
-                accepted.push(candidate);
-            }
-        });
-    }
-
-    updateBuildAnimations() {
-        for (let index = this.animatingMeshes.length - 1; index >= 0; index--) {
-            const mesh = this.animatingMeshes[index];
-            mesh.scale.y = THREE.MathUtils.lerp(mesh.scale.y, 1.0, 0.05);
-            if (mesh.userData.isFloorSurface && mesh.material) {
-                mesh.material.opacity = THREE.MathUtils.lerp(mesh.material.opacity, 1.0, 0.05);
-            }
-            if (mesh.scale.y < 0.99) continue;
-
-            mesh.scale.y = 1.0;
-            if (mesh.userData.isFloorSurface && mesh.material) {
-                mesh.material.opacity = 1;
-                mesh.material.transparent = false;
-                mesh.material.depthWrite = true;
-                mesh.material.needsUpdate = true;
-            }
-            if (mesh.userData.buildRevealLabel) {
-                mesh.userData.buildRevealLabel.userData.buildRevealProgress = 1;
-            }
-            this.animatingMeshes.splice(index, 1);
-        }
-    }
-
-    animate() {
-        requestAnimationFrame(now => {
-            this.updateBuildAnimations();
-            this.updateFloorIsolation(now);
-            this.animate();
-        });
-        if (this.controls && !this.walkthroughActive) this.controls.update();
-        const now = performance.now();
-        const deltaSeconds = this.lastLabelUpdateTime ? (now - this.lastLabelUpdateTime) / 1000 : 1 / 60;
-        this.lastLabelUpdateTime = now;
-        this.updateWalkthrough(deltaSeconds);
-        this.updateWalkthroughDoors(deltaSeconds);
-        this.camera?.updateMatrixWorld();
-        this.updateRoomLabelVisibility(deltaSeconds);
-        if (this.activeRouteTexture) {
-            this.activeRouteTexture.offset.x = (this.activeRouteTexture.offset.x - 0.006) % 1;
-        }
-        if (this.evacuationActive && this.evacuationTexture) {
-            this.evacuationTexture.offset.x = (this.evacuationTexture.offset.x - 0.012) % 1;
-        }
-        if (this.loadingGroup && this.loadingLaser) {
-            this.loadingLaser.position.z = Math.sin(Date.now() * 0.002) * 10;
-        }
-        if (this.renderer && this.scene && this.camera) {
-            this.renderer.render(this.scene, this.camera);
-        }
-    }
-}
+/**
+ * FloorPlan3D - Three.js 3D Interactive Floor Plan Viewer
+ * 
+ * Renders scene.json (METERS, origin top-left of plan, x right, y down) as a navigable 3D map.
+ * Features:
+ * - Extruded 3D walls with hole cutouts (real-time height adjustment)
+ * - Color-coded room floor slabs based on room types
+ * - 3D floating canvas text badges for room labels, types, and confidence scores
+ * - 3D door openings and glass windows
+ * - Interactive raycasting: click any room to inspect dimensions, area, and connections
+ * - Multiple camera modes (Isometric 3D, Top-Down 2D, Eye-Level Orbit)
+ * - Measurement grid and scale bar in meters
+ * - Layer visibility toggles (walls, floors, labels, doors, grid)
+ */
+
+class FloorPlanViewer {
+    constructor(containerId) {
+        this.container = document.getElementById(containerId);
+        if (!this.container) {
+            console.error(`Container #${containerId} not found.`);
+            return;
+        }
+
+        // Core Three.js components
+        this.scene = null;
+        this.camera = null;
+        this.cameraPerspective = null;
+        this.cameraOrtho = null;
+        this.isoAzimuthDeg = 45;
+        this.isoElevationDeg = 35.264;
+        this.isOrbitFreely = false;
+        this.orthoExtent = null;
+        this.isoRotationTween = null;
+        this.onCameraModeChange = null;
+        this.renderer = null;
+        this.controls = null;
+        this.raycaster = new THREE.Raycaster();
+        this.mouse = new THREE.Vector2();
+
+        // 3D Object groups for clean layer toggling
+        this.groups = {
+            grid: new THREE.Group(),
+            route: new THREE.Group(),
+            measurements: new THREE.Group(),
+            evacuation: new THREE.Group(),
+            blueprint: new THREE.Group(),
+        };
+        this.groups.measurements.name = "measurements";
+        this.groups.evacuation.name = "evacuation";
+        this.groups.blueprint.name = "blueprint";
+        this.timeOfDay = 13.0;
+        this.interiorLightsGroup = new THREE.Group();
+        this.interiorLightsGroup.name = "interiorLights";
+        this.blueprintMesh = null;
+        this.blueprintOpacity = 0.0;
+        this.evacuationActive = false;
+        this.evacuationTexture = null;
+        this.floorGroups = new Map();
+        window.viewer = this;
+        this.floorLayerNames = ["walls", "rooms", "labels", "doors", "windows", "furniture", "stairs", "roof", "slabs"];
+        this.layerVisibility = Object.fromEntries(this.floorLayerNames.map(name => [name, true]));
+        this.layerVisibility.furniture = false;
+        this.layerVisibility.roof = false;
+        this.selectableMeshes = [];
+        this.boundaryPreview = null;
+
+        // Scene state & metadata
+        this.currentSceneData = null;
+        this.centerOffset = { x: 0, y: 0 };
+        this.selectedRoomMesh = null;
+        this.selectedRoomOriginalColor = null;
+        this.wallHeight = 3.0; // default in meters
+        this.floorHeight = 3.2;
+        this.levelCount = 1;
+        this.sceneHeight = this.wallHeight;
+        this.visibleLevel = null;
+        this.is2DMode = false;
+        this.isEyeLevelView = false;
+        this.currentIsolatedFloor = null;
+        this.pendingFloorIsolation = null;
+        this.isolationTween = null;
+        this.loadingGroup = null;
+        this.loadingLaser = null;
+        this.animatingMeshes = [];
+        this.walkthroughActive = false;
+        this.walkthroughKeys = new Set();
+        this.walkthroughFloorIndex = 0;
+        this.walkthroughYaw = 0;
+        this.walkthroughPitch = 0;
+        this.walkthroughMouseDown = false;
+        this.walkthroughLastPointer = null;
+        this.walkthroughVelocity = new THREE.Vector3();
+        this.walkthroughEyeHeight = 1.6;
+        this.walkthroughTransition = null;
+        this.walkthroughDoors = [];
+        this.walkthroughHintElement = document.getElementById("walkthrough-hint");
+        this.walkthroughHud = document.getElementById("walkthrough-hud");
+        this.walkthroughStairLinks = [];
+        this.walkthroughNearbyInteraction = null;
+        this.walkthroughBobPhase = 0;
+        this.generatedStairwellOpenings = new Map();
+        this.measurementActive = false;
+        this.measurementPoints = [];
+
+        // Muted architectural colors retain room-type distinction without overpowering the model.
+        this.roomColors = {
+            classroom: 0xCBD0C4,
+            lab:       0xD6C2B4,
+            corridor:  0xE7E3DA,
+            restroom:  0xC3CCCB,
+            stairs:    0xBDB6A6,
+            entrance:  0xD9CDB0,
+            library:   0xCFC4B0,
+            room:      0xD2CDC0,
+            elevator:  0xBDB6A6,
+            other:     0xD2CDC0
+        };
+        window.ROOM_FLOOR_COLORS = this.roomColors;
+
+        // Initialize WebGL scene
+        this.init();
+    }
+
+    init() {
+        const width = this.container.clientWidth || 800;
+        const height = this.container.clientHeight || 600;
+
+        // 1. Scene
+        this.scene = new THREE.Scene();
+        this.scene.background = new THREE.Color(0xE7E3DA); // Editorial studio bone ground
+
+        // 2. Cameras (Orthographic for Isometric, Perspective for Orbit Freely / Walkthrough / Eye Level)
+        const aspect = (width > 0 && height > 0) ? (width / height) : 1;
+        this.cameraPerspective = new THREE.PerspectiveCamera(45, aspect, 0.05, 2000);
+        this.cameraPerspective.position.set(15, 20, 20);
+
+        this.cameraOrtho = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.05, 2000);
+        this.cameraOrtho.position.set(20, 20, 20);
+
+        this.camera = this.cameraOrtho; // Active camera starts as true orthographic isometric
+
+        // 3. WebGL Renderer
+        this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+        this.renderer.setSize(width, height);
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        this.container.appendChild(this.renderer.domElement);
+
+        // 4. OrbitControls (pinned CDN)
+        this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
+        this.controls.enableDamping = true;
+        this.controls.dampingFactor = 0.08;
+        this.controls.screenSpacePanning = true;
+        this.controls.maxPolarAngle = Math.PI / 2 + 0.05; // Do not go below ground
+        this.controls.minDistance = 2;
+        this.controls.maxDistance = 150;
+        this.controls.minZoom = 0.2;
+        this.controls.maxZoom = 25.0;
+        this.controls.enableRotate = false; // Locked in isometric view initially
+
+        // 5. Lighting Setup (Soft architectural illumination)
+        this.setupLighting();
+
+        // 6. Add object groups to scene
+        Object.values(this.groups).forEach(g => this.scene.add(g));
+        this.createFloorInfoPanel();
+        this.populateLegend();
+
+        // 7. Event Listeners
+        window.addEventListener("resize", () => this.onWindowResize());
+        window.addEventListener("keydown", (event) => {
+            this.panWithArrowKeys(event);
+            this.onWalkthroughKeyDown(event);
+        });
+        window.addEventListener("keyup", event => this.onWalkthroughKeyUp(event));
+        window.addEventListener("blur", () => this.walkthroughKeys.clear());
+        document.addEventListener("pointerlockchange", () => this.onPointerLockChange());
+        document.addEventListener("mousemove", event => this.onWalkthroughMouseMove(event));
+        this.renderer.domElement.addEventListener("pointerdown", event => this.onWalkthroughPointerDown(event));
+        this.renderer.domElement.addEventListener("pointermove", event => this.onWalkthroughPointerMove(event));
+        this.renderer.domElement.addEventListener("pointerup", () => {
+            this.walkthroughMouseDown = false;
+            this.walkthroughLastPointer = null;
+        });
+        this.renderer.domElement.addEventListener("click", (e) => this.onPointerClick(e));
+        document.querySelectorAll("[data-walk-key]").forEach(button => {
+            const key = button.dataset.walkKey;
+            button.addEventListener("pointerdown", event => {
+                if (!this.walkthroughActive) return;
+                event.preventDefault();
+                button.setPointerCapture?.(event.pointerId);
+                this.setWalkthroughKey(key, true);
+            });
+            ["pointerup", "pointercancel", "lostpointercapture"].forEach(type => {
+                button.addEventListener(type, () => this.setWalkthroughKey(key, false));
+            });
+        });
+        document.querySelectorAll("[data-walk-interact]").forEach(button => {
+            button.addEventListener("pointerdown", event => {
+                if (!this.walkthroughActive) return;
+                event.preventDefault();
+                this.tryWalkthroughInteraction();
+            });
+        });
+
+        // 8. Start Render Loop
+        this.animate();
+    }
+
+
+    populateLegend() {
+        const container = document.getElementById("room-types-legend-swatches");
+        if (!container) return;
+        container.innerHTML = "";
+        const items = [
+            { key: "classroom", label: "Classroom" },
+            { key: "lab", label: "Lab" },
+            { key: "corridor", label: "Corridor" },
+            { key: "restroom", label: "Restroom" },
+            { key: "stairs", label: "Stairs" },
+            { key: "entrance", label: "Entrance" },
+            { key: "library", label: "Library" },
+            { key: "other", label: "Other" }
+        ];
+        items.forEach(({ key, label }) => {
+            const hex = (this.roomColors[key] || 0xD2CDC0).toString(16).padStart(6, "0");
+            const row = document.createElement("div");
+            row.className = "flex items-center gap-1.5";
+            row.innerHTML = `<span style="display:inline-block;width:10px;height:10px;background-color:#${hex};border:1px solid rgba(26,25,23,0.16);flex-shrink:0;"></span><span class="mono-label" style="font-size:10px;text-transform:uppercase;color:var(--ink-2);">${label}</span>`;
+            container.appendChild(row);
+        });
+    }
+
+    renderBadgeCanvas(canvas, room, isExpanded = false) {
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Bone background at 85% opacity
+        ctx.fillStyle = "rgba(231, 227, 218, 0.85)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // 1px hairline border in hairlines rgba(26,25,23,.16)
+        ctx.strokeStyle = "rgba(26, 25, 23, 0.16)";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(1, 1, canvas.width - 2, canvas.height - 2);
+
+        // Azeret Mono uppercase text in #1A1917
+        ctx.fillStyle = "#1A1917";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+
+        const label = (room.label || `Room ${room.id}`).toUpperCase();
+
+        if (isExpanded) {
+            ctx.font = "600 20px 'Azeret Mono', monospace";
+            ctx.fillText(label, canvas.width / 2, 22);
+
+            const confidence = Number(room.confidence);
+            const confText = Number.isFinite(confidence) && confidence > 0
+                ? `${Math.round(confidence * 100)}% CONF`
+                : "UNCLASSIFIED";
+            ctx.fillStyle = "#4A4741";
+            ctx.font = "500 15px 'Azeret Mono', monospace";
+            ctx.fillText(confText, canvas.width / 2, 44);
+        } else {
+            // Constant screen size 11px (22px on 2x canvas)
+            ctx.font = "600 22px 'Azeret Mono', monospace";
+            ctx.fillText(label, canvas.width / 2, canvas.height / 2);
+        }
+    }
+
+    updateBadgeSprite(sprite, isExpanded) {
+        if (!sprite || sprite.userData.isExpanded === isExpanded) return;
+        sprite.userData.isExpanded = isExpanded;
+        const canvas = sprite.userData.canvas;
+        const room = sprite.userData.room;
+        if (canvas && room) {
+            const label = (room.label || `Room ${room.id}`).toUpperCase();
+            const testCtx = canvas.getContext("2d");
+            testCtx.font = isExpanded ? "600 20px 'Azeret Mono', monospace" : "600 22px 'Azeret Mono', monospace";
+            const tw = testCtx.measureText(label).width;
+            canvas.width = Math.max(160, Math.ceil(tw + 36));
+            canvas.height = isExpanded ? 64 : 44;
+            this.renderBadgeCanvas(canvas, room, isExpanded);
+            if (sprite.material.map) {
+                sprite.material.map.needsUpdate = true;
+            }
+        }
+    }
+
+    setupLighting() {
+        // Soft ambient fill light (bone ground reflection)
+        const ambientLight = new THREE.AmbientLight(0xe7e3da, 0.45);
+        this.ambientLight = ambientLight;
+        this.scene.add(ambientLight);
+
+        // Hemisphere light: subtle bone sky vs warm bounce ground
+        const hemiLight = new THREE.HemisphereLight(0xe7e3da, 0xdcd7cb, 0.52);
+        hemiLight.position.set(0, 50, 0);
+        this.hemiLight = hemiLight;
+        this.scene.add(hemiLight);
+
+        // Key directional light with soft architectural shadows
+        const dirLight = new THREE.DirectionalLight(0xfffcf5, 0.95);
+        dirLight.position.set(30, 45, 25);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 4096;
+        dirLight.shadow.mapSize.height = 4096;
+        dirLight.shadow.camera.near = 1;
+        dirLight.shadow.camera.far = 150;
+        const d = 35;
+        dirLight.shadow.camera.left = -d;
+        dirLight.shadow.camera.right = d;
+        dirLight.shadow.camera.top = d;
+        dirLight.shadow.camera.bottom = -d;
+        dirLight.shadow.bias = -0.00025;
+        dirLight.shadow.normalBias = 0.025;
+        dirLight.shadow.radius = 4;
+        this.keyLight = dirLight;
+        this.scene.add(dirLight);
+        this.scene.add(dirLight.target);
+
+        // Soft secondary fill light
+        const fillLight = new THREE.DirectionalLight(0xE7E3DA, 0.25);
+        fillLight.position.set(-25, 25, -20);
+        this.fillLight = fillLight;
+        this.scene.add(fillLight);
+
+        // Group for interior room ceiling lights (illuminates in night mode)
+        this.scene.add(this.interiorLightsGroup);
+    }
+
+    /**
+     * Loads and renders a complete scene.json contract.
+     * @param {Object} sceneData 
+     */
+    loadScene(sceneData, { animateBuild = true, resetCamera = true } = {}) {
+        if (!sceneData || !sceneData.meta) {
+            console.error("Invalid scene.json provided:", sceneData);
+            return;
+        }
+
+        if (this.walkthroughActive) this.toggleWalkthroughMode(false);
+        if (this.measurementActive) this.toggleMeasurementMode(false);
+        this.currentSceneData = sceneData;
+        this.wallHeight = Number(sceneData.meta.wallHeight) || 3.0;
+        this.floorHeight = this.wallHeight;
+        this.levelCount = Math.max(1, Number(sceneData.meta.levelCount) || (sceneData.meta.levels || []).length || 1);
+        this.syncFloorSpacing();
+        const declaredElevations = (sceneData.meta.levels || []).map(level => Number(level.elevation)).filter(Number.isFinite);
+        const highestFloor = declaredElevations.length
+            ? Math.max(...declaredElevations)
+            : (this.levelCount - 1) * this.floorHeight;
+        this.sceneHeight = highestFloor + this.wallHeight;
+        this.visibleLevel = null;
+        this.currentIsolatedFloor = null;
+        this.pendingFloorIsolation = null;
+        this.isolationTween = null;
+        this.selectableMeshes = [];
+        this.animatingMeshes = [];
+        this.hideFloorInfoPanel();
+
+        // Clear existing geometries
+        this.clear();
+
+        // 1. Calculate bounding box of all coordinates to center the model at (0, 0, 0)
+        this.calculateCenterOffset(sceneData);
+        this.configureShadowCamera();
+        this.createFloorGroups(sceneData);
+        this.buildStairs(sceneData.rooms || []);
+
+        // 2. Build 3D elements
+        this.buildGroundAndGrid();
+        this.buildDoorThresholds(sceneData.doors || []);
+        this.buildRooms(sceneData.rooms || []);
+        this.buildSlabsAndRoof(sceneData);
+        this.hideLoadingState();
+        this.buildWalls(sceneData.walls || []);
+        this.buildDoors(sceneData.doors || []);
+        this.buildWindows(sceneData.windows || []);
+        this.buildFurniture(sceneData.rooms || []);
+        this.buildInteriorLights(sceneData.rooms || []);
+        this.setTimeOfDay(this.timeOfDay || 13.0);
+
+        this.updateVisibleLevels();
+        this.refreshSelectableMeshes();
+
+        if (!animateBuild) {
+            this.animatingMeshes.forEach(mesh => {
+                mesh.scale.y = 1;
+                if (mesh.userData.isFloorSurface && mesh.material) {
+                    mesh.material.opacity = 1;
+                    mesh.material.transparent = false;
+                    mesh.material.depthWrite = true;
+                    mesh.material.needsUpdate = true;
+                }
+                if (mesh.userData.buildRevealLabel) {
+                    mesh.userData.buildRevealLabel.userData.buildRevealProgress = 1;
+                }
+            });
+            this.animatingMeshes.length = 0;
+        }
+
+        // 3. Position camera nicely around building center
+        if (resetCamera) this.resetCameraView();
+    }
+
+    showLoadingState() {
+        if (!this.scene) return;
+        this.hideLoadingState();
+
+        const loadingGroup = new THREE.Group();
+        loadingGroup.name = "loadingGroup";
+
+        const blueprintGrid = new THREE.GridHelper(20, 20, 0x1A1917, 0x1A1917);
+        if (blueprintGrid.material) {
+            blueprintGrid.material.transparent = true;
+            blueprintGrid.material.opacity = 0.12;
+        }
+        loadingGroup.add(blueprintGrid);
+
+        const laserGeometry = new THREE.PlaneGeometry(20, 0.2);
+        const laserMaterial = new THREE.MeshStandardMaterial({
+            color: 0x9B3418,
+            emissive: 0x9B3418,
+            emissiveIntensity: 0.65,
+            transparent: true,
+            opacity: 0.8,
+            side: THREE.DoubleSide,
+            depthWrite: false
+        });
+        const laser = new THREE.Mesh(laserGeometry, laserMaterial);
+        laser.rotation.x = -Math.PI / 2;
+        laser.position.y = 0.04;
+        loadingGroup.add(laser);
+
+        this.loadingGroup = loadingGroup;
+        this.loadingLaser = laser;
+        this.scene.add(loadingGroup);
+    }
+
+    hideLoadingState() {
+        if (!this.loadingGroup) return;
+        this.scene?.remove(this.loadingGroup);
+        this.loadingGroup.traverse(object => {
+            if (object.geometry) object.geometry.dispose();
+            if (object.material) {
+                const materials = Array.isArray(object.material) ? object.material : [object.material];
+                materials.forEach(material => {
+                    if (material.map) material.map.dispose();
+                    material.dispose();
+                });
+            }
+        });
+        this.loadingGroup = null;
+        this.loadingLaser = null;
+    }
+
+    disposeObjectResources(root) {
+        const geometries = new Set();
+        const materials = new Set();
+        const textures = new Set();
+        root.traverse(object => {
+            if (object.geometry) geometries.add(object.geometry);
+            const objectMaterials = Array.isArray(object.material) ? object.material : [object.material];
+            objectMaterials.filter(Boolean).forEach(material => {
+                materials.add(material);
+                Object.values(material).forEach(value => {
+                    if (value?.isTexture) textures.add(value);
+                });
+            });
+        });
+        geometries.forEach(geometry => geometry.dispose());
+        materials.forEach(material => material.dispose());
+        textures.forEach(texture => texture.dispose());
+    }
+
+    configureShadowCamera() {
+        if (!this.keyLight || !this.bounds) return;
+
+        const centerX = (this.bounds.minX + this.bounds.maxX) / 2 - this.centerOffset.x;
+        const centerZ = (this.bounds.minY + this.bounds.maxY) / 2 - this.centerOffset.y;
+        const span = Math.max(this.bounds.width, this.bounds.height, 8);
+        const extent = span * 0.7;
+        const shadowCamera = this.keyLight.shadow.camera;
+
+        this.keyLight.position.set(centerX + span, this.sceneHeight + span * 1.5, centerZ + span);
+        this.keyLight.target.position.set(centerX, 0, centerZ);
+        shadowCamera.left = -extent;
+        shadowCamera.right = extent;
+        shadowCamera.top = extent;
+        shadowCamera.bottom = -extent;
+        shadowCamera.far = span * 5;
+        shadowCamera.updateProjectionMatrix();
+    }
+
+    clear() {
+        this.animatingMeshes.length = 0;
+        this.clearRoute();
+        Object.values(this.groups).forEach(g => {
+            while (g.children.length > 0) {
+                const obj = g.children[0];
+                this.disposeObjectResources(obj);
+                g.remove(obj);
+            }
+        });
+        this.floorGroups.forEach(floorGroup => {
+            this.disposeObjectResources(floorGroup);
+            if (floorGroup.parent) floorGroup.parent.remove(floorGroup);
+        });
+        this.floorGroups.clear();
+        this.boundaryPreview = null;
+        this.wallMaterial = null;
+        this.selectableMeshes = [];
+        this.selectedRoomMesh = null;
+        this.selectedRoomOriginalColor = null;
+    }
+
+    createFloorGroups(sceneData) {
+        const levels = new Set((sceneData.meta.levels || []).map(item => Number(item.floorIndex ?? item.level) || 0));
+        ["rooms", "walls", "doors", "windows"].forEach(collection => {
+            (sceneData[collection] || []).forEach(item => levels.add(this.getItemFloorIndex(item)));
+        });
+        if (!levels.size) levels.add(0);
+
+        Array.from(levels).sort((a, b) => a - b).forEach(floorIndex => {
+            const floorGroup = new THREE.Group();
+            floorGroup.name = `floorGroup_${floorIndex}`;
+            floorGroup.floorIndex = floorIndex;
+            floorGroup.userData = { floorIndex, currentIsolationOpacity: 1 };
+            floorGroup.position.y = this.getLevelElevation(floorIndex);
+            this.floorLayerNames.forEach(layerName => {
+                const layer = new THREE.Group();
+                layer.name = layerName;
+                layer.visible = this.layerVisibility[layerName];
+                floorGroup.add(layer);
+            });
+            this.floorGroups.set(floorIndex, floorGroup);
+            this.scene.add(floorGroup);
+        });
+    }
+
+    getWallThickness() {
+        return Math.max(0.05, Number(this.currentSceneData?.meta?.wallThickness) || 0.2);
+    }
+
+    getOpeningRotation(opening, floorIndex) {
+        if (opening && Number.isFinite(Number(opening.rotation))) {
+            return Number(opening.rotation);
+        }
+        const center = opening.center || [0, 0];
+        let bestDistance = Infinity;
+        let rotation = 0;
+
+        (this.currentSceneData?.walls || []).forEach(wall => {
+            if (this.getItemFloorIndex(wall) !== floorIndex || !wall.polygon || wall.polygon.length < 3) return;
+            const xs = wall.polygon.map(point => Number(point[0]));
+            const ys = wall.polygon.map(point => Number(point[1]));
+            const minX = Math.min(...xs), maxX = Math.max(...xs);
+            const minY = Math.min(...ys), maxY = Math.max(...ys);
+            const width = maxX - minX;
+            const height = maxY - minY;
+            if (Math.max(width, height) < Math.max(0.5, Math.min(width, height) * 2)) return;
+
+            const isVertical = height > width;
+            const alongDistance = isVertical
+                ? Math.max(minY - center[1], 0, center[1] - maxY)
+                : Math.max(minX - center[0], 0, center[0] - maxX);
+            const acrossDistance = isVertical
+                ? Math.abs(center[0] - (minX + maxX) / 2)
+                : Math.abs(center[1] - (minY + maxY) / 2);
+            // Weight acrossDistance heavily so intersecting perpendicular walls do not hijack the orientation
+            const distance = Math.hypot(alongDistance, acrossDistance * 4);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                rotation = isVertical ? Math.PI / 2 : 0;
+            }
+        });
+
+        return rotation;
+    }
+
+    getItemFloorIndex(item) {
+        const value = item && (item.floorIndex ?? item.level);
+        return Number.isFinite(Number(value)) ? Number(value) : 0;
+    }
+
+    getRoomHoles(room) {
+        return [...(Array.isArray(room?.holes) ? room.holes : []), ...(this.generatedStairwellOpenings.get(room) || [])];
+    }
+
+    getFloorLayer(floorIndex, layerName) {
+        return this.floorGroups.get(Number(floorIndex))?.getObjectByName(layerName) || null;
+    }
+
+    previewRoomBoundary(room) {
+        if (!room || !Array.isArray(room.polygon) || room.polygon.length < 3) return;
+        const level = this.getItemFloorIndex(room);
+        const layer = this.getFloorLayer(level, "rooms");
+        if (!layer) return;
+        if (this.boundaryPreview) {
+            this.boundaryPreview.parent?.remove(this.boundaryPreview);
+            this.boundaryPreview.geometry.dispose();
+            this.boundaryPreview.material.dispose();
+            this.boundaryPreview = null;
+        }
+        const points = room.polygon.map(([x, z]) => {
+            const world = this.toWorldCoords(x, z);
+            return new THREE.Vector3(world.x, 0.045, world.z);
+        });
+        const line = new THREE.LineLoop(
+            new THREE.BufferGeometry().setFromPoints(points),
+            new THREE.LineBasicMaterial({ color: 0x9B3418, transparent: true, opacity: 1, depthTest: false })
+        );
+        line.name = "room-boundary-edit-preview";
+        line.renderOrder = 20;
+        line.userData = { roomId: room.id, floorIndex: level };
+        layer.add(line);
+        this.boundaryPreview = line;
+    }
+
+    clearRoomBoundaryPreview() {
+        if (!this.boundaryPreview) return;
+        this.boundaryPreview.parent?.remove(this.boundaryPreview);
+        this.boundaryPreview.geometry.dispose();
+        this.boundaryPreview.material.dispose();
+        this.boundaryPreview = null;
+    }
+
+    createFloorInfoPanel() {
+        const panel = document.createElement("div");
+        panel.className = "floor-info-panel";
+        panel.hidden = true;
+        panel.setAttribute("role", "status");
+        panel.setAttribute("aria-live", "polite");
+
+        const heading = document.createElement("h3");
+        heading.className = "floor-info-title";
+        const details = document.createElement("div");
+        details.className = "floor-info-details";
+        const closeButton = document.createElement("button");
+        closeButton.type = "button";
+        closeButton.className = "floor-info-close";
+        closeButton.textContent = "Close";
+        closeButton.addEventListener("click", () => this.restoreFloorIsolation());
+
+        panel.append(heading, details, closeButton);
+        this.container.appendChild(panel);
+        this.floorInfoPanel = panel;
+        this.floorInfoHeading = heading;
+        this.floorInfoDetails = details;
+    }
+
+    getFloorStats(floorIndex) {
+        const rooms = (this.currentSceneData?.rooms || []).filter(room => this.getItemFloorIndex(room) === floorIndex);
+        const totalArea = rooms.reduce((sum, room) => {
+            const polygon = room.polygon || [];
+            if (polygon.length < 3) return sum;
+            let twiceArea = 0;
+            polygon.forEach((point, index) => {
+                const next = polygon[(index + 1) % polygon.length];
+                twiceArea += point[0] * next[1] - next[0] * point[1];
+            });
+            return sum + Math.abs(twiceArea) / 2;
+        }, 0);
+        const levelInfo = (this.currentSceneData?.meta?.levels || []).find(item => Number(item.floorIndex ?? item.level) === floorIndex);
+        return {
+            name: levelInfo?.name || `Level ${floorIndex + 1}`,
+            roomCount: rooms.length,
+            totalArea
+        };
+    }
+
+    showFloorInfoPanel(floorIndex) {
+        if (!this.floorInfoPanel) return;
+        const stats = this.getFloorStats(floorIndex);
+        this.floorInfoHeading.textContent = stats.name;
+        this.floorInfoDetails.replaceChildren();
+        [
+            [`Rooms`, String(stats.roomCount)],
+            [`Total area`, `${stats.totalArea.toFixed(1)} m²`]
+        ].forEach(([label, value]) => {
+            const row = document.createElement("p");
+            const labelNode = document.createElement("span");
+            const valueNode = document.createElement("strong");
+            labelNode.textContent = label;
+            valueNode.textContent = value;
+            row.append(labelNode, valueNode);
+            this.floorInfoDetails.appendChild(row);
+        });
+        this.floorInfoPanel.hidden = false;
+        requestAnimationFrame(() => this.floorInfoPanel.classList.add("is-visible"));
+    }
+
+    hideFloorInfoPanel() {
+        if (!this.floorInfoPanel) return;
+        this.floorInfoPanel.classList.remove("is-visible");
+        this.floorInfoPanel.hidden = true;
+    }
+
+    calculateCenterOffset(sceneData) {
+        let minX = Infinity, maxX = -Infinity;
+        let minY = Infinity, maxY = -Infinity;
+
+        const checkCoord = (x, y) => {
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+        };
+
+        // Scan rooms
+        (sceneData.rooms || []).forEach(r => {
+            (r.polygon || []).forEach(pt => checkCoord(pt[0], pt[1]));
+        });
+
+        // Scan walls
+        (sceneData.walls || []).forEach(w => {
+            (w.polygon || []).forEach(pt => checkCoord(pt[0], pt[1]));
+        });
+
+        if (minX === Infinity) {
+            minX = 0; maxX = 16;
+            minY = 0; maxY = 12;
+        }
+
+        this.bounds = { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY };
+        this.centerOffset = {
+            x: (minX + maxX) / 2.0,
+            y: (minY + maxY) / 2.0
+        };
+    }
+
+    /**
+     * Converts a 2D scene.json coordinate [x, y] in meters
+     * into 3D world coordinates centered at (0, 0, 0).
+     */
+    toWorldCoords(x, y) {
+        return {
+            x: x - this.centerOffset.x,
+            z: y - this.centerOffset.y
+        };
+    }
+
+    getLevelElevation(level) {
+        const numericLevel = Math.max(0, Number(level) || 0);
+        const levelInfo = (this.currentSceneData?.meta?.levels || []).find(item =>
+            Number(item.floorIndex ?? item.level) === numericLevel
+        );
+        const declaredElevation = Number(levelInfo?.elevation);
+        return Number.isFinite(declaredElevation) ? declaredElevation : numericLevel * this.floorHeight;
+    }
+
+    syncFloorSpacing() {
+        if (!this.currentSceneData?.meta) return;
+        // The wall-height control also defines story-to-story spacing. Keeping both
+        // values in sync prevents a visible vertical gap when the height is changed.
+        this.floorHeight = this.wallHeight;
+        this.currentSceneData.meta.floorHeight = this.floorHeight;
+        (this.currentSceneData.meta.levels || []).forEach(level => {
+            const index = Math.max(0, Number(level.floorIndex ?? level.level) || 0);
+            level.elevation = index * this.floorHeight;
+        });
+    }
+
+    updateVisibleLevels() {
+        this.floorGroups.forEach((group, floorIndex) => {
+            group.visible = this.visibleLevel === null || floorIndex === this.visibleLevel;
+        });
+        this.refreshSelectableMeshes();
+    }
+
+    setVisibleLevel(level) {
+        if (this.walkthroughActive) this.toggleWalkthroughMode(false);
+        if (this.currentIsolatedFloor !== null || this.isolationTween) this.restoreFloorIsolation();
+        this.visibleLevel = level === null || level === "all" ? null : Number(level);
+        this.updateVisibleLevels();
+        if (this.currentSceneData) {
+            if (this.is2DMode) this.setTopDownView();
+            else this.setPerspectiveView();
+        }
+    }
+
+    refreshSelectableMeshes() {
+        this.selectableMeshes = [];
+        this.floorGroups.forEach(floorGroup => {
+            if (!floorGroup.visible) return;
+            ["walls", "rooms"].forEach(layerName => {
+                const layer = floorGroup.getObjectByName(layerName);
+                if (!layer || !layer.visible) return;
+                layer.traverse(object => {
+                    if (object.isMesh && (object.userData.isWall || object.userData.isFloorSurface)) {
+                        this.selectableMeshes.push(object);
+                    }
+                });
+            });
+        });
+    }
+
+    setFloorOpacity(floorGroup, opacity) {
+        floorGroup.traverse(object => {
+            if (!object.material) return;
+            if (!object.userData.floorIsolationOriginalMaterial) {
+                object.userData.floorIsolationOriginalMaterial = object.material;
+                const originals = Array.isArray(object.material) ? object.material : [object.material];
+                object.material = Array.isArray(object.material)
+                    ? originals.map(material => material.clone())
+                    : object.material.clone();
+            }
+            const materials = Array.isArray(object.material) ? object.material : [object.material];
+            materials.forEach(material => {
+                if (material.userData.floorIsolationOriginalTransparent === undefined) {
+                    material.userData.floorIsolationOriginalTransparent = material.transparent;
+                    material.userData.floorIsolationOriginalDepthWrite = material.depthWrite;
+                }
+                material.transparent = opacity < 0.999 || material.userData.floorIsolationOriginalTransparent;
+                material.opacity = opacity;
+                material.depthWrite = opacity >= 0.999
+                    ? material.userData.floorIsolationOriginalDepthWrite
+                    : false;
+                material.needsUpdate = true;
+            });
+        });
+        floorGroup.userData.currentIsolationOpacity = opacity;
+    }
+
+    restoreFloorMaterials(floorGroup) {
+        floorGroup.traverse(object => {
+            const original = object.userData.floorIsolationOriginalMaterial;
+            if (!original) return;
+            const temporary = Array.isArray(object.material) ? object.material : [object.material];
+            temporary.forEach(material => material.dispose());
+            object.material = original;
+            delete object.userData.floorIsolationOriginalMaterial;
+        });
+        floorGroup.userData.currentIsolationOpacity = 1;
+    }
+
+    startFloorIsolationTween(targetFloorIndex) {
+        const starts = new Map();
+        this.floorGroups.forEach((group, floorIndex) => {
+            starts.set(floorIndex, {
+                y: group.position.y,
+                opacity: targetFloorIndex === null
+                    ? (Number(group.userData.currentIsolationOpacity) || 1)
+                    : (floorIndex === targetFloorIndex ? 1 : 0.05)
+            });
+        });
+        this.isolationTween = {
+            targetFloorIndex,
+            starts,
+            startTime: performance.now(),
+            duration: 650
+        };
+        if (targetFloorIndex === null) {
+            this.currentIsolatedFloor = null;
+            this.hideFloorInfoPanel();
+        } else {
+            this.currentIsolatedFloor = targetFloorIndex;
+            this.showFloorInfoPanel(targetFloorIndex);
+        }
+        this.floorGroups.forEach((group, floorIndex) => {
+            if (targetFloorIndex !== null) {
+                // Hide other levels immediately; waiting for the first animation
+                // frame lets their opaque walls and labels overlap the selected floor.
+                this.setFloorOpacity(group, floorIndex === targetFloorIndex ? 1 : 0.05);
+            }
+            const labels = group.getObjectByName("labels");
+            if (!labels) return;
+            const shouldShowLabels = this.layerVisibility.labels
+                && (targetFloorIndex === null || floorIndex === targetFloorIndex);
+            labels.traverse(label => {
+                if (label !== labels && label.userData.floorIndex !== undefined) {
+                    label.userData.floorIsolationVisible = shouldShowLabels;
+                    label.visible = shouldShowLabels;
+                }
+            });
+        });
+    }
+
+    requestFloorIsolation(floorIndex) {
+        if (!this.floorGroups.has(floorIndex)) return;
+
+        if (this.currentIsolatedFloor !== null) {
+            if (this.currentIsolatedFloor === floorIndex) {
+                this.pendingFloorIsolation = null;
+                this.startFloorIsolationTween(null);
+                return;
+            }
+            this.pendingFloorIsolation = floorIndex;
+            this.startFloorIsolationTween(null);
+            return;
+        }
+
+        if (this.isolationTween) {
+            // A reset is already in progress. Finish it before starting another floor.
+            this.pendingFloorIsolation = floorIndex;
+            return;
+        }
+        this.startFloorIsolationTween(floorIndex);
+    }
+
+    restoreFloorIsolation() {
+        this.pendingFloorIsolation = null;
+        if (this.currentIsolatedFloor !== null || this.isolationTween) {
+            this.startFloorIsolationTween(null);
+        } else {
+            this.hideFloorInfoPanel();
+        }
+    }
+
+    updateFloorIsolation(now) {
+        if (!this.isolationTween) return;
+        const tween = this.isolationTween;
+        const t = Math.min(1, (now - tween.startTime) / tween.duration);
+        const eased = 1 - Math.pow(1 - t, 3);
+
+        this.floorGroups.forEach((group, floorIndex) => {
+            const baseY = this.getLevelElevation(floorIndex);
+            const start = tween.starts.get(floorIndex) || { y: baseY, opacity: 1 };
+            const targetY = tween.targetFloorIndex === floorIndex
+                ? baseY + this.wallHeight * 3
+                : baseY;
+            const targetOpacity = tween.targetFloorIndex !== null && floorIndex !== tween.targetFloorIndex ? 0.05 : 1;
+            group.position.y = THREE.MathUtils.lerp(start.y, targetY, eased);
+            this.setFloorOpacity(group, THREE.MathUtils.lerp(start.opacity, targetOpacity, eased));
+        });
+
+        if (t < 1) return;
+        this.floorGroups.forEach((group, floorIndex) => {
+            const baseY = this.getLevelElevation(floorIndex);
+            group.position.y = tween.targetFloorIndex === floorIndex ? baseY + this.wallHeight * 3 : baseY;
+            if (tween.targetFloorIndex === null) this.restoreFloorMaterials(group);
+            else this.setFloorOpacity(group, floorIndex === tween.targetFloorIndex ? 1 : 0.05);
+        });
+        this.isolationTween = null;
+
+        if (tween.targetFloorIndex === null) {
+            const nextFloor = this.pendingFloorIsolation;
+            this.pendingFloorIsolation = null;
+            if (nextFloor !== null) this.startFloorIsolationTween(nextFloor);
+        }
+    }
+
+    buildGroundAndGrid() {
+        const span = Math.max(this.bounds.width, this.bounds.height, 20);
+        const gridSize = Math.ceil(span * 1.8);
+        const divisions = gridSize; // 1 division = exactly 1 meter!
+
+        // 1-meter architectural grid helper: ink center line, ink cells at ~12% opacity
+        const grid = new THREE.GridHelper(gridSize, divisions, 0x1A1917, 0x1A1917);
+        grid.position.y = -0.01;
+        if (grid.material) {
+            grid.material.transparent = true;
+            grid.material.opacity = 0.12;
+        }
+        this.groups.grid.add(grid);
+
+        // Ground foundation plane: secondary ground #DCD7CB
+        const groundGeo = new THREE.PlaneGeometry(gridSize * 1.5, gridSize * 1.5);
+        const groundMat = new THREE.MeshStandardMaterial({
+            color: 0xDCD7CB,
+            roughness: 0.95,
+            metalness: 0.05
+        });
+        const ground = new THREE.Mesh(groundGeo, groundMat);
+        ground.rotation.x = -Math.PI / 2;
+        ground.position.y = -0.02;
+        ground.receiveShadow = true;
+        this.groups.grid.add(ground);
+    }
+
+    buildDoorThresholds(doors) {
+        const thresholdMaterial = new THREE.MeshStandardMaterial({
+            color: 0xDCD7CB,
+            roughness: 0.95,
+            metalness: 0.05,
+        });
+        const wallThickness = this.getWallThickness();
+        doors.forEach(door => {
+            if (!Array.isArray(door.center) || door.center.length < 2) return;
+            const level = this.getItemFloorIndex(door);
+            const center = this.toWorldCoords(door.center[0], door.center[1]);
+            const width = Math.max(0.55, Number(door.width) || 0.9);
+            const rot = this.getOpeningRotation(door, level);
+            const patch = new THREE.Mesh(
+                new THREE.BoxGeometry(width + 0.08, 0.018, wallThickness + 0.24),
+                thresholdMaterial
+            );
+            patch.position.set(center.x, 0.008, center.z);
+            patch.rotation.y = rot;
+            patch.receiveShadow = true;
+            patch.userData = { isDoorThreshold: true, floorIndex: level };
+            this.getFloorLayer(level, "rooms")?.add(patch);            // For exterior exit doors on ground floor, add entrance marker: #9B3418 outline (line, not fill)
+            if (Array.isArray(door.connects) && door.connects.includes("outside") && level === 0) {
+                const halfW = (width + 0.08) / 2;
+                const halfD = (wallThickness + 0.24) / 2;
+                const markerPts = [
+                    new THREE.Vector3(-halfW, 0.022, -halfD),
+                    new THREE.Vector3(halfW, 0.022, -halfD),
+                    new THREE.Vector3(halfW, 0.022, halfD),
+                    new THREE.Vector3(-halfW, 0.022, halfD)
+                ];
+                const markerGeo = new THREE.BufferGeometry().setFromPoints(markerPts);
+                const markerMat = new THREE.LineBasicMaterial({ color: 0x9B3418, linewidth: 2 });
+                const entranceOutline = new THREE.LineLoop(markerGeo, markerMat);
+                entranceOutline.position.set(center.x, 0, center.z);
+                entranceOutline.rotation.y = rot;
+                this.getFloorLayer(level, "doors")?.add(entranceOutline);
+            }
+        });
+    }
+
+    /**
+     * Builds extruded 3D walls from scene.json walls array.
+     * Supports holes (openings) and dynamic height updates.
+     */
+    buildWalls(walls) {
+        const wallMat = this.wallMaterial || (this.wallMaterial = new THREE.MeshStandardMaterial({
+            color: 0xF1EEE6,      // Matte bone plaster (#F1EEE6)
+            roughness: 0.95,
+            metalness: 0.05,
+            side: THREE.DoubleSide
+        }));
+
+        walls.forEach(wall => {
+            const poly = wall.polygon || [];
+            if (poly.length < 3) return;
+
+            // In our mathematical mapping:
+            // u = x - Cx, v = -(y - Cy)
+            // Extrude along +z, then rotateX(-Math.PI / 2):
+            // Results in X = x - Cx, Y = height (0 to wallHeight), Z = y - Cy!
+            const shape = new THREE.Shape();
+            const p0 = this.toWorldCoords(poly[0][0], poly[0][1]);
+            shape.moveTo(p0.x, -p0.z);
+
+            for (let i = 1; i < poly.length; i++) {
+                const pt = this.toWorldCoords(poly[i][0], poly[i][1]);
+                shape.lineTo(pt.x, -pt.z);
+            }
+            shape.closePath();
+
+            // Add holes if any exist in the wall polygon
+            if (wall.holes && wall.holes.length > 0) {
+                wall.holes.forEach(holePoly => {
+                    if (holePoly.length < 3) return;
+                    const holePath = new THREE.Path();
+                    const hp0 = this.toWorldCoords(holePoly[0][0], holePoly[0][1]);
+                    holePath.moveTo(hp0.x, -hp0.z);
+                    for (let j = 1; j < holePoly.length; j++) {
+                        const hpt = this.toWorldCoords(holePoly[j][0], holePoly[j][1]);
+                        holePath.lineTo(hpt.x, -hpt.z);
+                    }
+                    holePath.closePath();
+                    shape.holes.push(holePath);
+                });
+            }
+
+            const extrudeSettings = {
+                depth: this.wallHeight,
+                bevelEnabled: false,
+                steps: 1
+            };
+
+            const wallGeom = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+            wallGeom.rotateX(-Math.PI / 2); // Rotate extrusion vertically along +Y
+
+            const wallMesh = new THREE.Mesh(wallGeom, wallMat);
+            const level = this.getItemFloorIndex(wall);
+            wallMesh.position.y = 0;
+            wallMesh.scale.set(1, 0.001, 1);
+            wallMesh.castShadow = true;
+            wallMesh.receiveShadow = true;
+            wallMesh.userData = { isWall: true, wallId: wall.id, level, floorIndex: level };
+
+            // Architectural drafting edge lines: thin #1A1917 EdgesGeometry
+            const wallEdges = new THREE.EdgesGeometry(wallGeom, 25);
+            const wallEdgeMat = new THREE.LineBasicMaterial({ color: 0x1A1917, linewidth: 1 });
+            const wallEdgeLines = new THREE.LineSegments(wallEdges, wallEdgeMat);
+            wallMesh.add(wallEdgeLines);
+
+            this.getFloorLayer(level, "walls")?.add(wallMesh);
+            this.animatingMeshes.push(wallMesh);
+        });
+    }
+
+    /**
+     * Builds floor slabs and floating label badges for each room.
+     */
+        /**
+     * Builds inter-story 0.2m separating slabs and top floor roof.
+     * Roof layer is off by default, toggled via Roof checkbox.
+     */
+    buildSlabsAndRoof(sceneData) {
+        const rooms = sceneData.rooms || [];
+        const slabThickness = 0.2; // 0.2 m slab
+        const slabMat = new THREE.MeshStandardMaterial({
+            color: 0xDCD7CB, // Ground / concrete tone
+            roughness: 0.9,
+            metalness: 0.05,
+            side: THREE.DoubleSide
+        });
+        const edgeMat = new THREE.LineBasicMaterial({
+            color: 0x1A1917,
+            transparent: true,
+            opacity: 0.22
+        });
+
+        // 1. Separate stories with a visible 0.2 m slab
+        for (let level = 1; level < this.levelCount; level++) {
+            const levelRooms = rooms.filter(r => this.getItemFloorIndex(r) === level);
+            const slabGroup = new THREE.Group();
+            slabGroup.name = `inter_story_slab_l${level}`;
+
+            levelRooms.forEach(room => {
+                // Do not cover stairwells so stairs pass through
+                if (["stair", "stairs"].includes(String(room.type || "").toLowerCase())) return;
+                const poly = room.polygon || [];
+                if (poly.length < 3) return;
+
+                const shape = new THREE.Shape();
+                const p0 = this.toWorldCoords(poly[0][0], poly[0][1]);
+                shape.moveTo(p0.x, -p0.z);
+                for (let i = 1; i < poly.length; i++) {
+                    const pt = this.toWorldCoords(poly[i][0], poly[i][1]);
+                    shape.lineTo(pt.x, -pt.z);
+                }
+                shape.closePath();
+
+                this.getRoomHoles(room).forEach(hole => {
+                    if (!Array.isArray(hole) || hole.length < 3) return;
+                    const first = this.toWorldCoords(hole[0][0], hole[0][1]);
+                    const holePath = new THREE.Path();
+                    holePath.moveTo(first.x, -first.z);
+                    hole.slice(1).forEach(pt => {
+                        const c = this.toWorldCoords(pt[0], pt[1]);
+                        holePath.lineTo(c.x, -c.z);
+                    });
+                    holePath.closePath();
+                    shape.holes.push(holePath);
+                });
+
+                const extrudeGeo = new THREE.ExtrudeGeometry(shape, {
+                    depth: slabThickness,
+                    bevelEnabled: false
+                });
+                extrudeGeo.rotateX(-Math.PI / 2);
+                const slabMesh = new THREE.Mesh(extrudeGeo, slabMat);
+                // Position so top of slab is at y = 0.0 and bottom at y = -0.2 (filling gap from below)
+                slabMesh.position.y = -slabThickness;
+                slabMesh.receiveShadow = true;
+                slabMesh.castShadow = true;
+                slabMesh.userData = { isSlab: true, floorIndex: level };
+
+                const edges = new THREE.LineSegments(new THREE.EdgesGeometry(extrudeGeo, 25), edgeMat);
+                slabMesh.add(edges);
+                slabGroup.add(slabMesh);
+            });
+
+            this.getFloorLayer(level, "slabs")?.add(slabGroup);
+        }
+
+        // 2. Top Floor Roof: off by default, visible when Roof checkbox is checked
+        const topLevel = this.levelCount - 1;
+        const topRooms = rooms.filter(r => this.getItemFloorIndex(r) === topLevel);
+        const roofGroup = new THREE.Group();
+        roofGroup.name = "top_floor_roof";
+
+        topRooms.forEach(room => {
+            const poly = room.polygon || [];
+            if (poly.length < 3) return;
+            const shape = new THREE.Shape();
+            const p0 = this.toWorldCoords(poly[0][0], poly[0][1]);
+            shape.moveTo(p0.x, -p0.z);
+            for (let i = 1; i < poly.length; i++) {
+                const pt = this.toWorldCoords(poly[i][0], poly[i][1]);
+                shape.lineTo(pt.x, -pt.z);
+            }
+            shape.closePath();
+
+            const roofExtrude = new THREE.ExtrudeGeometry(shape, {
+                depth: slabThickness,
+                bevelEnabled: false
+            });
+            roofExtrude.rotateX(-Math.PI / 2);
+            const roofMesh = new THREE.Mesh(roofExtrude, slabMat);
+            roofMesh.position.y = this.wallHeight;
+            roofMesh.receiveShadow = true;
+            roofMesh.castShadow = true;
+            roofMesh.userData = { isRoof: true, floorIndex: topLevel };
+
+            const roofEdges = new THREE.LineSegments(new THREE.EdgesGeometry(roofExtrude, 25), edgeMat);
+            roofMesh.add(roofEdges);
+            roofGroup.add(roofMesh);
+        });
+
+        this.getFloorLayer(topLevel, "roof")?.add(roofGroup);
+    }
+
+    buildRooms(rooms) {
+        rooms.forEach(room => {
+            const poly = room.polygon || [];
+            if (poly.length < 3) return;
+
+            const shape = new THREE.Shape();
+            const p0 = this.toWorldCoords(poly[0][0], poly[0][1]);
+            shape.moveTo(p0.x, -p0.z);
+
+            for (let i = 1; i < poly.length; i++) {
+                const pt = this.toWorldCoords(poly[i][0], poly[i][1]);
+                shape.lineTo(pt.x, -pt.z);
+            }
+            shape.closePath();
+            this.getRoomHoles(room).forEach(hole => {
+                if (!Array.isArray(hole) || hole.length < 3) return;
+                const first = this.toWorldCoords(hole[0][0], hole[0][1]);
+                const holePath = new THREE.Path();
+                holePath.moveTo(first.x, -first.z);
+                hole.slice(1).forEach(point => {
+                    const converted = this.toWorldCoords(point[0], point[1]);
+                    holePath.lineTo(converted.x, -converted.z);
+                });
+                holePath.closePath();
+                shape.holes.push(holePath);
+            });
+
+            // Room floor geometry
+            const roomGeo = new THREE.ShapeGeometry(shape);
+            roomGeo.rotateX(-Math.PI / 2); // Lay flat on ground
+
+            // Pick color based on room type
+            const colorHex = this.roomColors[room.type] || this.roomColors.other;
+            const roomMat = new THREE.MeshStandardMaterial({
+                color: colorHex,
+                roughness: 0.90,
+                metalness: 0.02,
+                transparent: true,
+                opacity: 0,
+                depthWrite: false,
+                side: THREE.DoubleSide
+            });
+
+            const roomMesh = new THREE.Mesh(roomGeo, roomMat);
+            const level = this.getItemFloorIndex(room);
+            roomMesh.position.y = 0.02; // Floor group supplies the level elevation.
+            roomMesh.scale.set(1, 0.001, 1);
+            roomMesh.castShadow = true;
+            roomMesh.receiveShadow = true;
+            roomMesh.userData = {
+                isRoom: true,
+                level,
+                floorIndex: level,
+                isFloorSurface: true,
+                roomData: room,
+                originalColor: colorHex
+            };
+
+            this.getFloorLayer(level, "rooms")?.add(roomMesh);
+            this.animatingMeshes.push(roomMesh);
+
+            // Calculate centroid for floating label badge
+            const [centroidPlanX, centroidPlanY] = this.getPolygonCentroid(poly);
+            const centroid = this.toWorldCoords(centroidPlanX, centroidPlanY);
+
+            // Calculate polygonal area for label overlap resolution (keep larger room)
+            let roomArea = 0;
+            for (let i = 0; i < poly.length; i++) {
+                const next = poly[(i + 1) % poly.length];
+                roomArea += poly[i][0] * next[1] - next[0] * poly[i][1];
+            }
+            roomArea = Math.abs(roomArea) / 2;
+
+            // Create floating 3D text badge at centroid at floor height + 0.1 m
+            const badgeSprite = this.createRoomBadgeSprite(room);
+            badgeSprite.position.set(centroid.x, 0.1, centroid.z);
+            badgeSprite.userData.roomArea = roomArea;
+            badgeSprite.userData.level = level;
+            badgeSprite.userData.floorIndex = level;
+            badgeSprite.userData.confidence = Number(room.confidence) || 0;
+            badgeSprite.userData.floorIsolationVisible = true;
+            badgeSprite.userData.baseLabelOpacity = 1;
+            badgeSprite.userData.buildRevealProgress = 0;
+            badgeSprite.material.opacity = 0;
+            roomMesh.userData.buildRevealLabel = badgeSprite;
+            this.getFloorLayer(level, "labels")?.add(badgeSprite);
+        });
+    }
+
+    getPolygonCentroid(polygon) {
+        let twiceArea = 0;
+        let xSum = 0;
+        let ySum = 0;
+        polygon.forEach((point, index) => {
+            const next = polygon[(index + 1) % polygon.length];
+            const cross = point[0] * next[1] - next[0] * point[1];
+            twiceArea += cross;
+            xSum += (point[0] + next[0]) * cross;
+            ySum += (point[1] + next[1]) * cross;
+        });
+        if (Math.abs(twiceArea) > 1e-8) return [xSum / (3 * twiceArea), ySum / (3 * twiceArea)];
+        return polygon.reduce((sum, point) => [
+            sum[0] + point[0] / polygon.length,
+            sum[1] + point[1] / polygon.length
+        ], [0, 0]);
+    }
+
+    getPolygonArea(polygon) {
+        if (!polygon || polygon.length < 3) return 0;
+        let twiceArea = 0;
+        polygon.forEach((point, index) => {
+            const next = polygon[(index + 1) % polygon.length];
+            twiceArea += point[0] * next[1] - next[0] * point[1];
+        });
+        return Math.abs(twiceArea) / 2;
+    }
+
+    buildFurniture(rooms) {
+        const materials = {
+            wood: new THREE.MeshStandardMaterial({ color: 0x9a6842, roughness: 0.82 }),
+            fabric: new THREE.MeshStandardMaterial({ color: 0x8794a6, roughness: 0.95 }),
+            ceramic: new THREE.MeshStandardMaterial({ color: 0xe8e8e8, roughness: 0.28 }),
+        };
+        const addBox = (group, material, x, y, z, width, height, depth) => {
+            const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), material);
+            mesh.position.set(x, y, z);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            group.add(mesh);
+            return mesh;
+        };
+        const addDesk = (group, x, z, width, depth) => {
+            addBox(group, materials.wood, x, 0.76, z, width, 0.08, depth);
+            [-1, 1].forEach(sx => [-1, 1].forEach(sz =>
+                addBox(group, materials.wood, x + sx * width * 0.42, 0.37, z + sz * depth * 0.38, 0.06, 0.72, 0.06)
+            ));
+        };
+
+        rooms.forEach(room => {
+            const polygon = room.polygon || [];
+            if (polygon.length < 3) return;
+            const type = String(room.type || "room").toLowerCase();
+            if (["stairs", "stair", "elevator", "corridor", "entrance", "other", "room"].includes(type)) return;
+            const points = polygon.map(point => this.toWorldCoords(point[0], point[1]));
+            const minX = Math.min(...points.map(point => point.x));
+            const maxX = Math.max(...points.map(point => point.x));
+            const minZ = Math.min(...points.map(point => point.z));
+            const maxZ = Math.max(...points.map(point => point.z));
+            const roomWidth = maxX - minX, roomDepth = maxZ - minZ;
+            const [cxPlan, cyPlan] = this.getPolygonCentroid(polygon);
+            const center = this.toWorldCoords(cxPlan, cyPlan);
+            const furniture = new THREE.Group();
+            furniture.name = `furniture_${room.id}`;
+            furniture.userData = { roomId: room.id, floorIndex: this.getItemFloorIndex(room) };
+
+            if (["bedroom", "bed", "hotel_room"].includes(type)) {
+                const bedWidth = Math.min(1.5, roomWidth * 0.48);
+                const bedDepth = Math.min(2.0, roomDepth * 0.58);
+                addBox(furniture, materials.wood, center.x, 0.28, center.z, bedWidth, 0.28, bedDepth);
+                addBox(furniture, materials.fabric, center.x, 0.48, center.z, bedWidth * 0.94, 0.16, bedDepth * 0.9);
+                addBox(furniture, materials.fabric, center.x, 0.62, center.z - bedDepth * 0.32, bedWidth * 0.55, 0.12, bedDepth * 0.18);
+            } else if (["restroom", "bathroom", "toilet"].includes(type)) {
+                const toilet = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.25, 0.36, 16), materials.ceramic);
+                toilet.position.set(center.x, 0.2, center.z);
+                toilet.castShadow = true;
+                furniture.add(toilet);
+                addBox(furniture, materials.ceramic, center.x, 0.55, center.z - 0.34, 0.36, 0.55, 0.16);
+            } else if (["living_room", "lounge", "lounge_room"].includes(type)) {
+                const sofaWidth = Math.min(1.8, roomWidth * 0.5);
+                addBox(furniture, materials.fabric, center.x, 0.35, center.z - roomDepth * 0.18, sofaWidth, 0.55, 0.55);
+                addBox(furniture, materials.fabric, center.x, 0.72, center.z - roomDepth * 0.39, sofaWidth, 0.32, 0.14);
+                addDesk(furniture, center.x, center.z + roomDepth * 0.2, Math.min(0.8, roomWidth * 0.28), 0.45);
+            } else if (["kitchen", "dining_room", "dining"].includes(type)) {
+                addDesk(furniture, center.x, center.z, Math.min(1.2, roomWidth * 0.48), Math.min(0.75, roomDepth * 0.32));
+            } else {
+                const deskCount = type === "classroom" || type === "lab" ? 2 : 1;
+                const deskWidth = Math.min(1.0, roomWidth * 0.25);
+                const deskDepth = Math.min(0.55, roomDepth * 0.2);
+                for (let index = 0; index < deskCount; index++) {
+                    const offset = (index - (deskCount - 1) / 2) * Math.min(1.4, roomWidth * 0.35);
+                    addDesk(furniture, center.x + offset, center.z, deskWidth, deskDepth);
+                }
+            }
+            this.getFloorLayer(this.getItemFloorIndex(room), "furniture")?.add(furniture);
+        });
+        const usedMaterials = new Set();
+        this.floorGroups.forEach(floorGroup => {
+            floorGroup.getObjectByName("furniture")?.traverse(object => {
+                if (object.material) usedMaterials.add(object.material);
+            });
+        });
+        Object.values(materials).forEach(material => { if (!usedMaterials.has(material)) material.dispose(); });
+    }
+
+    buildStairs(rooms) {
+        this.generatedStairwellOpenings = new Map();
+        const stairRooms = rooms.filter(room => ["stair", "stairs"].includes(String(room.type || "").toLowerCase()));
+        const byLevel = new Map();
+        stairRooms.forEach(room => {
+            const level = this.getItemFloorIndex(room);
+            if (!byLevel.has(level)) byLevel.set(level, []);
+            byLevel.get(level).push(room);
+        });
+        const levels = [...byLevel.keys()].sort((a, b) => a - b);
+        this.walkthroughStairLinks = [];
+
+        for (let index = 0; index < levels.length - 1; index++) {
+            const lowerLevel = levels[index], upperLevel = levels[index + 1];
+            const lowerRoom = byLevel.get(lowerLevel)?.[0];
+            const upperRoom = byLevel.get(upperLevel)?.[0];
+            if (!lowerRoom || !upperRoom) continue;
+            const lowerPoly = lowerRoom.polygon || [], upperPoly = upperRoom.polygon || [];
+            if (lowerPoly.length < 3 || upperPoly.length < 3) continue;
+
+            const boundsFor = polygon => ({
+                minX: Math.min(...polygon.map(point => point[0])),
+                maxX: Math.max(...polygon.map(point => point[0])),
+                minY: Math.min(...polygon.map(point => point[1])),
+                maxY: Math.max(...polygon.map(point => point[1])),
+            });
+            const bounds = boundsFor(lowerPoly);
+            const width = bounds.maxX - bounds.minX;
+            const depth = bounds.maxY - bounds.minY;
+            const centerX = (bounds.minX + bounds.maxX) / 2;
+            const centerY = (bounds.minY + bounds.maxY) / 2;
+            const runStart = bounds.maxY - Math.min(0.25, depth * 0.08);
+            const runEnd = bounds.minY + Math.min(1.05, depth * 0.3);
+            const runLength = runStart - runEnd;
+            const rise = this.getLevelElevation(upperLevel) - this.getLevelElevation(lowerLevel);
+            if (width < 1.55 || depth < 2.2 || runLength < 1.5 || rise <= 0) continue;
+
+            const stairGroup = new THREE.Group();
+            stairGroup.name = `stairFlight_${lowerLevel}_${upperLevel}`;
+            stairGroup.userData = { floorIndex: lowerLevel, connectsLevels: [lowerLevel, upperLevel] };
+            const stepMaterial = new THREE.MeshStandardMaterial({ color: 0x9a8064, roughness: 0.83 });
+            const railMaterial = new THREE.MeshStandardMaterial({ color: 0x5e4635, roughness: 0.68 });
+            const flightWidth = Math.min(0.62, width * 0.28);
+            const laneOffset = Math.min(width * 0.2, 0.42);
+            const flightCount = 8;
+            const flightRun = runLength / flightCount;
+            const halfRise = rise / 2;
+            const addStep = (laneX, startY, direction, baseY, stepIndex) => {
+                const top = baseY + halfRise * (stepIndex + 1) / flightCount;
+                const planY = startY + direction * flightRun * (stepIndex + 0.5);
+                const world = this.toWorldCoords(laneX, planY);
+                const tread = new THREE.Mesh(
+                    new THREE.BoxGeometry(flightWidth, Math.max(0.055, halfRise / flightCount), flightRun + 0.025),
+                    stepMaterial
+                );
+                tread.position.set(world.x, (baseY + top) / 2, world.z);
+                tread.castShadow = true;
+                tread.receiveShadow = true;
+                stairGroup.add(tread);
+            };
+            const addBeam = (start, end, radius, material) => {
+                const delta = end.clone().sub(start);
+                const beam = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, delta.length(), 8), material);
+                beam.position.copy(start).add(end).multiplyScalar(0.5);
+                beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.normalize());
+                beam.castShadow = true;
+                stairGroup.add(beam);
+                return beam;
+            };
+            const addRail = (laneX, startY, direction, baseY, heightEnd) => {
+                const first = this.toWorldCoords(laneX, startY);
+                const last = this.toWorldCoords(laneX, startY + direction * runLength);
+                addBeam(
+                    new THREE.Vector3(first.x, baseY + 0.88, first.z),
+                    new THREE.Vector3(last.x, heightEnd + 0.88, last.z),
+                    0.035, railMaterial
+                );
+                for (let post = 0; post <= flightCount; post += 2) {
+                    const t = post / flightCount;
+                    const planY = startY + direction * runLength * t;
+                    const world = this.toWorldCoords(laneX, planY);
+                    const bottomY = baseY + (heightEnd - baseY) * t + 0.12;
+                    addBeam(
+                        new THREE.Vector3(world.x, bottomY, world.z),
+                        new THREE.Vector3(world.x, baseY + (heightEnd - baseY) * t + 0.88, world.z),
+                        0.022, railMaterial
+                    );
+                }
+            };
+
+            const lowerLaneX = centerX - laneOffset;
+            const upperLaneX = centerX + laneOffset;
+            const landingPlanY = (runStart + runEnd) / 2;
+            for (let step = 0; step < flightCount; step++) {
+                addStep(lowerLaneX, runEnd, 1, 0, step);
+                addStep(upperLaneX, runStart, -1, halfRise, step);
+            }
+            const landingWorld = this.toWorldCoords(centerX, landingPlanY);
+            const landing = new THREE.Mesh(
+                new THREE.BoxGeometry(flightWidth * 2 + laneOffset * 2, 0.12, Math.max(0.45, flightRun * 1.4)),
+                stepMaterial
+            );
+            landing.position.set(landingWorld.x, halfRise - 0.06, landingWorld.z);
+            landing.castShadow = true;
+            landing.receiveShadow = true;
+            stairGroup.add(landing);
+            addRail(lowerLaneX - flightWidth / 2 + 0.06, runEnd, 1, 0, halfRise);
+            addRail(upperLaneX + flightWidth / 2 - 0.06, runStart, -1, halfRise, rise);
+
+            // Upper landing bridges the stair opening to the existing stairwell door.
+            const upperDoorSideX = bounds.minX + Math.min(0.72, width * 0.34);
+            const upperLandingPlanX = (upperLaneX + upperDoorSideX) / 2;
+            const upperLanding = new THREE.Mesh(
+                new THREE.BoxGeometry(Math.max(0.9, Math.abs(upperLaneX - upperDoorSideX) + 0.35), 0.14, Math.max(0.5, flightRun * 1.8)),
+                stepMaterial
+            );
+            const upperLandingWorld = this.toWorldCoords(upperLandingPlanX, runEnd);
+            upperLanding.position.set(upperLandingWorld.x, rise - 0.07, upperLandingWorld.z);
+            upperLanding.castShadow = true;
+            upperLanding.receiveShadow = true;
+            stairGroup.add(upperLanding);
+
+            const layer = this.getFloorLayer(lowerLevel, "stairs");
+            // Stair marker: ink #1A1917 outline around stair footprint
+            const stairOutlinePts = [
+                this.toWorldCoords(bounds.minX, bounds.minY),
+                this.toWorldCoords(bounds.maxX, bounds.minY),
+                this.toWorldCoords(bounds.maxX, bounds.maxY),
+                this.toWorldCoords(bounds.minX, bounds.maxY)
+            ].map(p => new THREE.Vector3(p.x, 0.03, p.z));
+            const stairOutlineGeo = new THREE.BufferGeometry().setFromPoints(stairOutlinePts);
+            const stairOutlineMat = new THREE.LineBasicMaterial({ color: 0x1A1917, linewidth: 2 });
+            const stairOutline = new THREE.LineLoop(stairOutlineGeo, stairOutlineMat);
+            stairGroup.add(stairOutline);
+
+            layer?.add(stairGroup);
+
+            const lowerEntryPlan = this.toWorldCoords(lowerLaneX, runEnd);
+            const upperExitPlan = this.toWorldCoords(upperDoorSideX, runEnd);
+            const upperBounds = boundsFor(upperPoly);
+            const holeWidth = Math.min(1.65, (upperBounds.maxX - upperBounds.minX) * 0.78);
+            const holeCenterX = (upperBounds.minX + upperBounds.maxX) / 2 + laneOffset;
+            const holeMinX = holeCenterX - holeWidth / 2;
+            const holeMaxX = holeCenterX + holeWidth / 2;
+            const holeMinY = runEnd;
+            const holeMaxY = runStart;
+            if (!this.generatedStairwellOpenings.has(upperRoom)) {
+                // THREE.Shape holes need the opposite winding from their outer ring.
+                this.generatedStairwellOpenings.set(upperRoom, [[
+                    [holeMinX, holeMinY], [holeMinX, holeMaxY], [holeMaxX, holeMaxY], [holeMaxX, holeMinY]
+                ]]);
+            }
+            this.walkthroughStairLinks.push({
+                lowerLevel, upperLevel,
+                lowerPoint: new THREE.Vector3(lowerEntryPlan.x, this.getLevelElevation(lowerLevel) + 1.6, lowerEntryPlan.z),
+                middlePoint: new THREE.Vector3(landingWorld.x, this.getLevelElevation(lowerLevel) + halfRise + 1.6, landingWorld.z),
+                upperPoint: new THREE.Vector3(upperExitPlan.x, this.getLevelElevation(upperLevel) + 1.6, upperExitPlan.z),
+                lowerYaw: Math.PI / 2,
+                upperYaw: Math.PI / 2,
+                roomCenter: [centerX, centerY],
+            });
+        }
+    }
+
+    /**
+     * Creates an architectural text badge sprite using an HTML5 2D canvas.
+     */
+    createRoomBadgeSprite(room) {
+        const canvas = document.createElement("canvas");
+        const label = (room.label || `Room ${room.id}`).toUpperCase();
+        const testCtx = canvas.getContext("2d");
+        testCtx.font = "600 22px 'Azeret Mono', monospace";
+        const tw = testCtx.measureText(label).width;
+        canvas.width = Math.max(160, Math.ceil(tw + 36));
+        canvas.height = 44;
+        this.renderBadgeCanvas(canvas, room, false);
+
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.minFilter = THREE.LinearFilter;
+        texture.generateMipmaps = false;
+
+        const spriteMat = new THREE.SpriteMaterial({
+            map: texture,
+            transparent: true,
+            depthTest: true,
+            depthWrite: false
+        });
+
+        const sprite = new THREE.Sprite(spriteMat);
+        sprite.center.set(0.5, 0.0);
+        sprite.scale.set(1.3, 0.24, 1.0);
+        sprite.userData.canvas = canvas;
+        sprite.userData.room = room;
+        sprite.userData.isExpanded = false;
+        return sprite;
+    }
+
+    /**
+     * Builds 3D door openings and subtle swinging door panels.
+     */
+    buildDoors(doors) {
+        const wallMat = this.wallMaterial || new THREE.MeshStandardMaterial({
+            color: 0xF1EEE6,
+            roughness: 0.8,
+            metalness: 0.1,
+            side: THREE.DoubleSide
+        });
+        this.wallMaterial = wallMat;
+        const doorPanelMat = new THREE.MeshStandardMaterial({ color: 0x5A4636, roughness: 0.85, metalness: 0 });
+        const knobMat = new THREE.MeshStandardMaterial({ color: 0x1A1917, metalness: 0.8, roughness: 0.2 });
+
+        this.walkthroughDoors = [];
+
+        doors.forEach(door => {
+            const center = door.center || [0, 0];
+            const pt = this.toWorldCoords(center[0], center[1]);
+            const width = Math.max(0.6, door.width || 0.9);
+            const doorHeight = 2.1; // Standard door height in meters
+            const wallThickness = this.getWallThickness();
+
+            // Door frame group
+            const doorGroup = new THREE.Group();
+            const level = this.getItemFloorIndex(door);
+            doorGroup.position.set(pt.x, 0, pt.z);
+            doorGroup.rotation.y = this.getOpeningRotation(door, level);
+            doorGroup.userData = {
+                level, floorIndex: level, doorId: door.id,
+                planCenter: center.slice(), width, open: Boolean(door.open),
+                wallThickness, height: doorHeight
+            };
+
+            // Simple white jambs make the wall opening read as a framed doorway.
+            [-1, 1].forEach(side => {
+                const jamb = new THREE.Mesh(
+                    new THREE.BoxGeometry(0.09, doorHeight, wallThickness), wallMat
+                );
+                jamb.position.set(side * (width / 2 - 0.045), doorHeight / 2, 0);
+                jamb.castShadow = true;
+                jamb.receiveShadow = true;
+                jamb.scale.set(1, 0.001, 1);
+                jamb.userData = { isWall: true, floorIndex: level, level, openingFiller: "door-jamb" };
+                doorGroup.add(jamb);
+                this.animatingMeshes.push(jamb);
+            });
+
+            const headerHeight = Math.max(0, this.wallHeight - doorHeight);
+            if (headerHeight > 0) {
+                const header = new THREE.Mesh(
+                    new THREE.BoxGeometry(width, headerHeight, wallThickness),
+                    wallMat
+                );
+                header.position.y = doorHeight + headerHeight / 2;
+                header.castShadow = true;
+                header.receiveShadow = true;
+                header.scale.set(1, 0.001, 1);
+                header.userData = { isWall: true, floorIndex: level, level, openingFiller: "door-header" };
+                doorGroup.add(header);
+                this.animatingMeshes.push(header);
+            }
+
+            // Hinged wood door. The leaf rotates only when the user presses E nearby.
+            const hinge = new THREE.Group();
+            hinge.position.set(-width / 2 + 0.045, 0, 0);
+            const panelGeo = new THREE.BoxGeometry(width - 0.09, doorHeight, 0.05);
+            const panelMesh = new THREE.Mesh(panelGeo, doorPanelMat);
+            panelMesh.position.set((width - 0.09) / 2, doorHeight / 2, 0);
+            panelMesh.castShadow = true;
+            panelMesh.receiveShadow = true;
+            hinge.add(panelMesh);
+            const knob = new THREE.Mesh(new THREE.SphereGeometry(0.045, 12, 8), knobMat);
+            knob.position.set(width - 0.18, 1.0, 0.04);
+            panelMesh.add(knob);
+            const backKnob = knob.clone();
+            backKnob.position.z = -0.04;
+            panelMesh.add(backKnob);
+            hinge.rotation.y = doorGroup.userData.open ? Math.PI / 2 : 0;
+            doorGroup.add(hinge);
+            doorGroup.userData.hinge = hinge;
+            doorGroup.userData.targetAngle = doorGroup.userData.open ? Math.PI / 2 : 0;
+            this.walkthroughDoors.push({ data: door, group: doorGroup, hinge, level, width });
+
+            this.getFloorLayer(level, "doors")?.add(doorGroup);
+        });
+    }
+
+    /**
+     * Builds translucent glass windows and architectural window frames.
+     */
+    buildWindows(windows) {
+        const wallMat = this.wallMaterial || new THREE.MeshStandardMaterial({
+            color: 0xF1EEE6,
+            roughness: 0.8,
+            metalness: 0.1,
+            side: THREE.DoubleSide
+        });
+        this.wallMaterial = wallMat;
+        const glassMat = new THREE.MeshStandardMaterial({
+            color: 0xA9B4B6,
+            transparent: true,
+            opacity: 0.55,
+            depthWrite: false
+        });
+
+        windows.forEach(win => {
+            const center = win.center || [0, 0];
+            const pt = this.toWorldCoords(center[0], center[1]);
+            const width = Math.max(0.8, win.width || 1.2);
+            const sillHeight = 0.9;
+            const windowTop = 1.5;
+            const winHeight = windowTop - sillHeight;
+            const wallThickness = this.getWallThickness();
+
+            const winGroup = new THREE.Group();
+            const level = this.getItemFloorIndex(win);
+            winGroup.position.set(pt.x, 0, pt.z);
+            winGroup.rotation.y = this.getOpeningRotation(win, level);
+            winGroup.userData.level = level;
+            winGroup.userData.floorIndex = level;
+
+            // Glass pane fills the 0.9m to 1.5m opening and protrudes slightly past the wall.
+            const paneDepth = wallThickness + 0.05;
+            const glassGeo = new THREE.BoxGeometry(width, winHeight, paneDepth);
+            const glassMesh = new THREE.Mesh(glassGeo, glassMat);
+            glassMesh.position.y = (sillHeight + windowTop) / 2;
+
+            // Hairline frame in #1A1917
+            const glassEdges = new THREE.EdgesGeometry(glassGeo);
+            const frameMat = new THREE.LineBasicMaterial({ color: 0x1A1917, linewidth: 1 });
+            const glassFrame = new THREE.LineSegments(glassEdges, frameMat);
+            glassMesh.add(glassFrame);
+
+            winGroup.add(glassMesh);
+
+            // The white sill and header meet the pane exactly and match wall thickness.
+            const sillWall = new THREE.Mesh(
+                new THREE.BoxGeometry(width, sillHeight, wallThickness),
+                wallMat
+            );
+            sillWall.position.y = sillHeight / 2;
+            sillWall.castShadow = true;
+            sillWall.receiveShadow = true;
+            sillWall.scale.set(1, 0.001, 1);
+            sillWall.userData = { isWall: true, floorIndex: level, level, windowFiller: "sill" };
+            winGroup.add(sillWall);
+            this.animatingMeshes.push(sillWall);
+
+            const headerHeight = Math.max(0, this.wallHeight - windowTop);
+            if (headerHeight > 0) {
+                const header = new THREE.Mesh(
+                    new THREE.BoxGeometry(width, headerHeight, wallThickness),
+                    wallMat
+                );
+                header.position.y = windowTop + headerHeight / 2;
+                header.castShadow = true;
+                header.receiveShadow = true;
+                header.scale.set(1, 0.001, 1);
+                header.userData = { isWall: true, floorIndex: level, level, windowFiller: "header" };
+                winGroup.add(header);
+                this.animatingMeshes.push(header);
+            }
+
+            this.getFloorLayer(level, "windows")?.add(winGroup);
+        });
+    }
+
+    clearOpeningLayer(layerName) {
+        const staleMaterials = new Set();
+        this.floorGroups.forEach(group => {
+            const layer = group.getObjectByName(layerName);
+            if (!layer) return;
+            const oldChildren = new Set(layer.children);
+            this.animatingMeshes = this.animatingMeshes.filter(mesh => {
+                let ancestor = mesh;
+                while (ancestor && ancestor.parent !== layer) ancestor = ancestor.parent;
+                return !(ancestor && oldChildren.has(ancestor));
+            });
+            layer.traverse(object => {
+                if (object.geometry) object.geometry.dispose();
+                if (!object.material) return;
+                const materials = Array.isArray(object.material) ? object.material : [object.material];
+                materials.forEach(material => {
+                    if (material !== this.wallMaterial) staleMaterials.add(material);
+                });
+            });
+            layer.clear();
+        });
+        staleMaterials.forEach(material => material.dispose());
+    }
+
+    /**
+     * Interactively updates wall height across all walls.
+     */
+    setWallHeight(heightMeters, { syncFloors = true } = {}) {
+        if (!this.currentSceneData) return;
+        this.wallHeight = Math.max(0.2, parseFloat(heightMeters) || 3.0);
+        if (syncFloors) {
+            this.currentSceneData.meta.wallHeight = this.wallHeight;
+            this.syncFloorSpacing();
+        }
+        const floorIndices = Array.from(this.floorGroups.keys());
+        const highestFloor = floorIndices.length
+            ? Math.max(...floorIndices.map(index => this.getLevelElevation(index)))
+            : 0;
+        this.sceneHeight = highestFloor + this.wallHeight;
+        this.floorGroups.forEach((group, floorIndex) => {
+            group.position.y = this.getLevelElevation(floorIndex);
+        });
+        
+        this.rebuildWallAndOpeningGeometry();
+    }
+
+    setWallThickness(thicknessMeters) {
+        if (!this.currentSceneData) return;
+        this.currentSceneData.meta.wallThickness = Math.max(0.05, parseFloat(thicknessMeters) || 0.2);
+        this.rebuildWallAndOpeningGeometry();
+    }
+
+    rebuildWallAndOpeningGeometry() {
+        if (!this.currentSceneData) return;
+        this.floorGroups.forEach(group => {
+            const wallLayer = group.getObjectByName("walls");
+            while (wallLayer.children.length > 0) {
+                const obj = wallLayer.children[0];
+                if (obj.geometry) obj.geometry.dispose();
+                wallLayer.remove(obj);
+            }
+        });
+        this.buildWalls(this.currentSceneData.walls || []);
+        this.clearOpeningLayer("doors");
+        this.clearOpeningLayer("windows");
+        this.buildDoors(this.currentSceneData.doors || []);
+        this.buildWindows(this.currentSceneData.windows || []);
+        this.configureShadowCamera();
+        this.updateVisibleLevels();
+        this.refreshSelectableMeshes();
+    }
+
+    /**
+     * Raycasting click handler: highlights selected room and notifies UI.
+     */
+    onPointerClick(event) {
+        const rect = this.renderer.domElement.getBoundingClientRect();
+        this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+        this.raycaster.setFromCamera(this.mouse, this.camera);
+        const intersects = this.raycaster.intersectObjects(this.selectableMeshes, false);
+
+        if (this.measurementActive) {
+            if (intersects.length) this.handleMeasurementClick(intersects[0]);
+            else this.onMeasurementUpdate?.("Click a visible floor or wall surface to measure.");
+            return;
+        }
+
+        if (!intersects.length) {
+            this.restoreFloorIsolation();
+            return;
+        }
+
+        const hitObject = intersects[0].object;
+        let floorGroup = hitObject;
+        while (floorGroup && !(floorGroup.isGroup
+            && floorGroup.name.startsWith("floorGroup_")
+            && Number.isFinite(Number(floorGroup.userData.floorIndex)))) {
+            floorGroup = floorGroup.parent;
+        }
+        if (!floorGroup) {
+            this.restoreFloorIsolation();
+            return;
+        }
+        if (hitObject.userData.isFloorSurface) this.selectRoom(hitObject);
+        this.requestFloorIsolation(Number(floorGroup.userData.floorIndex));
+    }
+
+    selectRoom(roomMesh) {
+        // Clear previously selected room outline
+        if (this.selectedRoomOutline) {
+            if (this.selectedRoomOutline.parent) {
+                this.selectedRoomOutline.parent.remove(this.selectedRoomOutline);
+            }
+            if (this.selectedRoomOutline.geometry) this.selectedRoomOutline.geometry.dispose();
+            if (this.selectedRoomOutline.material) this.selectedRoomOutline.material.dispose();
+            this.selectedRoomOutline = null;
+        }
+
+        if (this.selectedRoomMesh && this.selectedRoomOriginalColor !== null) {
+            this.selectedRoomMesh.material.color.setHex(this.selectedRoomOriginalColor);
+            this.selectedRoomMesh.material.emissive.setHex(0x000000);
+        }
+
+        this.selectedRoomMesh = roomMesh;
+        this.selectedRoomOriginalColor = roomMesh?.userData?.originalColor ?? null;
+
+        // Outline ONLY in pigment #9B3418 (never fill!)
+        if (roomMesh && roomMesh.geometry) {
+            const edges = new THREE.EdgesGeometry(roomMesh.geometry);
+            const outlineMat = new THREE.LineBasicMaterial({
+                color: 0x9B3418,
+                linewidth: 2,
+                depthTest: false
+            });
+            const outline = new THREE.LineSegments(edges, outlineMat);
+            outline.renderOrder = 999;
+            outline.position.y = 0.05;
+            roomMesh.add(outline);
+            this.selectedRoomOutline = outline;
+        }
+
+        // Expand badge for selected room, collapse others
+        const selectedId = roomMesh?.userData?.roomData?.id;
+        this.floorGroups.forEach(floorGroup => {
+            const labelGroup = floorGroup.getObjectByName("labels");
+            if (labelGroup) {
+                labelGroup.children.forEach(sprite => {
+                    const isTarget = sprite.userData?.room?.id === selectedId;
+                    this.updateBadgeSprite(sprite, isTarget);
+                });
+            }
+        });
+
+        // Notify global UI handler
+        if (typeof window.onFloorPlanRoomSelected === "function") {
+            window.onFloorPlanRoomSelected(roomMesh.userData.roomData);
+        }
+    }
+
+    clearRoomSelection() {
+        if (this.selectedRoomOutline) {
+            if (this.selectedRoomOutline.parent) {
+                this.selectedRoomOutline.parent.remove(this.selectedRoomOutline);
+            }
+            if (this.selectedRoomOutline.geometry) this.selectedRoomOutline.geometry.dispose();
+            if (this.selectedRoomOutline.material) this.selectedRoomOutline.material.dispose();
+            this.selectedRoomOutline = null;
+        }
+        if (this.selectedRoomMesh && this.selectedRoomOriginalColor !== null) {
+            this.selectedRoomMesh.material.color.setHex(this.selectedRoomOriginalColor);
+            this.selectedRoomMesh.material.emissive.setHex(0x000000);
+        }
+        this.selectedRoomMesh = null;
+        this.selectedRoomOriginalColor = null;
+
+        this.floorGroups.forEach(floorGroup => {
+            const labelGroup = floorGroup.getObjectByName("labels");
+            if (labelGroup) {
+                labelGroup.children.forEach(sprite => this.updateBadgeSprite(sprite, false));
+            }
+        });
+    }
+
+    /**
+     * Camera Management & Projection Presets
+     */
+    setActiveCamera(newCamera, keepTarget = true) {
+        if (!newCamera) return;
+        const currentTarget = this.controls ? this.controls.target.clone() : new THREE.Vector3(0, 0, 0);
+        this.camera = newCamera;
+        if (this.controls) {
+            this.controls.object = newCamera;
+            if (keepTarget) {
+                this.controls.target.copy(currentTarget);
+            }
+        }
+    }
+
+    getSceneBoundingBox() {
+        const box = new THREE.Box3();
+        if (this.floorGroups && this.floorGroups.size > 0) {
+            this.floorGroups.forEach(fg => {
+                if (fg.visible !== false) {
+                    box.expandByObject(fg);
+                }
+            });
+        }
+        if (box.isEmpty() && this.scene) {
+            this.scene.children.forEach(child => {
+                if (child !== this.interiorLightsGroup && child.name !== "grid" && child.name !== "measurements") {
+                    box.expandByObject(child);
+                }
+            });
+        }
+        if (box.isEmpty()) {
+            const halfW = Math.max(this.bounds ? this.bounds.width / 2 : 10, 2);
+            const halfD = Math.max(this.bounds ? this.bounds.height / 2 : 8, 2);
+            const totalHeight = Math.max(this.sceneHeight || (this.levelCount * this.wallHeight), 3);
+            box.min.set(-halfW, 0, -halfD);
+            box.max.set(halfW, totalHeight, halfD);
+        }
+        return box;
+    }
+
+    updateOrthoFrustum() {
+        if (!this.container || !this.cameraOrtho) return;
+        const width = this.container.clientWidth;
+        const height = this.container.clientHeight;
+        if (width <= 0 || height <= 0) return;
+        const aspect = width / height;
+
+        const box = this.getSceneBoundingBox();
+        const target = this.controls ? this.controls.target.clone() : box.getCenter(new THREE.Vector3());
+
+        const radAzimuth = (this.isoAzimuthDeg ?? 45) * (Math.PI / 180);
+        const radElevation = (this.isoElevationDeg ?? 35.264) * (Math.PI / 180);
+        const cosEl = Math.cos(radElevation);
+        const sinEl = Math.sin(radElevation);
+        const dir = new THREE.Vector3(
+            cosEl * Math.sin(radAzimuth),
+            sinEl,
+            cosEl * Math.cos(radAzimuth)
+        ).normalize();
+
+        const tempCam = this.cameraOrtho.clone();
+        tempCam.position.copy(target).addScaledVector(dir, 100);
+        tempCam.up.set(0, 1, 0);
+        tempCam.lookAt(target);
+        tempCam.updateMatrixWorld(true);
+        const viewMatrix = tempCam.matrixWorldInverse;
+
+        const corners = [
+            new THREE.Vector3(box.min.x, box.min.y, box.min.z),
+            new THREE.Vector3(box.min.x, box.min.y, box.max.z),
+            new THREE.Vector3(box.min.x, box.max.y, box.min.z),
+            new THREE.Vector3(box.min.x, box.max.y, box.max.z),
+            new THREE.Vector3(box.max.x, box.min.y, box.min.z),
+            new THREE.Vector3(box.max.x, box.min.y, box.max.z),
+            new THREE.Vector3(box.max.x, box.max.y, box.min.z),
+            new THREE.Vector3(box.max.x, box.max.y, box.max.z),
+        ];
+
+        let maxExtentX = 0;
+        let maxExtentY = 0;
+        corners.forEach(corner => {
+            const p = corner.clone().applyMatrix4(viewMatrix);
+            maxExtentX = Math.max(maxExtentX, Math.abs(p.x));
+            maxExtentY = Math.max(maxExtentY, Math.abs(p.y));
+        });
+
+        // Fit with about 15% margin
+        const margin = 1.15;
+        maxExtentX = Math.max(maxExtentX * margin, 2);
+        maxExtentY = Math.max(maxExtentY * margin, 2);
+
+        this.orthoExtent = { halfW: maxExtentX, halfH: maxExtentY };
+
+        let halfW = maxExtentX;
+        let halfH = maxExtentY;
+        if (halfW / halfH > aspect) {
+            halfH = halfW / aspect;
+        } else {
+            halfW = halfH * aspect;
+        }
+
+        this.cameraOrtho.left = -halfW;
+        this.cameraOrtho.right = halfW;
+        this.cameraOrtho.top = halfH;
+        this.cameraOrtho.bottom = -halfH;
+        this.cameraOrtho.near = 0.1;
+        this.cameraOrtho.far = 1000;
+        this.cameraOrtho.updateProjectionMatrix();
+    }
+
+    setIsometricView(preserveAzimuth = false) {
+        if (this.walkthroughActive) this.toggleWalkthroughMode(false);
+        this.is2DMode = false;
+        this.isEyeLevelView = false;
+        this.isOrbitFreely = false;
+
+        if (!preserveAzimuth) {
+            this.isoAzimuthDeg = 45;
+            if (this.cameraOrtho) this.cameraOrtho.zoom = 1;
+        }
+        this.isoElevationDeg = 35.264;
+
+        const totalHeight = Math.max(this.sceneHeight || (this.levelCount * this.wallHeight), 1);
+        const target = this.controls ? this.controls.target.clone() : new THREE.Vector3(0, totalHeight / 2, 0);
+        if (target.lengthSq() === 0) {
+            target.set(0, totalHeight / 2, 0);
+        }
+
+        const radAzimuth = this.isoAzimuthDeg * (Math.PI / 180);
+        const radElevation = this.isoElevationDeg * (Math.PI / 180);
+        const cosEl = Math.cos(radElevation);
+        const sinEl = Math.sin(radElevation);
+        const dir = new THREE.Vector3(
+            cosEl * Math.sin(radAzimuth),
+            sinEl,
+            cosEl * Math.cos(radAzimuth)
+        ).normalize();
+
+        this.setActiveCamera(this.cameraOrtho, true);
+        this.cameraOrtho.up.set(0, 1, 0);
+
+        const span = Math.max(this.bounds ? this.bounds.width : 20, this.bounds ? this.bounds.height : 20, 20);
+        const distance = Math.max(60, span * 3);
+        this.cameraOrtho.position.copy(target).addScaledVector(dir, distance);
+        this.cameraOrtho.lookAt(target);
+
+        this.updateOrthoFrustum();
+
+        this.controls.target.copy(target);
+        this.controls.enableRotate = false; // Locked isometric orientation
+        this.controls.update();
+
+        this.updateRoomLabelVisibility(1 / 60);
+
+        if (this.onCameraModeChange) this.onCameraModeChange("isometric");
+    }
+
+    rotateIsometricView(deltaDeg) {
+        if (this.walkthroughActive) this.toggleWalkthroughMode(false);
+        this.is2DMode = false;
+        this.isEyeLevelView = false;
+
+        if (this.isOrbitFreely) {
+            this.isOrbitFreely = false;
+            const target = this.controls.target;
+            const offset = new THREE.Vector3().subVectors(this.camera.position, target);
+            let currAz = (Math.atan2(offset.x, offset.z) * 180 / Math.PI) % 360;
+            if (currAz < 0) currAz += 360;
+            const steps = [45, 135, 225, 315];
+            let closest = 45;
+            let minDiff = Infinity;
+            steps.forEach(s => {
+                const diff = Math.min(Math.abs(currAz - s), Math.abs(currAz - (s + 360)), Math.abs(currAz - (s - 360)));
+                if (diff < minDiff) { minDiff = diff; closest = s; }
+            });
+            this.isoAzimuthDeg = closest;
+        }
+
+        let newAzimuth = (this.isoAzimuthDeg + deltaDeg) % 360;
+        if (newAzimuth < 0) newAzimuth += 360;
+
+        const steps = [45, 135, 225, 315];
+        let snapped = steps[0];
+        let minD = Infinity;
+        steps.forEach(s => {
+            const d = Math.abs(newAzimuth - s);
+            if (d < minD) { minD = d; snapped = s; }
+        });
+        this.isoAzimuthDeg = snapped;
+        this.animateIsometricRotation(snapped);
+    }
+
+    animateIsometricRotation(targetAzimuthDeg) {
+        if (this.isoRotationTween) {
+            cancelAnimationFrame(this.isoRotationTween);
+            this.isoRotationTween = null;
+        }
+
+        this.setActiveCamera(this.cameraOrtho, true);
+        this.cameraOrtho.up.set(0, 1, 0);
+        this.controls.enableRotate = false;
+
+        const target = this.controls.target.clone();
+        const span = Math.max(this.bounds ? this.bounds.width : 20, this.bounds ? this.bounds.height : 20, 20);
+        const distance = Math.max(60, span * 3);
+
+        const offset = new THREE.Vector3().subVectors(this.cameraOrtho.position, target);
+        let startAz = Math.atan2(offset.x, offset.z) * 180 / Math.PI;
+        if (startAz < 0) startAz += 360;
+
+        let diff = (targetAzimuthDeg - startAz) % 360;
+        if (diff > 180) diff -= 360;
+        if (diff < -180) diff += 360;
+
+        const radElevation = (this.isoElevationDeg || 35.264) * (Math.PI / 180);
+        const cosEl = Math.cos(radElevation);
+        const sinEl = Math.sin(radElevation);
+
+        const startTime = performance.now();
+        const duration = 220;
+
+        const animate = (now) => {
+            const elapsed = now - startTime;
+            const progress = Math.min(1, elapsed / duration);
+            const eased = 1 - Math.pow(1 - progress, 3);
+            const currentAzDeg = startAz + diff * eased;
+            const currentAzRad = currentAzDeg * (Math.PI / 180);
+
+            const dir = new THREE.Vector3(
+                cosEl * Math.sin(currentAzRad),
+                sinEl,
+                cosEl * Math.cos(currentAzRad)
+            ).normalize();
+
+            this.cameraOrtho.position.copy(target).addScaledVector(dir, distance);
+            this.cameraOrtho.lookAt(target);
+            this.controls.update();
+            this.updateRoomLabelVisibility(1 / 60);
+
+            if (progress < 1) {
+                this.isoRotationTween = requestAnimationFrame(animate);
+            } else {
+                this.isoRotationTween = null;
+                this.isoAzimuthDeg = ((targetAzimuthDeg % 360) + 360) % 360;
+                this.updateOrthoFrustum();
+                this.controls.update();
+                this.updateRoomLabelVisibility(1 / 60);
+                if (this.onCameraModeChange) this.onCameraModeChange("isometric");
+            }
+        };
+        this.isoRotationTween = requestAnimationFrame(animate);
+    }
+
+    toggleOrbitFreely(forceState) {
+        if (this.walkthroughActive) this.toggleWalkthroughMode(false);
+        this.is2DMode = false;
+        this.isEyeLevelView = false;
+
+        const newState = (forceState !== undefined) ? !!forceState : !this.isOrbitFreely;
+        this.isOrbitFreely = newState;
+
+        const target = this.controls.target.clone();
+
+        if (this.isOrbitFreely) {
+            const dir = new THREE.Vector3().subVectors(this.cameraOrtho.position, target).normalize();
+            const span = Math.max(this.bounds ? this.bounds.width : 20, this.bounds ? this.bounds.height : 20, 20);
+            const distance = Math.max(25, span * 1.8);
+
+            this.setActiveCamera(this.cameraPerspective, true);
+            this.cameraPerspective.up.set(0, 1, 0);
+            this.cameraPerspective.position.copy(target).addScaledVector(dir, distance);
+            this.cameraPerspective.lookAt(target);
+            this.cameraPerspective.updateProjectionMatrix();
+
+            this.controls.enableRotate = true;
+            this.controls.maxPolarAngle = Math.PI / 2 + 0.05;
+            this.controls.minDistance = 2;
+            this.controls.maxDistance = Math.max(150, span * 5);
+            this.controls.update();
+
+            this.updateRoomLabelVisibility(1 / 60);
+
+            if (this.onCameraModeChange) this.onCameraModeChange("orbit-freely");
+        } else {
+            const offset = new THREE.Vector3().subVectors(this.cameraPerspective.position, target);
+            let currAz = (Math.atan2(offset.x, offset.z) * 180 / Math.PI) % 360;
+            if (currAz < 0) currAz += 360;
+
+            const steps = [45, 135, 225, 315];
+            let closest = 45;
+            let minDiff = Infinity;
+            steps.forEach(s => {
+                const diff = Math.min(Math.abs(currAz - s), Math.abs(currAz - (s + 360)), Math.abs(currAz - (s - 360)));
+                if (diff < minDiff) { minDiff = diff; closest = s; }
+            });
+            this.isoAzimuthDeg = closest;
+            this.isoElevationDeg = 35.264;
+
+            this.setIsometricView(true);
+        }
+    }
+
+    setPerspectiveView() {
+        this.setIsometricView(false);
+    }
+
+    setTopDownView() {
+        if (this.walkthroughActive) this.toggleWalkthroughMode(false);
+        this.is2DMode = true;
+        this.isEyeLevelView = false;
+        this.isOrbitFreely = false;
+
+        const target = this.controls.target.clone();
+        const targetY = this.visibleLevel === null ? target.y : this.getLevelElevation(this.visibleLevel);
+        this.controls.target.set(target.x, targetY, target.z);
+
+        const span = Math.max(this.bounds ? this.bounds.width : 20, this.bounds ? this.bounds.height : 20, 20);
+
+        this.setActiveCamera(this.cameraOrtho, true);
+        this.cameraOrtho.position.set(target.x, targetY + span * 2, target.z + 0.001);
+        this.cameraOrtho.up.set(0, 0, -1);
+        this.cameraOrtho.lookAt(this.controls.target);
+
+        this.updateOrthoFrustum();
+        this.controls.enableRotate = false;
+        this.controls.update();
+
+        this.updateRoomLabelVisibility(1 / 60);
+
+        if (this.onCameraModeChange) this.onCameraModeChange("top-down");
+    }
+
+    setEyeLevelView() {
+        if (this.walkthroughActive) this.toggleWalkthroughMode(false);
+
+        const rooms = this.currentSceneData?.rooms || [];
+        const getArea = room => {
+            const polygon = room.polygon || [];
+            if (polygon.length < 3) return 0;
+            let twiceArea = 0;
+            polygon.forEach((point, index) => {
+                const next = polygon[(index + 1) % polygon.length];
+                twiceArea += point[0] * next[1] - next[0] * point[1];
+            });
+            return Math.abs(twiceArea) / 2;
+        };
+        const availableRooms = this.visibleLevel === null
+            ? rooms
+            : rooms.filter(room => this.getItemFloorIndex(room) === this.visibleLevel);
+        const preferredRooms = availableRooms.filter(room => ["corridor", "entrance"].includes(
+            String(room.type || "").toLowerCase()
+        ));
+        const roomCandidates = (preferredRooms.length ? preferredRooms : availableRooms)
+            .slice().sort((a, b) => getArea(b) - getArea(a));
+        let room = null;
+        let planPoint = null;
+        for (const candidate of roomCandidates) {
+            this.walkthroughFloorIndex = this.getItemFloorIndex(candidate);
+            planPoint = this.getWalkthroughInteriorPoint(candidate);
+            if (planPoint) { room = candidate; break; }
+        }
+        if (!room || !planPoint) return;
+        this.is2DMode = false;
+        this.isEyeLevelView = true;
+        this.isOrbitFreely = false;
+
+        this.setActiveCamera(this.cameraPerspective, true);
+        this.cameraPerspective.up.set(0, 1, 0);
+        this.controls.enableRotate = true;
+
+        const floorIndex = this.getItemFloorIndex(room);
+        const world = this.toWorldCoords(planPoint[0], planPoint[1]);
+        const worldX = world.x;
+        const worldZ = world.z;
+
+        const floorElevation = this.getLevelElevation(floorIndex);
+        const eyeY = floorElevation + 1.7;
+        const span = Math.max(this.bounds?.width || 20, this.bounds?.height || 20, 20);
+        this.cameraPerspective.near = 0.05;
+        this.cameraPerspective.far = Math.max(1000, this.sceneHeight + span * 10);
+        this.cameraPerspective.updateProjectionMatrix();
+        const yaw = this.getWalkthroughYaw(room, planPoint);
+        const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+        this.controls.target.set(worldX + forward.x * 2, eyeY - 0.12, worldZ + forward.z * 2);
+        this.cameraPerspective.position.set(worldX, eyeY, worldZ);
+        this.controls.minDistance = 0.1;
+        this.controls.maxDistance = Math.max(150, span * 8);
+        this.controls.update();
+        this.updateRoomLabelVisibility(1 / 60);
+
+        if (this.onCameraModeChange) this.onCameraModeChange("eye-level");
+    }
+
+    focusRoom(room) {
+        const polygon = room && room.polygon;
+        if (!polygon || polygon.length < 3) return;
+        const centroid = polygon.reduce((sum, point) => [sum[0] + point[0], sum[1] + point[1]], [0, 0])
+            .map(value => value / polygon.length);
+        const world = this.toWorldCoords(centroid[0], centroid[1]);
+        const targetStart = this.controls.target.clone();
+        const targetEnd = new THREE.Vector3(world.x, this.getLevelElevation(this.getItemFloorIndex(room)), world.z);
+        const cameraStart = this.camera.position.clone();
+        let cameraEnd;
+
+        if (this.camera.isOrthographicCamera) {
+            const offset = new THREE.Vector3().subVectors(targetEnd, targetStart);
+            cameraEnd = cameraStart.clone().add(offset);
+        } else {
+            const span = Math.max(5, Math.min(this.bounds ? this.bounds.width : 10, this.bounds ? this.bounds.height : 10, 10));
+            cameraEnd = new THREE.Vector3(world.x + span * 0.9, targetEnd.y + span * 0.9, world.z + span * 0.9);
+        }
+
+        const startTime = performance.now();
+        const duration = 700;
+
+        const animateFocus = (now) => {
+            const t = Math.min(1, (now - startTime) / duration);
+            const eased = 1 - Math.pow(1 - t, 3);
+            this.camera.position.lerpVectors(cameraStart, cameraEnd, eased);
+            this.controls.target.lerpVectors(targetStart, targetEnd, eased);
+            this.controls.update();
+            this.updateRoomLabelVisibility(1 / 60);
+            if (t < 1) requestAnimationFrame(animateFocus);
+        };
+        requestAnimationFrame(animateFocus);
+    }
+
+    drawRoute(planCoordinates, level = 0) {
+        this.clearRoute();
+        const group = this.groups.route;
+        if (!planCoordinates || planCoordinates.length < 3) return;
+
+        const pathNodes = planCoordinates.map(node => {
+            const point = Array.isArray(node) ? node : (node.point || [node.x, node.y]);
+            const floorIndex = Array.isArray(node) ? Number(level) || 0 : Number(node.floorIndex ?? level) || 0;
+            const world = this.toWorldCoords(point[0], point[1]);
+            return {
+                floorIndex,
+                position: new THREE.Vector3(world.x, this.getLevelElevation(floorIndex) + 0.1, world.z)
+            };
+        }).filter((node, index, nodes) => {
+            if (index === 0) return true;
+            const previous = nodes[index - 1];
+            return node.floorIndex !== previous.floorIndex
+                || node.position.distanceToSquared(previous.position) > 1e-8;
+        });
+        if (pathNodes.length < 3) return;
+
+        // Keep route legs straight between doors and room centers so the visual
+        // route does not bow through walls. Floor changes remain vertical.
+        const curvePath = new THREE.CurvePath();
+        for (let index = 1; index < pathNodes.length; index++) {
+            const previous = pathNodes[index - 1];
+            const current = pathNodes[index];
+            curvePath.add(new THREE.LineCurve3(previous.position, current.position));
+        }
+        const geometry = new THREE.TubeGeometry(curvePath, Math.max(32, pathNodes.length * 12), 0.055, 8, false);
+        const material = new THREE.MeshStandardMaterial({
+            color: 0x9B3418,
+            emissive: 0x9B3418,
+            emissiveIntensity: 0.45,
+            roughness: 0.45,
+            metalness: 0.05,
+            transparent: true,
+            opacity: 0.95,
+            depthWrite: false,
+            toneMapped: false
+        });
+        const route = new THREE.Mesh(geometry, material);
+        route.castShadow = true;
+        route.userData.level = Number(level) || 0;
+        route.userData.floorIndex = Number(level) || 0;
+        group.add(route);
+        this.activeRouteTexture = null;
+    }
+
+    clearRoute() {
+        const routeGroup = this.groups.route;
+        while (routeGroup.children.length) {
+            const route = routeGroup.children[0];
+            this.scene.remove(route);
+            if (route.parent) route.parent.remove(route);
+            if (route.geometry) route.geometry.dispose();
+            if (route.material) {
+                const materials = Array.isArray(route.material) ? route.material : [route.material];
+                materials.forEach(material => {
+                    if (material.map) material.map.dispose();
+                    material.dispose();
+                });
+            }
+        }
+        this.activeRouteTexture = null;
+    }
+
+    /**
+     * Updates sunlight angle, color temperature, ambient sky light, and interior lights
+     * based on time of day (6.0 = 6:00 AM to 22.0 = 10:00 PM).
+     */
+    setTimeOfDay(hour) {
+        this.timeOfDay = Math.max(6.0, Math.min(22.0, Number(hour) || 13.0));
+        if (!this.keyLight || !this.ambientLight || !this.hemiLight) return;
+
+        const bounds = this.bounds || { minX: 0, maxX: 20, minY: 0, maxY: 15, width: 20, height: 15 };
+        const centerX = (bounds.minX + bounds.maxX) / 2 - this.centerOffset.x;
+        const centerZ = (bounds.minY + bounds.maxY) / 2 - this.centerOffset.y;
+        const span = Math.max(bounds.width, bounds.height, 12);
+
+        // Solar arc: 6:00 AM (East / +X) -> 12:00 PM (Zenith) -> 18:00 (West / -X)
+        const dayProgress = (this.timeOfDay - 6.0) / 12.0;
+        const theta = dayProgress * Math.PI;
+
+        const sunX = centerX + span * 1.6 * Math.cos(theta);
+        const sunY = Math.max(8, span * 1.8 * Math.sin(theta) + 2);
+        const sunZ = centerZ + span * 0.9 * Math.cos(theta * 0.5);
+
+        this.keyLight.position.set(sunX, sunY, sunZ);
+        this.keyLight.target.position.set(centerX, 0, centerZ);
+        this.keyLight.target.updateMatrixWorld();
+
+        const isNight = this.timeOfDay >= 19.5 || this.timeOfDay < 6.5;
+        const isSunset = this.timeOfDay >= 17.5 && this.timeOfDay < 19.5;
+        const isSunrise = this.timeOfDay >= 6.0 && this.timeOfDay < 7.5;
+
+        if (isNight) {
+            this.keyLight.color.setHex(0xdcd7cb);
+            this.keyLight.intensity = 0.18;
+            this.ambientLight.color.setHex(0x3a3832);
+            this.ambientLight.intensity = 0.25;
+            this.hemiLight.color.setHex(0x4a4741);
+            this.hemiLight.groundColor.setHex(0x1a1917);
+            this.hemiLight.intensity = 0.25;
+            if (this.fillLight) this.fillLight.intensity = 0.05;
+            this.interiorLightsGroup.visible = true;
+            this.scene.background = new THREE.Color(0x1A1917);
+        } else if (isSunset) {
+            this.keyLight.color.setHex(0xdfd3c3);
+            this.keyLight.intensity = 0.80;
+            this.ambientLight.color.setHex(0xded7cb);
+            this.ambientLight.intensity = 0.38;
+            this.hemiLight.color.setHex(0xe7e3da);
+            this.hemiLight.groundColor.setHex(0x4a4741);
+            this.hemiLight.intensity = 0.45;
+            if (this.fillLight) this.fillLight.intensity = 0.15;
+            this.interiorLightsGroup.visible = false;
+            this.scene.background = new THREE.Color(0xE7E3DA);
+        } else if (isSunrise) {
+            this.keyLight.color.setHex(0xdfd3c3);
+            this.keyLight.intensity = 0.75;
+            this.ambientLight.color.setHex(0xded7cb);
+            this.ambientLight.intensity = 0.38;
+            this.hemiLight.color.setHex(0xe7e3da);
+            this.hemiLight.groundColor.setHex(0x4a4038);
+            this.hemiLight.intensity = 0.45;
+            if (this.fillLight) this.fillLight.intensity = 0.18;
+            this.interiorLightsGroup.visible = false;
+            this.scene.background = new THREE.Color(0xE7E3DA);
+        } else {
+            this.keyLight.color.setHex(0xfffcf5);
+            this.keyLight.intensity = 0.95;
+            this.ambientLight.color.setHex(0xe7e3da);
+            this.ambientLight.intensity = 0.45;
+            this.hemiLight.color.setHex(0xe7e3da);
+            this.hemiLight.groundColor.setHex(0xdcd7cb);
+            this.hemiLight.intensity = 0.52;
+            if (this.fillLight) this.fillLight.intensity = 0.25;
+            this.interiorLightsGroup.visible = false;
+            this.scene.background = new THREE.Color(0xE7E3DA);
+        }
+    }
+
+    buildInteriorLights(rooms = []) {
+        while (this.interiorLightsGroup.children.length > 0) {
+            const light = this.interiorLightsGroup.children[0];
+            this.disposeObjectResources(light);
+            this.interiorLightsGroup.remove(light);
+        }
+
+        (rooms || []).forEach(room => {
+            if (!room.polygon || room.polygon.length < 3) return;
+            const [cx, cy] = this.getPolygonCentroid(room.polygon);
+            const floorIndex = this.getItemFloorIndex(room);
+            const world = this.toWorldCoords(cx, cy);
+            const ceilingY = this.getLevelElevation(floorIndex) + this.wallHeight - 0.25;
+
+            const light = new THREE.PointLight(0xffecc4, 0.75, 12, 1.5);
+            light.position.set(world.x, ceilingY, world.z);
+            this.interiorLightsGroup.add(light);
+        });
+    }
+
+    /**
+     * Projects the 2D floor plan image directly on the 3D ground plane.
+     */
+    setBlueprintImage(imageUrl, imageSize, metersPerPixel) {
+        if (!imageUrl || !imageSize || !metersPerPixel) return;
+        const group = this.groups.blueprint;
+        while (group.children.length > 0) {
+            const obj = group.children[0];
+            this.disposeObjectResources(obj);
+            group.remove(obj);
+        }
+        this.blueprintMesh = null;
+
+        const width_m = imageSize[0] * metersPerPixel;
+        const height_m = imageSize[1] * metersPerPixel;
+        const centerX = width_m / 2 - this.centerOffset.x;
+        const centerZ = height_m / 2 - this.centerOffset.y;
+
+        const textureLoader = new THREE.TextureLoader();
+        textureLoader.load(imageUrl, texture => {
+            texture.minFilter = THREE.LinearFilter;
+            texture.magFilter = THREE.LinearFilter;
+            const geom = new THREE.PlaneGeometry(width_m, height_m);
+            const mat = new THREE.MeshBasicMaterial({
+                map: texture,
+                transparent: true,
+                opacity: this.blueprintOpacity || 0.0,
+                depthWrite: false,
+                side: THREE.DoubleSide
+            });
+            const mesh = new THREE.Mesh(geom, mat);
+            mesh.rotation.x = -Math.PI / 2;
+            mesh.position.set(centerX, -0.015, centerZ);
+            mesh.name = "blueprintUnderlay";
+            mesh.visible = (this.blueprintOpacity || 0.0) > 0.01;
+            group.add(mesh);
+            this.blueprintMesh = mesh;
+        });
+    }
+
+    setBlueprintOpacity(opacity) {
+        this.blueprintOpacity = Math.max(0, Math.min(1.0, Number(opacity) || 0));
+        if (this.blueprintMesh && this.blueprintMesh.material) {
+            this.blueprintMesh.material.opacity = this.blueprintOpacity;
+            this.blueprintMesh.visible = this.blueprintOpacity > 0.01;
+        }
+    }
+
+    /**
+     * Simulates emergency evacuation paths from all rooms to exterior exit doors.
+     */
+    simulateEvacuation() {
+        if (!this.currentSceneData) return null;
+        this.clearEvacuation();
+        this.evacuationActive = true;
+
+        const rooms = this.currentSceneData.rooms || [];
+        const doors = this.currentSceneData.doors || [];
+        if (!rooms.length) return null;
+
+        const group = this.groups.evacuation;
+
+        // 1. Identify genuine exterior exit doors on level 0 (ground floor)
+        const groundDoors = doors.filter(d => (Number(d.floorIndex ?? d.level) || 0) === 0);
+        const isStrictInteriorDoor = d => {
+            const connects = Array.isArray(d.connects) ? d.connects : [];
+            if (connects.includes("outside")) return false;
+            const interiorRooms = connects.filter(id => rooms.some(r => r.id === id));
+            return interiorRooms.length >= 2;
+        };
+
+        // Exterior exit doors must discharge outside
+        let exitDoors = groundDoors.filter(d => {
+            const connects = Array.isArray(d.connects) ? d.connects : [];
+            return connects.includes("outside");
+        });
+        const hasExplicitExits = exitDoors.length > 0;
+
+        if (!exitDoors.length) {
+            const bounds = this.bounds || { minX: 0, maxX: 20, minY: 0, maxY: 15 };
+            const perimeterDist = d => {
+                const cx = d.center ? d.center[0] : 0;
+                const cy = d.center ? d.center[1] : 0;
+                return Math.min(
+                    Math.abs(cx - bounds.minX), Math.abs(cx - bounds.maxX),
+                    Math.abs(cy - bounds.minY), Math.abs(cy - bounds.maxY)
+                );
+            };
+            const candidates = groundDoors.filter(d => !isStrictInteriorDoor(d));
+            exitDoors = candidates.sort((a, b) => perimeterDist(a) - perimeterDist(b)).slice(0, 2);
+        }
+
+        if (!exitDoors.length && groundDoors.length) {
+            exitDoors = [groundDoors[0]];
+        }
+
+        const exitDoorIds = new Set(exitDoors.map(d => d.id));
+
+        // 2. Build room-door adjacency graph for pathfinding
+        const roomCentroids = new Map();
+        rooms.forEach(room => {
+            if (room.polygon && room.polygon.length >= 3) {
+                const [cx, cy] = this.getPolygonCentroid(room.polygon);
+                roomCentroids.set(room.id, [cx, cy]);
+            } else {
+                roomCentroids.set(room.id, [0, 0]);
+            }
+        });
+
+        const graph = new Map();
+        rooms.forEach(r => graph.set(`room:${r.id}`, []));
+        doors.forEach(d => graph.set(`door:${d.id}`, []));
+
+        doors.forEach(d => {
+            const dNode = `door:${d.id}`;
+            const dCenter = d.center || [0, 0];
+            const connects = Array.isArray(d.connects) ? d.connects : [];
+            connects.forEach(rId => {
+                const rNode = `room:${rId}`;
+                if (graph.has(rNode)) {
+                    const rCenter = roomCentroids.get(rId) || dCenter;
+                    const dist = Math.hypot(dCenter[0] - rCenter[0], dCenter[1] - rCenter[1]);
+                    graph.get(rNode).push({ to: dNode, cost: dist, door: d });
+                    graph.get(dNode).push({ to: rNode, cost: dist, door: d });
+                }
+            });
+        });
+
+        // Link matching stair/elevator rooms on adjacent stories in the preview graph.
+        const connectorsByType = new Map();
+        rooms.forEach(room => {
+            const type = String(room.type || "").toLowerCase();
+            if (!(type.includes("stair") || type === "elevator")) return;
+            const key = type.includes("stair") ? "stairs" : "elevator";
+            if (!connectorsByType.has(key)) connectorsByType.set(key, []);
+            connectorsByType.get(key).push(room);
+        });
+        connectorsByType.forEach(connectors => {
+            connectors.sort((a, b) => this.getItemFloorIndex(a) - this.getItemFloorIndex(b));
+            for (let index = 1; index < connectors.length; index++) {
+                const lower = connectors[index - 1], upper = connectors[index];
+                const lowerLevel = this.getItemFloorIndex(lower), upperLevel = this.getItemFloorIndex(upper);
+                if (lowerLevel === upperLevel) continue;
+                const lowerCenter = roomCentroids.get(lower.id), upperCenter = roomCentroids.get(upper.id);
+                const distance = Math.hypot(lowerCenter[0] - upperCenter[0], lowerCenter[1] - upperCenter[1])
+                    + Math.abs(this.getLevelElevation(upperLevel) - this.getLevelElevation(lowerLevel));
+                graph.get(`room:${lower.id}`).push({ to: `room:${upper.id}`, cost: distance });
+                graph.get(`room:${upper.id}`).push({ to: `room:${lower.id}`, cost: distance });
+            }
+        });
+
+        // Direct door-to-door edges through corridors and shared rooms
+        const roomDoors = new Map();
+        rooms.forEach(r => roomDoors.set(r.id, []));
+        doors.forEach(d => {
+            const connects = Array.isArray(d.connects) ? d.connects : [];
+            connects.forEach(rId => {
+                if (roomDoors.has(rId)) roomDoors.get(rId).push(d);
+            });
+        });
+
+        roomDoors.forEach(doorList => {
+            for (let i = 0; i < doorList.length; i++) {
+                for (let j = i + 1; j < doorList.length; j++) {
+                    const d1 = doorList[i], d2 = doorList[j];
+                    const dist = Math.hypot(d1.center[0] - d2.center[0], d1.center[1] - d2.center[1]);
+                    graph.get(`door:${d1.id}`).push({ to: `door:${d2.id}`, cost: dist });
+                    graph.get(`door:${d2.id}`).push({ to: `door:${d1.id}`, cost: dist });
+                }
+            }
+        });
+
+        // Helper to get exterior safe assembly beacon offset perpendicular to wall
+        const getBeaconOffset = (d, floorIndex) => {
+            const bounds = this.bounds || { minX: 1, maxX: 15, minY: 1, maxY: 11 };
+            const rot = this.getOpeningRotation(d, floorIndex);
+            if (rot !== 0) {
+                // Vertical wall (e.g. West or East facade)
+                const isWestSide = d.center[0] < (bounds.minX + bounds.maxX) / 2;
+                return { outDx: isWestSide ? -2.5 : 2.5, outDz: 0 };
+            } else {
+                // Horizontal wall (e.g. South or North facade)
+                const isSouthSide = d.center[1] > (bounds.minY + bounds.maxY) / 2;
+                return { outDx: 0, outDz: isSouthSide ? 2.5 : -2.5 };
+            }
+        };
+
+        const usedExitDoorIds = new Set();
+        // 3. For each room, find shortest path to the closest exit door
+        let maxTravelDist = 0;
+        let totalTravelDist = 0;
+        let routedRoomsCount = 0;
+
+        // Create glowing animated evacuation texture with directional arrows
+        const canvas = document.createElement("canvas");
+        canvas.width = 128;
+        canvas.height = 32;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#9B3418";
+        ctx.fillRect(0, 0, 128, 32);
+        ctx.fillStyle = "#E7E3DA";
+        for (let x = 0; x < 128; x += 32) {
+            ctx.beginPath();
+            ctx.moveTo(x + 4, 4);
+            ctx.lineTo(x + 20, 16);
+            ctx.lineTo(x + 4, 28);
+            ctx.lineTo(x + 12, 28);
+            ctx.lineTo(x + 28, 16);
+            ctx.lineTo(x + 12, 4);
+            ctx.closePath();
+            ctx.fill();
+        }
+        const evacTexture = new THREE.CanvasTexture(canvas);
+        evacTexture.wrapS = THREE.RepeatWrapping;
+        evacTexture.wrapT = THREE.RepeatWrapping;
+        evacTexture.repeat.set(4, 1);
+        this.evacuationTexture = evacTexture;
+
+        const egressMaterial = new THREE.MeshStandardMaterial({
+            map: evacTexture,
+            color: 0x9B3418,
+            emissive: 0x9B3418,
+            emissiveIntensity: 0.95,
+            roughness: 0.3,
+            metalness: 0.1,
+            transparent: true,
+            opacity: 0.95,
+            depthWrite: false,
+        });
+
+        rooms.forEach(room => {
+            const startNode = `room:${room.id}`;
+            const dists = new Map([...graph.keys()].map(k => [k, Infinity]));
+            const prev = new Map();
+            const queue = new Set(graph.keys());
+            dists.set(startNode, 0);
+
+            while (queue.size > 0) {
+                let u = null;
+                for (const node of queue) {
+                    if (u === null || dists.get(node) < dists.get(u)) u = node;
+                }
+                if (u === null || !Number.isFinite(dists.get(u))) break;
+                queue.delete(u);
+
+                if (u.startsWith("door:") && exitDoorIds.has(u.replace("door:", ""))) {
+                    break;
+                }
+
+                for (const edge of graph.get(u) || []) {
+                    const alt = dists.get(u) + edge.cost;
+                    if (alt < dists.get(edge.to)) {
+                        dists.set(edge.to, alt);
+                        prev.set(edge.to, u);
+                    }
+                }
+            }
+
+            let bestExitNode = null;
+            let minExitDist = Infinity;
+            exitDoors.forEach(d => {
+                const node = `door:${d.id}`;
+                if (dists.get(node) < minExitDist) {
+                    minExitDist = dists.get(node);
+                    bestExitNode = node;
+                }
+            });
+
+            if (bestExitNode && Number.isFinite(minExitDist)) {
+                const exitDoorId = bestExitNode.replace("door:", "");
+                usedExitDoorIds.add(exitDoorId);
+
+                const pathNodes = [];
+                let curr = bestExitNode;
+                while (curr) {
+                    pathNodes.unshift(curr);
+                    curr = prev.get(curr);
+                }
+
+                const pathPoints = [];
+                pathNodes.forEach(node => {
+                    if (node.startsWith("room:")) {
+                        const rId = node.replace("room:", "");
+                        const r = rooms.find(item => item.id === rId);
+                        const rFloor = r ? this.getItemFloorIndex(r) : 0;
+                        const pt = roomCentroids.get(rId);
+                        if (pt) {
+                            const w = this.toWorldCoords(pt[0], pt[1]);
+                            const pathRoom = rooms.find(item => item.id === rId);
+                            const level = pathRoom ? this.getItemFloorIndex(pathRoom) : 0;
+                            pathPoints.push(new THREE.Vector3(w.x, this.getLevelElevation(level) + 0.08, w.z));
+                        }
+                    } else if (node.startsWith("door:")) {
+                        const dId = node.replace("door:", "");
+                        const d = doors.find(item => item.id === dId);
+                        if (d && d.center) {
+                            const dFloor = Number(d.floorIndex ?? d.level) || 0;
+                            const w = this.toWorldCoords(d.center[0], d.center[1]);
+                            const level = this.getItemFloorIndex(d);
+                            pathPoints.push(new THREE.Vector3(w.x, this.getLevelElevation(level) + 0.08, w.z));
+                        }
+                    }
+                });
+
+                // Extend path straight through exit door directly to exterior safe assembly beacon
+                const bestExitDoor = doors.find(item => item.id === exitDoorId);
+                if (bestExitDoor && bestExitDoor.center) {
+                    const { outDx, outDz } = getBeaconOffset(bestExitDoor, 0);
+                    const bWorld = this.toWorldCoords(bestExitDoor.center[0] + outDx, bestExitDoor.center[1] + outDz);
+                    pathPoints.push(new THREE.Vector3(bWorld.x, this.getLevelElevation(0) + 0.08, bWorld.z));
+                }
+
+                if (pathPoints.length >= 2) {
+                    const curve = new THREE.CatmullRomCurve3(pathPoints, false, "chordal", 0.1);
+                    const tubeGeom = new THREE.TubeGeometry(curve, Math.max(16, pathPoints.length * 8), 0.045, 6, false);
+                    const mesh = new THREE.Mesh(tubeGeom, egressMaterial);
+                    group.add(mesh);
+
+                    routedRoomsCount++;
+                    totalTravelDist += minExitDist;
+                    if (minExitDist > maxTravelDist) maxTravelDist = minExitDist;
+                }
+            }
+        });
+
+        // 4. Place 3D wall-mounted illuminated EXIT signs and exterior safe assembly beacons
+        exitDoors.forEach(d => {
+            if (!d.center) return;
+            // Only place beacon and sign for exits that actually receive evacuation traffic!
+            if (!usedExitDoorIds.has(d.id)) return;
+
+            const w = this.toWorldCoords(d.center[0], d.center[1]);
+            const floorIndex = Number(d.floorIndex ?? d.level) || 0;
+            const floorElev = this.getLevelElevation(floorIndex);
+            const doorRotation = this.getOpeningRotation(d, floorIndex);
+
+            // Architectural EXIT box sign mounted above the door lintel
+            const signGroup = new THREE.Group();
+            signGroup.position.set(w.x, floorElev + Math.min(2.45, this.wallHeight - 0.35), w.z);
+            signGroup.rotation.y = doorRotation;
+
+            const signCanvas = document.createElement("canvas");
+            signCanvas.width = 256;
+            signCanvas.height = 96;
+            const sCtx = signCanvas.getContext("2d");
+            sCtx.fillStyle = "#E7E3DA";
+            sCtx.fillRect(0, 0, 256, 96);
+            sCtx.lineWidth = 4;
+            sCtx.strokeStyle = "#9B3418";
+            sCtx.strokeRect(4, 4, 248, 88);
+            sCtx.fillStyle = "#9B3418";
+            sCtx.font = "bold 38px 'Azeret Mono', monospace";
+            sCtx.textAlign = "center";
+            sCtx.textBaseline = "middle";
+            sCtx.fillText(hasExplicitExits ? "EXIT" : "EXIT?", 128, 48);
+
+            const signTex = new THREE.CanvasTexture(signCanvas);
+            const signFaceMat = new THREE.MeshStandardMaterial({
+                map: signTex,
+                emissive: 0x9B3418,
+                emissiveMap: signTex,
+                emissiveIntensity: 0.5,
+                roughness: 0.5,
+                metalness: 0.1,
+            });
+            const signHousingMat = new THREE.MeshStandardMaterial({
+                color: 0x1A1917,
+                roughness: 0.6,
+                metalness: 0.4
+            });
+
+            const signMaterials = [
+                signHousingMat, signHousingMat,
+                signHousingMat, signHousingMat,
+                signFaceMat, signFaceMat
+            ];
+            const signBox = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.24, 0.08), signMaterials);
+            signBox.castShadow = true;
+            signGroup.add(signBox);
+
+            const exitLight = new THREE.PointLight(0x9B3418, 0.8, 5, 1.8);
+            exitLight.position.set(0, -0.2, 0);
+            signGroup.add(exitLight);
+            group.add(signGroup);
+
+            // 5. Exterior Safe Assembly Point beacon in the outside yard
+            const { outDx, outDz } = getBeaconOffset(d, floorIndex);
+            const beaconWorld = this.toWorldCoords(d.center[0] + outDx, d.center[1] + outDz);
+            const beaconGroup = new THREE.Group();
+            beaconGroup.position.set(beaconWorld.x, floorElev + 0.02, beaconWorld.z);
+
+            const ringGeo = new THREE.RingGeometry(0.35, 0.65, 32);
+            const ringMat = new THREE.MeshStandardMaterial({
+                color: 0x9B3418,
+                emissive: 0x9B3418,
+                emissiveIntensity: 0.7,
+                side: THREE.DoubleSide
+            });
+            const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+            ringMesh.rotation.x = -Math.PI / 2;
+            beaconGroup.add(ringMesh);
+
+            const postGeo = new THREE.CylinderGeometry(0.03, 0.03, 1.2, 12);
+            const postMat = new THREE.MeshStandardMaterial({ color: 0x1A1917, metalness: 0.5, roughness: 0.5 });
+            const post = new THREE.Mesh(postGeo, postMat);
+            post.position.y = 0.6;
+            beaconGroup.add(post);
+
+            const orbGeo = new THREE.SphereGeometry(0.12, 16, 16);
+            const orbMat = new THREE.MeshStandardMaterial({
+                color: 0x9B3418,
+                emissive: 0x9B3418,
+                emissiveIntensity: 0.8,
+                roughness: 0.3
+            });
+            const orb = new THREE.Mesh(orbGeo, orbMat);
+            orb.position.y = 1.25;
+            beaconGroup.add(orb);
+
+            const outdoorLight = new THREE.PointLight(0x9B3418, 0.9, 6, 1.5);
+            outdoorLight.position.y = 1.3;
+            beaconGroup.add(outdoorLight);
+
+            group.add(beaconGroup);
+        });
+
+        // Dim scene lighting to emergency power level
+        if (this.ambientLight) this.ambientLight.intensity = 0.24;
+        if (this.keyLight) this.keyLight.intensity = 0.42;
+
+        return {
+            success: true,
+            exitCount: exitDoors.length,
+            roomCount: routedRoomsCount,
+            totalRooms: rooms.length,
+            maxDistance: maxTravelDist.toFixed(1),
+            avgDistance: (totalTravelDist / Math.max(1, routedRoomsCount)).toFixed(1),
+            exitSource: hasExplicitExits ? "Scene-marked exterior openings" : "Perimeter candidates inferred; verify",
+            note: "Graph connectivity and estimated route lengths only; not an evacuation, code-compliance, or safety assessment."
+        };
+    }
+
+    clearEvacuation() {
+        this.evacuationActive = false;
+        const group = this.groups.evacuation;
+        while (group.children.length > 0) {
+            const obj = group.children[0];
+            this.disposeObjectResources(obj);
+            group.remove(obj);
+        }
+        if (this.evacuationTexture) {
+            this.evacuationTexture.dispose();
+            this.evacuationTexture = null;
+        }
+        this.setTimeOfDay(this.timeOfDay || 13.0);
+    }
+
+    resetCameraView() {
+        this.setPerspectiveView();
+    }
+
+    panWithArrowKeys(event) {
+        if (this.walkthroughActive || !this.camera || !this.controls || event.altKey || event.ctrlKey || event.metaKey) return;
+        if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
+
+        const target = event.target;
+        const tagName = target && target.tagName ? target.tagName.toLowerCase() : "";
+        if (tagName === "input" || tagName === "textarea" || tagName === "select" || target.isContentEditable) return;
+
+        event.preventDefault();
+
+        // Pan parallel to the floor so arrow keys move across the plan instead of orbiting it.
+        const forward = new THREE.Vector3(
+            this.controls.target.x - this.camera.position.x,
+            0,
+            this.controls.target.z - this.camera.position.z
+        ).normalize();
+        const right = new THREE.Vector3(-forward.z, 0, forward.x);
+        const planSpan = Math.max(this.bounds ? this.bounds.width : 12, this.bounds ? this.bounds.height : 12);
+        const step = Math.max(0.25, Math.min(planSpan * 0.04, 3)) * (event.shiftKey ? 3 : 1);
+        const movement = new THREE.Vector3();
+
+        if (event.key === "ArrowUp") movement.copy(forward);
+        if (event.key === "ArrowDown") movement.copy(forward).negate();
+        if (event.key === "ArrowRight") movement.copy(right);
+        if (event.key === "ArrowLeft") movement.copy(right).negate();
+
+        movement.multiplyScalar(step);
+        this.camera.position.add(movement);
+        this.controls.target.add(movement);
+        this.controls.update();
+    }
+
+    /**
+     * Layer Visibility Toggles
+     */
+    toggleLayer(layerName, isVisible) {
+        this.layerVisibility[layerName] = isVisible;
+        if (this.groups[layerName]) {
+            this.groups[layerName].visible = isVisible;
+        }
+        this.floorGroups.forEach(group => {
+            const layer = group.getObjectByName(layerName);
+            if (layer) layer.visible = isVisible;
+        });
+        this.refreshSelectableMeshes();
+    }
+
+    toggleWalkthroughMode(forceState) {
+        const enable = forceState === undefined ? !this.walkthroughActive : Boolean(forceState);
+        if (enable === this.walkthroughActive) return this.walkthroughActive;
+        if (!enable) {
+            this.walkthroughActive = false;
+            this.walkthroughKeys.clear();
+            this.walkthroughVelocity.set(0, 0, 0);
+            this.walkthroughTransition = null;
+            this.walkthroughMouseDown = false;
+            this.walkthroughPointerLocked = false;
+            if (this.controls) this.controls.enabled = true;
+            this.container.classList.remove("walkthrough-active");
+            this.walkthroughHud?.classList.add("hidden");
+            if (document.pointerLockElement === this.renderer.domElement) document.exitPointerLock();
+            this.setIsometricView();
+            if (this.onWalkthroughChange) this.onWalkthroughChange(false);
+            return false;
+        }
+
+        const rooms = this.currentSceneData?.rooms || [];
+        if (!rooms.length) return false;
+        // Keep connected stories visible while walking so the stair flight and its landing remain usable.
+        if (this.walkthroughStairLinks.length && this.visibleLevel !== null) {
+            this.visibleLevel = null;
+            this.updateVisibleLevels();
+            this.onWalkthroughStoryViewChange?.("all");
+        }
+        const allowedRooms = this.visibleLevel === null
+            ? rooms
+            : rooms.filter(room => this.getItemFloorIndex(room) === this.visibleLevel);
+        const preferred = allowedRooms.filter(room => ["corridor", "entrance"].includes(String(room.type || "").toLowerCase()));
+        const candidates = preferred.length ? preferred : allowedRooms;
+        let room = null;
+        let interiorPoint = null;
+        for (const candidate of candidates.slice().sort((a, b) => this.getPolygonArea(b.polygon) - this.getPolygonArea(a.polygon))) {
+            this.walkthroughFloorIndex = this.getItemFloorIndex(candidate);
+            interiorPoint = this.getWalkthroughInteriorPoint(candidate);
+            if (interiorPoint) { room = candidate; break; }
+        }
+        if (!room || !interiorPoint) return false;
+
+        const [planX, planY] = interiorPoint;
+        const world = this.toWorldCoords(planX, planY);
+        this.walkthroughFloorIndex = this.getItemFloorIndex(room);
+        this.walkthroughYaw = this.getWalkthroughYaw(room, [planX, planY]);
+        this.walkthroughPitch = 0;
+        this.setActiveCamera(this.cameraPerspective, false);
+        this.cameraPerspective.position.set(world.x, this.getLevelElevation(this.walkthroughFloorIndex) + this.walkthroughEyeHeight, world.z);
+        this.cameraPerspective.rotation.order = "YXZ";
+        this.cameraPerspective.rotation.set(0, this.walkthroughYaw, 0);
+        this.is2DMode = false;
+        this.isEyeLevelView = true;
+        this.walkthroughActive = true;
+        this.walkthroughPointerLocked = false;
+        this.controls.enabled = false;
+        this.container.classList.add("walkthrough-active");
+        this.walkthroughHud?.classList.remove("hidden");
+        this.walkthroughHintElement && (this.walkthroughHintElement.textContent = "WASD / arrows to walk · drag to look · E to interact · Esc to exit");
+        this.camera.updateMatrixWorld();
+        this.updateRoomLabelVisibility(1 / 60);
+        if (this.onWalkthroughChange) this.onWalkthroughChange(true);
+        try {
+            const request = this.renderer.domElement.requestPointerLock?.();
+            if (request && typeof request.catch === "function") request.catch(() => {});
+        } catch (_error) {
+            // Mouse drag fallback remains available when pointer lock is denied.
+        }
+        return true;
+    }
+
+    onPointerLockChange() {
+        if (!this.walkthroughActive) return;
+        const hasLock = document.pointerLockElement === this.renderer.domElement;
+        if (hasLock) {
+            this.walkthroughPointerLocked = true;
+            return;
+        }
+        if (this.walkthroughPointerLocked) this.toggleWalkthroughMode(false);
+    }
+
+    onWalkthroughMouseMove(event) {
+        if (!this.walkthroughActive) return;
+        const locked = document.pointerLockElement === this.renderer.domElement;
+        if (!locked) return;
+        this.applyWalkthroughLook(event.movementX, event.movementY);
+    }
+
+    onWalkthroughPointerDown(event) {
+        if (!this.walkthroughActive) return;
+        this.walkthroughMouseDown = true;
+        this.walkthroughLastPointer = [event.clientX, event.clientY];
+        try { this.renderer.domElement.setPointerCapture(event.pointerId); } catch (_error) {}
+    }
+
+    onWalkthroughPointerMove(event) {
+        if (!this.walkthroughActive || !this.walkthroughMouseDown
+            || document.pointerLockElement === this.renderer.domElement || !this.walkthroughLastPointer) return;
+        const deltaX = event.clientX - this.walkthroughLastPointer[0];
+        const deltaY = event.clientY - this.walkthroughLastPointer[1];
+        this.walkthroughLastPointer = [event.clientX, event.clientY];
+        this.applyWalkthroughLook(deltaX, deltaY);
+    }
+
+    applyWalkthroughLook(deltaX, deltaY) {
+        this.walkthroughYaw -= deltaX * 0.0025;
+        this.walkthroughPitch = THREE.MathUtils.clamp(
+            this.walkthroughPitch - deltaY * 0.002,
+            -Math.PI / 2 + 0.05,
+            Math.PI / 2 - 0.05
+        );
+        this.camera.rotation.set(this.walkthroughPitch, this.walkthroughYaw, 0, "YXZ");
+    }
+
+    onWalkthroughKeyDown(event) {
+        if (!this.walkthroughActive) return;
+        const key = event.key.toLowerCase();
+        const target = event.target;
+        if (target && (target.isContentEditable || ["input", "textarea", "select"].includes(target.tagName?.toLowerCase()))) return;
+        if (key === "e" || event.code === "KeyE") {
+            event.preventDefault();
+            if (event.repeat) return;
+            this.tryWalkthroughInteraction();
+            return;
+        }
+        if (!["w", "a", "s", "d", "shift", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(key)) return;
+        event.preventDefault();
+        this.setWalkthroughKey(key, true);
+    }
+
+    onWalkthroughKeyUp(event) {
+        this.setWalkthroughKey(event.key.toLowerCase(), false);
+    }
+
+    setWalkthroughKey(key, pressed) {
+        const normalized = String(key).toLowerCase();
+        if (!["w", "a", "s", "d", "shift", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(normalized)) return;
+        if (pressed && this.walkthroughActive) this.walkthroughKeys.add(normalized);
+        else this.walkthroughKeys.delete(normalized);
+    }
+
+    getWalkthroughInteriorPoint(room) {
+        const polygon = room.polygon || [];
+        if (polygon.length < 3) return null;
+        const xs = polygon.map(point => point[0]), ys = polygon.map(point => point[1]);
+        const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+        const span = Math.max(maxX - minX, maxY - minY);
+        const step = Math.max(0.12, Math.min(0.22, span / 32));
+        let best = null;
+        for (let y = minY + step / 2; y < maxY; y += step) {
+            for (let x = minX + step / 2; x < maxX; x += step) {
+                const point = [x, y];
+                if (!this.isPlanPointInRing(point, polygon)) continue;
+                if (this.getRoomHoles(room).some(hole => this.isPlanPointInRing(point, hole))) continue;
+                const world = this.toWorldCoords(x, y);
+                if (this.isWalkPositionBlocked(world.x, world.z)) continue;
+                const roomClearance = this.planPointRingClearance(point, polygon);
+                const wallClearance = (this.currentSceneData?.walls || [])
+                    .filter(wall => this.getItemFloorIndex(wall) === this.walkthroughFloorIndex && wall.polygon?.length >= 3)
+                    .reduce((minimum, wall) => Math.min(minimum, this.planPointRingClearance(point, wall.polygon)), Infinity);
+                const clearance = Math.min(roomClearance, wallClearance);
+                if (!best || clearance > best.clearance) best = { point: [x, y], clearance };
+            }
+        }
+        return best?.point || null;
+    }
+
+    getWalkthroughYaw(room, planPoint) {
+        const origin = this.toWorldCoords(planPoint[0], planPoint[1]);
+        let best = null;
+        const distances = [0.7, 1.2, 1.8];
+        for (let index = 0; index < 24; index++) {
+            const yaw = index * Math.PI * 2 / 24;
+            const forwardX = -Math.sin(yaw);
+            const forwardZ = -Math.cos(yaw);
+            for (const distance of distances) {
+                const candidateWorldX = origin.x + forwardX * distance;
+                const candidateWorldZ = origin.z + forwardZ * distance;
+                const candidatePlan = [candidateWorldX + this.centerOffset.x, candidateWorldZ + this.centerOffset.y];
+                if (!this.isPlanPointInRing(candidatePlan, room.polygon || [])) continue;
+                if (this.getRoomHoles(room).some(hole => this.isPlanPointInRing(candidatePlan, hole))) continue;
+                if (this.isWalkPositionBlocked(candidateWorldX, candidateWorldZ)) continue;
+                const clearance = this.planPointRingClearance(candidatePlan, room.polygon || []);
+                const score = clearance + distance * 0.015;
+                if (!best || score > best.score) best = { yaw, score };
+            }
+        }
+        return best?.yaw ?? 0;
+    }
+
+    isPlanPointInRing(point, ring) {
+        if (!Array.isArray(ring) || ring.length < 3) return false;
+        let inside = false;
+        for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+            const a = ring[i], b = ring[j];
+            if (((a[1] > point[1]) !== (b[1] > point[1]))
+                && point[0] < (b[0] - a[0]) * (point[1] - a[1]) / ((b[1] - a[1]) || 1e-9) + a[0]) inside = !inside;
+        }
+        return inside;
+    }
+
+    planPointRingClearance(point, ring) {
+        let minimum = Infinity;
+        for (let index = 0; index < ring.length; index++) {
+            const a = ring[index], b = ring[(index + 1) % ring.length];
+            const dx = b[0] - a[0], dy = b[1] - a[1];
+            const lengthSquared = dx * dx + dy * dy;
+            const t = lengthSquared
+                ? THREE.MathUtils.clamp(((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / lengthSquared, 0, 1)
+                : 0;
+            minimum = Math.min(minimum, Math.hypot(point[0] - (a[0] + t * dx), point[1] - (a[1] + t * dy)));
+        }
+        return minimum;
+    }
+
+    findNearbyWalkthroughInteraction() {
+        if (!this.walkthroughActive || this.walkthroughTransition) return null;
+        const planX = this.camera.position.x + this.centerOffset.x;
+        const planY = this.camera.position.z + this.centerOffset.y;
+        const nearbyDoors = this.walkthroughDoors
+            .filter(door => door.level === this.walkthroughFloorIndex)
+            .map(door => ({ door, distance: Math.hypot(door.data.center[0] - planX, door.data.center[1] - planY) }))
+            .filter(item => item.distance <= Math.max(1.15, item.door.width / 2 + 0.55))
+            .sort((a, b) => a.distance - b.distance);
+        const closedDoor = nearbyDoors.find(item => !item.door.group.userData.open);
+        if (closedDoor) return { type: "door", ...closedDoor };
+
+        for (const link of this.walkthroughStairLinks) {
+            let endpoint, nextLevel;
+            if (link.lowerLevel === this.walkthroughFloorIndex) {
+                endpoint = link.lowerPoint;
+                nextLevel = link.upperLevel;
+            } else if (link.upperLevel === this.walkthroughFloorIndex) {
+                endpoint = link.upperPoint;
+                nextLevel = link.lowerLevel;
+            } else continue;
+            const distanceToLanding = Math.hypot(endpoint.x - this.camera.position.x, endpoint.z - this.camera.position.z);
+            const planPoint = [planX, planY];
+            const isInsideStairwell = (this.currentSceneData?.rooms || []).some(room =>
+                this.getItemFloorIndex(room) === this.walkthroughFloorIndex
+                && ["stair", "stairs"].includes(String(room.type || "").toLowerCase())
+                && this.isPlanPointInRing(planPoint, room.polygon || [])
+            );
+            // The stair room itself is an interaction zone; the generous landing radius also
+            // covers small differences between detected room bounds and generated stair geometry.
+            if (distanceToLanding < 2.1 || isInsideStairwell) {
+                return { type: "stairs", link, nextLevel };
+            }
+        }
+        const openDoor = nearbyDoors[0];
+        if (openDoor) return { type: "door", ...openDoor };
+        return null;
+    }
+
+    tryWalkthroughInteraction() {
+        const interaction = this.walkthroughNearbyInteraction || this.findNearbyWalkthroughInteraction();
+        if (!interaction) {
+            if (this.walkthroughHintElement) this.walkthroughHintElement.textContent = "Move close to a door or stair landing to interact.";
+            return;
+        }
+        if (interaction.type === "door") {
+            const { group, data } = interaction.door;
+            group.userData.open = !group.userData.open;
+            group.userData.targetAngle = group.userData.open ? Math.PI / 2 : 0;
+            data.open = group.userData.open;
+            this.updateWalkthroughInteractionHint();
+            return;
+        }
+        const { link, nextLevel } = interaction;
+        const ascending = nextLevel > this.walkthroughFloorIndex;
+        const points = ascending
+            ? [link.lowerPoint, link.middlePoint, link.upperPoint]
+            : [link.upperPoint, link.middlePoint, link.lowerPoint];
+        const curve = new THREE.CatmullRomCurve3(points.map(point => point.clone()), false, "centripetal", 0.25);
+        this.walkthroughTransition = {
+            curve, elapsed: 0, duration: 2.4, fromFloor: this.walkthroughFloorIndex,
+            toFloor: nextLevel, direction: ascending ? 1 : -1,
+        };
+        this.walkthroughKeys.clear();
+        this.walkthroughVelocity.set(0, 0, 0);
+        this.walkthroughNearbyInteraction = null;
+        if (this.visibleLevel !== null) {
+            this.visibleLevel = null;
+            this.updateVisibleLevels();
+            this.onWalkthroughLevelChange?.(null);
+        }
+        if (this.walkthroughHintElement) this.walkthroughHintElement.textContent = ascending ? "Walking upstairs…" : "Walking downstairs…";
+    }
+
+    updateWalkthrough(deltaSeconds) {
+        if (!this.walkthroughActive) return;
+        const delta = Math.min(deltaSeconds, 0.05);
+        if (this.walkthroughTransition) {
+            const transition = this.walkthroughTransition;
+            transition.elapsed = Math.min(transition.duration, transition.elapsed + delta);
+            const t = transition.elapsed / transition.duration;
+            const eased = t * t * (3 - 2 * t);
+            this.camera.position.copy(transition.curve.getPoint(eased));
+            const tangent = transition.curve.getTangent(Math.min(0.99, Math.max(0.01, eased)));
+            this.walkthroughYaw = Math.atan2(-tangent.x, -tangent.z);
+            this.walkthroughPitch = Math.atan2(tangent.y, Math.hypot(tangent.x, tangent.z));
+            this.camera.rotation.set(this.walkthroughPitch, this.walkthroughYaw, 0, "YXZ");
+            if (t >= 1) {
+                this.walkthroughFloorIndex = transition.toFloor;
+                this.camera.position.y = this.getLevelElevation(this.walkthroughFloorIndex) + this.walkthroughEyeHeight;
+                this.walkthroughTransition = null;
+                this.walkthroughPitch = 0;
+                this.camera.rotation.set(0, this.walkthroughYaw, 0, "YXZ");
+                this.onWalkthroughFloorChanged?.(this.walkthroughFloorIndex);
+            }
+            return;
+        }
+
+        const forwardAmount = (this.walkthroughKeys.has("w") || this.walkthroughKeys.has("arrowup") ? 1 : 0)
+            - (this.walkthroughKeys.has("s") || this.walkthroughKeys.has("arrowdown") ? 1 : 0);
+        const sideAmount = (this.walkthroughKeys.has("d") || this.walkthroughKeys.has("arrowright") ? 1 : 0)
+            - (this.walkthroughKeys.has("a") || this.walkthroughKeys.has("arrowleft") ? 1 : 0);
+        const forward = new THREE.Vector3(-Math.sin(this.walkthroughYaw), 0, -Math.cos(this.walkthroughYaw));
+        const right = new THREE.Vector3(-forward.z, 0, forward.x);
+        const desired = new THREE.Vector3().addScaledVector(forward, forwardAmount).addScaledVector(right, sideAmount);
+        if (desired.lengthSq()) desired.normalize().multiplyScalar(this.walkthroughKeys.has("shift") ? 3.35 : 1.85);
+        const blend = 1 - Math.exp(-(desired.lengthSq() ? 8.5 : 11.0) * delta);
+        this.walkthroughVelocity.x = THREE.MathUtils.lerp(this.walkthroughVelocity.x, desired.x, blend);
+        this.walkthroughVelocity.z = THREE.MathUtils.lerp(this.walkthroughVelocity.z, desired.z, blend);
+
+        const distance = Math.hypot(this.walkthroughVelocity.x, this.walkthroughVelocity.z) * delta;
+        const substeps = Math.max(1, Math.ceil(distance / 0.075));
+        const stepX = this.walkthroughVelocity.x * delta / substeps;
+        const stepZ = this.walkthroughVelocity.z * delta / substeps;
+        for (let step = 0; step < substeps; step++) {
+            const nextX = this.camera.position.x + stepX;
+            const nextZ = this.camera.position.z + stepZ;
+            if (!this.isWalkPositionBlocked(nextX, nextZ)) {
+                this.camera.position.x = nextX;
+                this.camera.position.z = nextZ;
+            } else {
+                if (this.isWalkPositionBlocked(nextX, this.camera.position.z)) this.walkthroughVelocity.x = 0;
+                else this.camera.position.x = nextX;
+                if (this.isWalkPositionBlocked(this.camera.position.x, nextZ)) this.walkthroughVelocity.z = 0;
+                else this.camera.position.z = nextZ;
+            }
+        }
+        this.camera.position.y = this.getLevelElevation(this.walkthroughFloorIndex) + this.walkthroughEyeHeight;
+        const speed = Math.hypot(this.walkthroughVelocity.x, this.walkthroughVelocity.z);
+        if (speed > 0.08) {
+            this.walkthroughBobPhase += delta * Math.min(1.7, speed / 1.85);
+            this.camera.position.y += Math.sin(this.walkthroughBobPhase * Math.PI * 2) * 0.018 * Math.min(1, speed / 1.85);
+        }
+        this.walkthroughNearbyInteraction = this.findNearbyWalkthroughInteraction();
+        this.updateWalkthroughInteractionHint();
+    }
+
+    updateWalkthroughInteractionHint() {
+        if (!this.walkthroughHintElement) return;
+        if (!this.walkthroughNearbyInteraction) {
+            const isInside = this.isInsideBuilding(this.camera.position.x, this.camera.position.z);
+            if (!isInside && this.walkthroughFloorIndex === 0) {
+                this.walkthroughHintElement.textContent = "Outside Yard · WASD to explore exterior · Drag to look · Walk to door or click 'Go Inside'";
+            } else {
+                this.walkthroughHintElement.textContent = "WASD / arrows to walk · drag to look · E to interact · Esc to exit";
+            }
+        } else if (this.walkthroughNearbyInteraction.type === "door") {
+            const isOpen = this.walkthroughNearbyInteraction.door.group.userData.open;
+            this.walkthroughHintElement.textContent = `Press E to ${isOpen ? "close" : "open"} door`;
+        } else {
+            this.walkthroughHintElement.textContent = this.walkthroughNearbyInteraction.nextLevel > this.walkthroughFloorIndex
+                ? "Press E to go upstairs"
+                : "Press E to go downstairs";
+        }
+    }
+
+    isInsideBuilding(worldX, worldZ) {
+        const px = worldX + this.centerOffset.x;
+        const py = worldZ + this.centerOffset.y;
+        return (this.currentSceneData?.rooms || []).some(room => {
+            if (this.getItemFloorIndex(room) !== this.walkthroughFloorIndex) return false;
+            return this.isPlanPointInRing([px, py], room.polygon || []);
+        });
+    }
+
+    walkOutside() {
+        if (!this.walkthroughActive) {
+            this.toggleWalkthroughMode(true);
+        }
+        if (this.walkthroughFloorIndex !== 0) {
+            this.walkthroughFloorIndex = 0;
+            this.camera.position.y = this.getLevelElevation(0) + this.walkthroughEyeHeight;
+            this.onWalkthroughFloorChanged?.(0);
+        }
+
+        const doors = this.currentSceneData?.doors || [];
+        const extDoor = doors.find(d => (d.connects || []).includes("outside") && (d.id === "d8" || (d.center && d.center[1] > 9)))
+            || doors.find(d => (d.connects || []).includes("outside"))
+            || doors[0];
+
+        if (extDoor && extDoor.center) {
+            const doorWorld = this.toWorldCoords(extDoor.center[0], extDoor.center[1]);
+            const isSouthWall = extDoor.center[1] > 9.0;
+            let posX, posZ, targetYaw;
+
+            if (isSouthWall) {
+                // Standing in south front yard looking North towards the main entrance facade
+                posX = doorWorld.x;
+                posZ = doorWorld.z + 5.5;
+                targetYaw = 0; // Looking towards -Z (North)
+            } else {
+                // Standing in west yard looking East towards the building
+                posX = doorWorld.x - 5.5;
+                posZ = doorWorld.z;
+                targetYaw = -Math.PI / 2; // Looking towards +X (East)
+            }
+
+            this.camera.position.set(posX, this.getLevelElevation(0) + this.walkthroughEyeHeight, posZ);
+            this.walkthroughYaw = targetYaw;
+            this.walkthroughPitch = 0.04;
+            this.camera.rotation.order = "YXZ";
+            this.camera.rotation.set(0, this.walkthroughYaw, 0);
+            this.camera.updateMatrixWorld();
+            if (this.walkthroughHintElement) {
+                this.walkthroughHintElement.textContent = "Outside Yard · WASD to explore exterior · Drag to look · Walk to door or click 'Go Inside'";
+            }
+        }
+    }
+
+    walkInside() {
+        if (!this.walkthroughActive) {
+            this.toggleWalkthroughMode(true);
+        }
+        if (this.walkthroughFloorIndex !== 0) {
+            this.walkthroughFloorIndex = 0;
+            this.camera.position.y = this.getLevelElevation(0) + this.walkthroughEyeHeight;
+            this.onWalkthroughFloorChanged?.(0);
+        }
+
+        const rooms = this.currentSceneData?.rooms || [];
+        const lobby = rooms.find(r => r.type === "entrance" || r.id === "r6")
+            || rooms.find(r => r.type === "corridor")
+            || rooms[0];
+
+        if (lobby && lobby.polygon) {
+            const centroid = this.getWalkthroughInteriorPoint(lobby) || this.getPolygonCentroid(lobby.polygon);
+            const world = this.toWorldCoords(centroid[0], centroid[1]);
+            this.camera.position.set(world.x, this.getLevelElevation(0) + this.walkthroughEyeHeight, world.z);
+            this.walkthroughYaw = this.getWalkthroughYaw(lobby, centroid);
+            this.walkthroughPitch = 0;
+            this.camera.rotation.order = "YXZ";
+            this.camera.rotation.set(0, this.walkthroughYaw, 0);
+            this.camera.updateMatrixWorld();
+            if (this.walkthroughHintElement) {
+                this.walkthroughHintElement.textContent = "Inside Entrance Lobby · WASD to walk · Drag to look · Walk through exit door to view outside";
+            }
+        }
+    }
+
+    updateWalkthroughDoors(deltaSeconds) {
+        const blend = 1 - Math.exp(-9 * Math.min(deltaSeconds, 0.05));
+        this.walkthroughDoors.forEach(({ group }) => {
+            const hinge = group.userData.hinge;
+            hinge.rotation.y = THREE.MathUtils.lerp(hinge.rotation.y, group.userData.targetAngle, blend);
+        });
+    }
+
+    isWalkPositionBlocked(worldX, worldZ) {
+        const px = worldX + this.centerOffset.x;
+        const py = worldZ + this.centerOffset.y;
+        const radius = 0.18;
+        const pointRingDistance = (point, ring) => {
+            let minimum = Infinity;
+            for (let index = 0; index < ring.length; index++) {
+                const a = ring[index], b = ring[(index + 1) % ring.length];
+                const dx = b[0] - a[0], dy = b[1] - a[1];
+                const lengthSq = dx * dx + dy * dy;
+                const t = lengthSq
+                    ? THREE.MathUtils.clamp(((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / lengthSq, 0, 1)
+                    : 0;
+                minimum = Math.min(minimum, Math.hypot(point[0] - (a[0] + t * dx), point[1] - (a[1] + t * dy)));
+            }
+            return minimum;
+        };
+        const onWalkableRoom = (this.currentSceneData?.rooms || []).some(room => {
+            if (this.getItemFloorIndex(room) !== this.walkthroughFloorIndex) return false;
+            const polygon = room.polygon || [];
+            if (polygon.length < 3) return false;
+            const point = [px, py];
+            if (this.getRoomHoles(room).some(hole => this.isPlanPointInRing(point, hole))) return false;
+            // Floor masks leave a narrow gap at many door thresholds. Let the player's center
+            // bridge that gap; wall and closed-door checks below still prevent walking through solids.
+            return this.isPlanPointInRing(point, polygon) || pointRingDistance(point, polygon) <= radius + 0.07;
+        });
+        if (!onWalkableRoom) {
+            if (this.walkthroughFloorIndex === 0) {
+                // On ground floor (level 0), allow walking freely in the exterior yard around the house.
+                const bounds = this.bounds || { minX: 0, maxX: 20, minY: 0, maxY: 15 };
+                const yardMargin = 40;
+                const inYard = px >= bounds.minX - yardMargin && px <= bounds.maxX + yardMargin &&
+                               py >= bounds.minY - yardMargin && py <= bounds.maxY + yardMargin;
+                if (!inYard) return true;
+            } else {
+                // On upper floors, restrain to walkable indoor rooms and stair landings
+                return true;
+            }
+        }
+
+        const pointSegmentDistance = (point, a, b) => {
+            const dx = b[0] - a[0], dy = b[1] - a[1];
+            const lengthSq = dx * dx + dy * dy;
+            const t = lengthSq ? THREE.MathUtils.clamp(((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / lengthSq, 0, 1) : 0;
+            return Math.hypot(point[0] - (a[0] + t * dx), point[1] - (a[1] + t * dy));
+        };
+        return (this.currentSceneData?.walls || []).some(wall => {
+            if (this.getItemFloorIndex(wall) !== this.walkthroughFloorIndex) return false;
+            const polygon = wall.polygon || [];
+            if (polygon.length < 3) return false;
+            const pointInsideRing = ring => {
+                let inside = false;
+                for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+                    const a = ring[i], b = ring[j];
+                    if (((a[1] > py) !== (b[1] > py))
+                        && px < (b[0] - a[0]) * (py - a[1]) / ((b[1] - a[1]) || 1e-9) + a[0]) inside = !inside;
+                    if (pointSegmentDistance([px, py], a, b) < radius) return true;
+                }
+                return inside;
+            };
+            if (pointInsideRing(polygon)) {
+                // Segmentation can represent a doorway as a hole in a wall mask.
+                const inOpening = (wall.holes || []).some(hole => hole.length >= 3 && pointInsideRing(hole));
+                return !inOpening;
+            }
+            return false;
+        }) || this.walkthroughDoors.some(({ group, level, width }) => {
+            if (level !== this.walkthroughFloorIndex || group.userData.open) return false;
+            const dx = px - group.userData.planCenter[0];
+            const dy = py - group.userData.planCenter[1];
+            const angle = group.rotation.y;
+            const along = dx * Math.cos(angle) - dy * Math.sin(angle);
+            const across = dx * Math.sin(angle) + dy * Math.cos(angle);
+            return Math.abs(along) <= width / 2 + radius
+                && Math.abs(across) <= group.userData.wallThickness / 2 + radius;
+        });
+    }
+
+    toggleMeasurementMode(forceState) {
+        this.measurementActive = forceState === undefined ? !this.measurementActive : Boolean(forceState);
+        if (this.measurementActive) this.onMeasurementUpdate?.("Click a first floor or wall point in the 3D view.");
+        if (this.onMeasurementModeChange) this.onMeasurementModeChange(this.measurementActive);
+        return this.measurementActive;
+    }
+
+    clearMeasurement() {
+        const group = this.groups.measurements;
+        while (group?.children.length) {
+            const object = group.children[0];
+            this.disposeObjectResources(object);
+            group.remove(object);
+        }
+        this.measurementPoints = [];
+    }
+
+    addMeasurementMarker(point) {
+        const marker = new THREE.Mesh(
+            new THREE.SphereGeometry(0.08, 12, 8),
+            new THREE.MeshStandardMaterial({ color: 0x9B3418, emissive: 0x9B3418, emissiveIntensity: 0.6 })
+        );
+        marker.position.copy(point);
+        this.groups.measurements.add(marker);
+    }
+
+    handleMeasurementClick(intersection) {
+        if (this.measurementPoints.length >= 2) this.clearMeasurement();
+        const point = intersection.point.clone();
+        this.measurementPoints.push(point);
+        this.addMeasurementMarker(point);
+        if (this.measurementPoints.length === 1) {
+            this.onMeasurementUpdate?.("First point set. Click a second point.");
+            return;
+        }
+        const [start, end] = this.measurementPoints;
+        const geometry = new THREE.BufferGeometry().setFromPoints([start, end]);
+        const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: 0x9B3418, depthTest: false }));
+        this.groups.measurements.add(line);
+        this.onMeasurementUpdate?.(`Distance: ${start.distanceTo(end).toFixed(2)} m · click again to start another measurement.`);
+    }
+
+    /**
+     * Exports the rendered 3D architectural scene as a standard binary .GLB file.
+     * Can be opened in Blender, Windows 3D Viewer, Unity, Unreal Engine, etc.
+     */
+    exportGLB(filename = "floorplan3d_model.glb") {
+        if (!THREE.GLTFExporter) {
+            alert("GLTFExporter is not loaded.");
+            return;
+        }
+
+        // Build a clean export container including walls, floors, doors, and windows
+        const exportScene = new THREE.Scene();
+        if (this.camera) {
+            const camClone = this.camera.clone();
+            camClone.name = "ActiveCamera";
+            exportScene.add(camClone);
+        }
+        this.floorGroups.forEach(floorGroup => {
+            ["walls", "rooms", "doors", "windows", "furniture", "stairs"].forEach(layerName => {
+                if (layerName === "furniture" && !this.layerVisibility.furniture) return;
+                const layer = floorGroup.getObjectByName(layerName);
+                if (!layer) return;
+                layer.children.forEach(child => {
+                    if (child.isMesh || child.isGroup) exportScene.add(child.clone(true));
+                });
+            });
+        });
+
+        const exporter = new THREE.GLTFExporter();
+        exporter.parse(
+            exportScene,
+            (arrayBuffer) => {
+                if (arrayBuffer instanceof ArrayBuffer) {
+                    const blob = new Blob([arrayBuffer], { type: "model/gltf-binary" });
+                    const link = document.createElement("a");
+                    link.href = URL.createObjectURL(blob);
+                    link.download = filename;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+                } else {
+                    console.error("Export produced non-binary output:", arrayBuffer);
+                }
+            },
+            { binary: true, embedImages: true }
+        );
+    }
+
+    onWindowResize() {
+        if (!this.container || !this.renderer || !this.camera) return;
+        const width = this.container.clientWidth;
+        const height = this.container.clientHeight;
+        if (width <= 0 || height <= 0) return;
+        const aspect = width / height;
+
+        if (this.cameraPerspective) {
+            this.cameraPerspective.aspect = aspect;
+            this.cameraPerspective.updateProjectionMatrix();
+        }
+
+        if (this.cameraOrtho && this.orthoExtent) {
+            let halfW = this.orthoExtent.halfW;
+            let halfH = this.orthoExtent.halfH;
+            if (halfW / halfH > aspect) {
+                halfH = halfW / aspect;
+            } else {
+                halfW = halfH * aspect;
+            }
+            this.cameraOrtho.left = -halfW;
+            this.cameraOrtho.right = halfW;
+            this.cameraOrtho.top = halfH;
+            this.cameraOrtho.bottom = -halfH;
+            this.cameraOrtho.updateProjectionMatrix();
+        } else if (this.cameraOrtho) {
+            this.updateOrthoFrustum();
+        }
+
+        this.renderer.setSize(width, height);
+        this.updateRoomLabelVisibility(1 / 60);
+    }
+
+    updateRoomLabelVisibility(deltaSeconds) {
+        if (!this.camera || !this.renderer) return;
+        const rect = this.renderer.domElement.getBoundingClientRect();
+        const viewportWidth = rect.width;
+        const viewportHeight = rect.height;
+        if (!viewportWidth || !viewportHeight) return;
+
+        // Hide when camera elevation is below 15 degrees
+        const deltaY = this.camera.position.y - this.controls.target.y;
+        const horizontalDist = Math.hypot(
+            this.camera.position.x - this.controls.target.x,
+            this.camera.position.z - this.controls.target.z
+        );
+        const cameraElevation = Math.atan2(deltaY, horizontalDist);
+        const minElevation = 15 * Math.PI / 180; // 15 degrees
+        if (cameraElevation < minElevation || this.isEyeLevelView || this.walkthroughActive) {
+            this.floorGroups.forEach(fg => {
+                const labelLayer = fg.getObjectByName("labels");
+                if (labelLayer) {
+                    labelLayer.children.forEach(sprite => {
+                        if (sprite.isSprite) {
+                            sprite.visible = false;
+                            if (sprite.material) sprite.material.opacity = 0;
+                        }
+                    });
+                }
+            });
+            return;
+        }
+
+        const candidates = [];
+        const cameraPosition = this.camera.position;
+        const tempWorldPosition = new THREE.Vector3();
+        const verticalFov = THREE.MathUtils.degToRad(this.camera.fov || 45);
+        const tanHalfFov = Math.tan(verticalFov / 2);
+
+        // In isolate floor mode, show only that floor's labels
+        const activeIsolatedFloor = this.visibleLevel !== null ? this.visibleLevel : this.currentIsolatedFloor;
+
+        if (!this.labelRaycaster) this.labelRaycaster = new THREE.Raycaster();
+
+        this.floorGroups.forEach((floorGroup, floorIndex) => {
+            const labelLayer = floorGroup.getObjectByName("labels");
+            if (!labelLayer) return;
+
+            const floorAllowed = floorGroup.visible
+                && labelLayer.visible
+                && (activeIsolatedFloor === null || floorIndex === activeIsolatedFloor)
+                && (spriteFloorVisible => spriteFloorVisible !== false)(floorGroup.userData.currentIsolationOpacity > 0.5);
+
+            labelLayer.children.forEach(sprite => {
+                if (!sprite.isSprite || !sprite.material) return;
+                if (!floorAllowed) {
+                    sprite.visible = false;
+                    sprite.material.opacity = 0;
+                    return;
+                }
+
+                sprite.getWorldPosition(tempWorldPosition);
+
+                const distance = cameraPosition.distanceTo(tempWorldPosition);
+                const cameraSpace = tempWorldPosition.clone().applyMatrix4(this.camera.matrixWorldInverse);
+                const viewDepth = Math.max(0.01, -cameraSpace.z);
+                const projected = tempWorldPosition.clone().project(this.camera);
+                const inFrame = Math.abs(projected.x) <= 1.05 && Math.abs(projected.y) <= 1.05 && viewDepth > 0;
+
+                if (!inFrame) {
+                    sprite.visible = false;
+                    sprite.material.opacity = 0;
+                    return;
+                }
+
+                // Constant screen size 11px:
+                // Target screen height in pixels for the badge (~22px on 2x canvas)
+                const targetBadgeHeightPx = sprite.userData.isExpanded ? 34 : 22;
+                const worldHeight = this.camera.isOrthographicCamera
+                    ? (targetBadgeHeightPx / viewportHeight) * ((this.camera.top - this.camera.bottom) / (this.camera.zoom || 1))
+                    : (targetBadgeHeightPx / viewportHeight) * 2 * tanHalfFov * viewDepth;
+                const aspect = (sprite.userData.canvas?.width || 240) / (sprite.userData.canvas?.height || 44);
+                sprite.scale.set(worldHeight * aspect, worldHeight, 1.0);
+
+                const screenWidthPx = targetBadgeHeightPx * aspect;
+                const centerX = (projected.x + 1) * 0.5 * viewportWidth;
+                const centerY = (1 - projected.y) * 0.5 * viewportHeight;
+
+                sprite.visible = true;
+                sprite.material.opacity = 1;
+
+                candidates.push({
+                    sprite,
+                    floorIndex,
+                    rect: {
+                        left: centerX - screenWidthPx / 2,
+                        right: centerX + screenWidthPx / 2,
+                        top: centerY - targetBadgeHeightPx / 2,
+                        bottom: centerY + targetBadgeHeightPx / 2
+                    },
+                    roomArea: Number(sprite.userData.roomArea) || 0,
+                    distance
+                });
+            });
+        });
+
+        // Overlapping labels: keep higher story first, then larger room's label
+        candidates.sort((a, b) => (b.floorIndex - a.floorIndex) || (b.roomArea - a.roomArea));
+        const accepted = [];
+        candidates.forEach(candidate => {
+            const overlaps = accepted.some(other =>
+                candidate.rect.left < other.rect.right
+                && candidate.rect.right > other.rect.left
+                && candidate.rect.top < other.rect.bottom
+                && candidate.rect.bottom > other.rect.top
+            );
+            if (overlaps) {
+                candidate.sprite.visible = false;
+                candidate.sprite.material.opacity = 0;
+            } else {
+                accepted.push(candidate);
+            }
+        });
+    }
+
+    updateBuildAnimations() {
+        for (let index = this.animatingMeshes.length - 1; index >= 0; index--) {
+            const mesh = this.animatingMeshes[index];
+            mesh.scale.y = THREE.MathUtils.lerp(mesh.scale.y, 1.0, 0.05);
+            if (mesh.userData.isFloorSurface && mesh.material) {
+                mesh.material.opacity = THREE.MathUtils.lerp(mesh.material.opacity, 1.0, 0.05);
+            }
+            if (mesh.scale.y < 0.99) continue;
+
+            mesh.scale.y = 1.0;
+            if (mesh.userData.isFloorSurface && mesh.material) {
+                mesh.material.opacity = 1;
+                mesh.material.transparent = false;
+                mesh.material.depthWrite = true;
+                mesh.material.needsUpdate = true;
+            }
+            if (mesh.userData.buildRevealLabel) {
+                mesh.userData.buildRevealLabel.userData.buildRevealProgress = 1;
+            }
+            this.animatingMeshes.splice(index, 1);
+        }
+    }
+
+    animate() {
+        requestAnimationFrame(now => {
+            this.updateBuildAnimations();
+            this.updateFloorIsolation(now);
+            this.animate();
+        });
+        if (this.controls && !this.walkthroughActive) this.controls.update();
+        const now = performance.now();
+        const deltaSeconds = this.lastLabelUpdateTime ? (now - this.lastLabelUpdateTime) / 1000 : 1 / 60;
+        this.lastLabelUpdateTime = now;
+        this.updateWalkthrough(deltaSeconds);
+        this.updateWalkthroughDoors(deltaSeconds);
+        this.camera?.updateMatrixWorld();
+        this.updateRoomLabelVisibility(deltaSeconds);
+        if (this.activeRouteTexture) {
+            this.activeRouteTexture.offset.x = (this.activeRouteTexture.offset.x - 0.006) % 1;
+        }
+        if (this.evacuationActive && this.evacuationTexture) {
+            this.evacuationTexture.offset.x = (this.evacuationTexture.offset.x - 0.012) % 1;
+        }
+        if (this.loadingGroup && this.loadingLaser) {
+            this.loadingLaser.position.z = Math.sin(Date.now() * 0.002) * 10;
+        }
+        if (this.renderer && this.scene && this.camera) {
+            this.renderer.render(this.scene, this.camera);
+        }
+    }
+}
