@@ -290,3 +290,19 @@ def test_upload_rate_limit_returns_429(client, monkeypatch):
 
     assert response.status_code == 429
     assert response.headers.get("Retry-After")
+
+
+def test_config_status_endpoint_returns_json_and_never_leaks_key(client):
+    response = client.get("/api/config/status")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert isinstance(data, dict)
+    assert "live_ready" in data
+    assert "mock_mode" in data
+    assert "key_configured" in data
+    assert "sam_model" in data
+    assert "muse_model" in data
+    assert "MODEL_API_KEY" not in data
+    assert "api_key" not in data
+    text = response.get_data(as_text=True)
+    assert "sk-" not in text

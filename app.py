@@ -600,9 +600,36 @@ def _prune_old_jobs():
             JOBS.pop(job_id, None)
 
 
+@app.errorhandler(400)
+def bad_request(error):
+    message = getattr(error, "description", "Bad request.")
+    return jsonify({"success": False, "error": message, "code": "BAD_REQUEST"}), 400
+
+
+@app.errorhandler(404)
+def not_found(error):
+    message = getattr(error, "description", "Resource not found.")
+    return jsonify({"success": False, "error": message, "code": "NOT_FOUND"}), 404
+
+
+@app.errorhandler(405)
+def method_not_allowed(_error):
+    return jsonify({"success": False, "error": "Method not allowed.", "code": "METHOD_NOT_ALLOWED"}), 405
+
+
 @app.errorhandler(413)
 def request_too_large(_error):
-    return jsonify({"success": False, "error": "The image must be 10 MB or smaller."}), 413
+    return jsonify({"success": False, "error": "The image must be 10 MB or smaller.", "code": "PAYLOAD_TOO_LARGE"}), 413
+
+
+@app.errorhandler(500)
+def server_error(error):
+    app.logger.exception("Internal server error: %s", error)
+    return jsonify({
+        "success": False,
+        "error": "An internal server error occurred. Details were logged.",
+        "code": "SERVER_ERROR",
+    }), 500
 
 
 @app.route("/")
@@ -616,6 +643,12 @@ def index():
         image_generation_ready=image_generation_ready(),
         voice_transcription_ready=voice_transcription_ready(),
     )
+
+
+@app.route("/api/config/status", methods=["GET"])
+def config_status():
+    from config import get_config_status
+    return jsonify(get_config_status())
 
 
 @app.route("/api/health", methods=["GET"])
