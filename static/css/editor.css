@@ -1,0 +1,358 @@
+/**
+ * FloorPlan3D — 2D Floor Plan Editor Stylesheet
+ * Strict Editorial Studio Architecture & Native SVG Vector Canvas
+ */
+
+/* --------------------------------------------------------------------------
+ * 1. Root Editor Layout: 52px top bar, 56px left rail, center canvas, 28px status
+ * -------------------------------------------------------------------------- */
+#editor-view {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    display: grid;
+    grid-template-rows: 52px 1fr 28px;
+    grid-template-columns: 56px 1fr;
+    grid-template-areas:
+        "top top"
+        "rail canvas"
+        "status status";
+    background-color: var(--ground, #E7E3DA);
+    color: var(--ink, #1F1E1B);
+    overflow: hidden;
+    z-index: 100;
+}
+
+#editor-view.view-hidden {
+    display: none !important;
+}
+
+/* --------------------------------------------------------------------------
+ * 2. 52px Top Bar
+ * -------------------------------------------------------------------------- */
+.editor-top-bar {
+    grid-area: top;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    background-color: var(--ground, #E7E3DA);
+    border-bottom: 1px solid var(--hairline, #D0CAC0);
+    user-select: none;
+    z-index: 20;
+}
+
+.editor-plan-name {
+    background: transparent;
+    border: 1px solid transparent;
+    padding: 4px 8px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink, #1F1E1B);
+    border-radius: 0;
+    transition: border-color 0.15s, background-color 0.15s;
+    max-width: 200px;
+}
+
+.editor-plan-name:hover,
+.editor-plan-name:focus {
+    border-color: var(--hairline-2, #B8B0A2);
+    outline: none;
+    background-color: var(--ground-2, #DDD8CF);
+}
+
+.editor-btn,
+.editor-btn-icon,
+.editor-btn-primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 10px;
+    font-size: 12px;
+    font-family: inherit;
+    border-radius: 0;
+    cursor: pointer;
+    border: 1px solid var(--ink, #1F1E1B);
+    background-color: var(--ground, #E7E3DA);
+    color: var(--ink, #1F1E1B);
+    transition: background-color 0.15s, color 0.15s;
+}
+
+.editor-btn:hover,
+.editor-btn-icon:hover {
+    background-color: var(--ink, #1F1E1B);
+    color: var(--ground, #E7E3DA);
+}
+
+.editor-btn-icon {
+    width: 32px;
+    padding: 0;
+    border: none;
+    border-right: 1px solid var(--hairline, #D0CAC0);
+}
+
+.editor-btn-icon:last-child {
+    border-right: none;
+}
+
+.editor-btn-primary {
+    background-color: var(--ink, #1F1E1B);
+    color: var(--ground, #E7E3DA);
+    border: 1px solid var(--ink, #1F1E1B);
+}
+
+.editor-btn-primary:hover {
+    background-color: var(--pigment, #9B3418);
+    border-color: var(--pigment, #9B3418);
+    color: var(--ground, #E7E3DA);
+}
+
+.editor-select {
+    background-color: var(--ground, #E7E3DA);
+    color: var(--ink, #1F1E1B);
+    border: 1px solid var(--hairline-2, #B8B0A2);
+    padding: 2px 6px;
+    border-radius: 0;
+    outline: none;
+    cursor: pointer;
+}
+
+.editor-select:focus {
+    border-color: var(--ink, #1F1E1B);
+}
+
+.editor-checkbox {
+    accent-color: var(--pigment, #9B3418);
+    cursor: pointer;
+}
+
+/* --------------------------------------------------------------------------
+ * 3. 56px Left Tool Rail
+ * -------------------------------------------------------------------------- */
+.editor-tool-rail {
+    grid-area: rail;
+    width: 56px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 8px 0;
+    gap: 4px;
+    background-color: var(--ground, #E7E3DA);
+    border-right: 1px solid var(--hairline, #D0CAC0);
+    user-select: none;
+    z-index: 20;
+}
+
+.editor-tool-btn {
+    width: 48px;
+    height: 48px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-left: 2px solid transparent;
+    color: var(--ink-2, #5F5C55);
+    cursor: pointer;
+    border-radius: 0;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.editor-tool-btn:hover {
+    color: var(--ink, #1F1E1B);
+    border-color: var(--hairline, #D0CAC0);
+}
+
+/* Active tool: 2px pigment left border, no fill */
+.editor-tool-btn.is-active {
+    border-left: 2px solid var(--pigment, #9B3418) !important;
+    background: transparent !important;
+    color: var(--ink, #1F1E1B) !important;
+}
+
+.editor-tool-btn .tool-label {
+    font-family: 'Azeret Mono', monospace;
+    font-size: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    line-height: 1;
+}
+
+/* --------------------------------------------------------------------------
+ * 4. Center SVG Canvas & Container
+ * -------------------------------------------------------------------------- */
+.editor-canvas-container {
+    grid-area: canvas;
+    position: relative;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background-color: var(--ground, #E7E3DA);
+    outline: none;
+}
+
+.editor-svg-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+/* --------------------------------------------------------------------------
+ * 5. Critical Text & Stroke Rules
+ * -------------------------------------------------------------------------- */
+/* vector-effect: non-scaling-stroke on all hairlines, grid lines, outlines, selection */
+.editor-grid-line,
+.editor-hairline,
+.editor-outline,
+.editor-selection-box,
+.editor-snap-marker,
+.editor-ruler-tick,
+.editor-ruler-base {
+    vector-effect: non-scaling-stroke !important;
+}
+
+/* Handles and snap markers fixed 8px squares */
+.editor-handle,
+.editor-snap-marker {
+    width: 8px;
+    height: 8px;
+    vector-effect: non-scaling-stroke !important;
+}
+
+/* Canvas labels: Azeret Mono, paint-order stroke with 3px bone stroke, pointer-events none */
+.editor-canvas-label,
+.editor-ruler-text {
+    font-family: 'Azeret Mono', ui-monospace, SFMono-Regular, monospace;
+    paint-order: stroke fill;
+    stroke: var(--ground, #E7E3DA);
+    stroke-width: 3px;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+    fill: var(--ink, #1F1E1B);
+    pointer-events: none;
+    user-select: none;
+}
+
+.editor-ruler-text {
+    font-size: 10px;
+}
+
+.editor-length-label {
+    font-size: 11px;
+}
+
+.editor-room-label {
+    font-size: 12px;
+    font-weight: 500;
+}
+
+/* --------------------------------------------------------------------------
+ * 6. Bottom-Left Metric Scale Bar
+ * -------------------------------------------------------------------------- */
+.editor-scale-bar {
+    position: absolute;
+    bottom: 16px;
+    left: 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    pointer-events: none;
+    user-select: none;
+    z-index: 10;
+}
+
+.editor-scale-bar-line {
+    height: 4px;
+    border: 1px solid var(--ink, #1F1E1B);
+    border-top: none;
+    background: rgba(31, 30, 27, 0.04);
+}
+
+.editor-scale-bar-label {
+    font-family: 'Azeret Mono', monospace;
+    font-size: 10px;
+    margin-top: 2px;
+    color: var(--ink, #1F1E1B);
+}
+
+/* --------------------------------------------------------------------------
+ * 7. Empty State Card
+ * -------------------------------------------------------------------------- */
+.editor-empty-state {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 15;
+}
+
+.editor-empty-state.hidden {
+    display: none !important;
+}
+
+.editor-empty-card {
+    pointer-events: auto;
+    background-color: var(--ground, #E7E3DA);
+    border: 1px solid var(--ink, #1F1E1B);
+    padding: 24px;
+    text-align: center;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+    max-width: 340px;
+}
+
+.editor-card-btn {
+    height: 36px;
+    font-size: 12px;
+    font-family: inherit;
+    border: 1px solid var(--ink, #1F1E1B);
+    background-color: var(--ground, #E7E3DA);
+    color: var(--ink, #1F1E1B);
+    cursor: pointer;
+    border-radius: 0;
+    transition: background-color 0.15s, color 0.15s;
+}
+
+.editor-card-btn:hover {
+    background-color: var(--ground-2, #DDD8CF);
+}
+
+.editor-card-btn-primary {
+    background-color: var(--ink, #1F1E1B);
+    color: var(--ground, #E7E3DA);
+}
+
+.editor-card-btn-primary:hover {
+    background-color: var(--pigment, #9B3418);
+    border-color: var(--pigment, #9B3418);
+    color: var(--ground, #E7E3DA);
+}
+
+/* --------------------------------------------------------------------------
+ * 8. 28px Bottom Status Bar
+ * -------------------------------------------------------------------------- */
+.editor-status-bar {
+    grid-area: status;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    background-color: var(--ground, #E7E3DA);
+    border-top: 1px solid var(--hairline, #D0CAC0);
+    font-size: 11px;
+    color: var(--ink, #1F1E1B);
+    user-select: none;
+    z-index: 20;
+}

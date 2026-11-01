@@ -39,6 +39,7 @@
     <!-- Custom CSS & Editorial Studio System -->
     <link rel="stylesheet" href="/static/css/custom.css">
     <link rel="stylesheet" href="/static/css/styles.css?v=20261031-editorial">
+    <link rel="stylesheet" href="/static/css/editor.css?v=20261101">
 
     <!-- Pinned Three.js r128 via CDN (cdnjs) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -110,7 +111,8 @@
                 <li><a href="#plans-section" class="nav-link">Plans</a></li>
                 <li><a href="#try-it-section" class="nav-link">Try it</a></li>
             </ul>
-            <div>
+            <div class="flex items-center gap-2">
+                <button type="button" class="btn-studio-nav" data-action="open-editor">2D Editor</button>
                 <button type="button" class="btn-studio-nav" data-action="open-app-upload">Upload a plan</button>
             </div>
         </nav>
@@ -366,8 +368,11 @@
                     <span class="mono-caption ml-2 px-2 py-0.5 border border-hairline">META SAM 3.1 / MUSE SPARK / THREE.JS</span>
                 </div>
             </div>
-
-
+            <div class="flex items-center gap-2">
+                <button type="button" class="app-back-link" data-action="open-editor">
+                    <span>2D Editor</span>
+                </button>
+            </div>
         </div>
 
         <!-- Main App Layout: Sidebar (Left) + Viewport Tabs (Right) -->
@@ -918,9 +923,191 @@
 
     </div>
 
+    <!-- ======================================================================
+         3. 2D FLOOR PLAN EDITOR VIEW (#editor-view)
+         ====================================================================== -->
+    <div id="editor-view" class="view-hidden">
+        <!-- 52px Top Bar -->
+        <header class="editor-top-bar" id="editor-top-bar">
+            <!-- Left: Back to Studio, Plan Name -->
+            <div class="flex items-center gap-2">
+                <button type="button" class="editor-btn" id="btn-editor-back" data-action="editor-back-to-studio" title="Back to Studio">
+                    <svg class="w-3.5 h-3.5" aria-hidden="true"><use href="#icon-arrow-left"></use></svg>
+                    <span>Studio</span>
+                </button>
+                <div class="h-4 w-px bg-stone-300"></div>
+                <input id="editor-plan-name" type="text" value="Untitled Plan" class="editor-plan-name" aria-label="Floor plan name" />
+            </div>
+
+            <!-- Center: Undo/Redo, Snap, Zoom -->
+            <div class="flex items-center gap-2">
+                <div class="flex items-center border border-hairline">
+                    <button type="button" class="editor-btn-icon" id="btn-editor-undo" title="Undo (Ctrl+Z)" aria-label="Undo">
+                        <svg class="w-3.5 h-3.5" aria-hidden="true"><use href="#icon-arrow-left"></use></svg>
+                    </button>
+                    <button type="button" class="editor-btn-icon" id="btn-editor-redo" title="Redo (Ctrl+Y)" aria-label="Redo">
+                        <svg class="w-3.5 h-3.5" aria-hidden="true"><use href="#icon-arrow-right"></use></svg>
+                    </button>
+                </div>
+
+                <div class="flex items-center gap-1 text-xs border border-hairline px-2 py-1">
+                    <label class="flex items-center gap-1 cursor-pointer select-none">
+                        <input type="checkbox" id="editor-snap-toggle" checked class="editor-checkbox" />
+                        <span class="mono-label text-[11px]">SNAP</span>
+                    </label>
+                    <select id="editor-snap-step" class="editor-select text-xs ml-1" aria-label="Snap grid step">
+                        <option value="0.05">0.05 m</option>
+                        <option value="0.10">0.10 m</option>
+                        <option value="0.25" selected>0.25 m</option>
+                        <option value="0.50">0.50 m</option>
+                        <option value="1.00">1.00 m</option>
+                    </select>
+                </div>
+
+                <div class="flex items-center border border-hairline">
+                    <button type="button" class="editor-btn-icon" id="btn-editor-zoom-out" title="Zoom Out (-)" aria-label="Zoom out">
+                        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><path d="M5 12h14"/></svg>
+                    </button>
+                    <span id="editor-zoom-display" class="editor-zoom-text px-2 text-xs font-mono select-none">50 px/m</span>
+                    <button type="button" class="editor-btn-icon" id="btn-editor-zoom-in" title="Zoom In (+)" aria-label="Zoom in">
+                        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><path d="M12 5v14M5 12h14"/></svg>
+                    </button>
+                    <button type="button" class="editor-btn px-2 text-xs" id="btn-editor-zoom-fit" title="Fit to view (F)">Fit</button>
+                </div>
+            </div>
+
+            <!-- Right: Send to 3D -->
+            <div class="flex items-center gap-2">
+                <button type="button" class="editor-btn-primary" id="btn-editor-send-to-3d" title="Send plan to 3D Viewer">
+                    <span>Send to 3D</span>
+                    <svg class="w-3.5 h-3.5" aria-hidden="true"><use href="#icon-arrow-right"></use></svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- 56px Left Tool Rail -->
+        <aside class="editor-tool-rail" id="editor-tool-rail" role="toolbar" aria-label="Editor Tools">
+            <button type="button" class="editor-tool-btn is-active" data-tool="select" title="Select (V)" aria-label="Select Tool">
+                <svg class="w-5 h-5 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square">
+                    <path d="M3 3l7 18 3-7 7-3L3 3z"/>
+                </svg>
+                <span class="tool-label">Select</span>
+            </button>
+            <button type="button" class="editor-tool-btn" data-tool="wall" title="Wall (W)" aria-label="Wall Tool">
+                <svg class="w-5 h-5 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square">
+                    <path d="M3 19V5h18v14M3 12h18M12 5v7M8 12v7M16 12v7"/>
+                </svg>
+                <span class="tool-label">Wall</span>
+            </button>
+            <button type="button" class="editor-tool-btn" data-tool="room" title="Room (R)" aria-label="Room Tool">
+                <svg class="w-5 h-5 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square">
+                    <rect x="3" y="3" width="18" height="18"/>
+                    <path d="M9 3v18M3 9h18"/>
+                </svg>
+                <span class="tool-label">Room</span>
+            </button>
+            <button type="button" class="editor-tool-btn" data-tool="door" title="Door (D)" aria-label="Door Tool">
+                <svg class="w-5 h-5 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square">
+                    <path d="M3 21h18M5 21V5h14v16M5 5a14 14 0 0 1 14 14"/>
+                </svg>
+                <span class="tool-label">Door</span>
+            </button>
+            <button type="button" class="editor-tool-btn" data-tool="window" title="Window (Win)" aria-label="Window Tool">
+                <svg class="w-5 h-5 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square">
+                    <rect x="3" y="6" width="18" height="12"/>
+                    <line x1="12" y1="6" x2="12" y2="18"/>
+                    <line x1="3" y1="12" x2="21" y2="12"/>
+                </svg>
+                <span class="tool-label">Window</span>
+            </button>
+            <button type="button" class="editor-tool-btn" data-tool="text" title="Text (T)" aria-label="Text Tool">
+                <svg class="w-5 h-5 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square">
+                    <path d="M4 7V4h16v3M12 4v16M9 20h6"/>
+                </svg>
+                <span class="tool-label">Text</span>
+            </button>
+            <button type="button" class="editor-tool-btn" data-tool="delete" title="Delete (Del)" aria-label="Delete Tool">
+                <svg class="w-5 h-5 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square">
+                    <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/>
+                </svg>
+                <span class="tool-label">Delete</span>
+            </button>
+        </aside>
+
+        <!-- Center SVG Canvas Area -->
+        <main class="editor-canvas-container" id="editor-canvas-container" tabindex="0">
+            <!-- Native SVG Vector Canvas -->
+            <svg id="editor-svg-canvas" class="editor-svg-canvas" xmlns="http://www.w3.org/2000/svg">
+                <!-- World transformation group: transformed by translate(panX, panY) scale(scale) -->
+                <g id="editor-world-group">
+                    <g id="editor-grid-layer"></g>
+                    <g id="editor-rooms-layer"></g>
+                    <g id="editor-walls-layer"></g>
+                    <g id="editor-openings-layer"></g>
+                    <g id="editor-furniture-layer"></g>
+                    <g id="editor-draw-preview-layer"></g>
+                    <g id="editor-selection-layer"></g>
+                </g>
+                <!-- Screen-space overlay layer (1:1 pixels, NOT transformed by world zoom) -->
+                <g id="editor-screen-overlay" pointer-events="none">
+                    <g id="editor-rulers-layer"></g>
+                    <g id="editor-labels-layer"></g>
+                    <g id="editor-guides-layer"></g>
+                </g>
+            </svg>
+
+            <!-- Bottom-Left Metric Scale Bar -->
+            <div id="editor-scale-bar" class="editor-scale-bar" aria-label="Scale indicator">
+                <div id="editor-scale-bar-line" class="editor-scale-bar-line"></div>
+                <span id="editor-scale-bar-label" class="editor-scale-bar-label font-mono text-[10px]">1 m</span>
+            </div>
+
+            <!-- Empty State Card -->
+            <div id="editor-empty-state" class="editor-empty-state">
+                <div class="editor-empty-card">
+                    <span class="mono-label text-[10px] uppercase text-stone-500 tracking-wider">Canvas Ready</span>
+                    <h2 class="font-serif text-xl font-normal mt-1 mb-2">Start your plan</h2>
+                    <p class="text-xs text-stone-600 mb-4 max-w-xs leading-relaxed">
+                        Design a floor plan from scratch or import architectural geometry from samples and AI segmentations.
+                    </p>
+                    <div class="flex flex-col gap-2 w-full">
+                        <button type="button" class="editor-card-btn editor-card-btn-primary" id="btn-empty-draw-walls">
+                            Draw walls
+                        </button>
+                        <div class="flex gap-2">
+                            <button type="button" class="editor-card-btn flex-1" id="btn-empty-load-sample">
+                                Load sample
+                            </button>
+                            <button type="button" class="editor-card-btn flex-1" id="btn-empty-load-ai">
+                                Load AI result
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- 28px Bottom Status Bar -->
+        <footer class="editor-status-bar" id="editor-status-bar">
+            <div class="flex items-center gap-4">
+                <span id="editor-status-coords" class="font-mono text-[11px]">X: 0.00 m  Y: 0.00 m</span>
+                <span class="text-stone-300">|</span>
+                <span id="editor-status-zoom" class="font-mono text-[11px]">50 px/m (100%)</span>
+                <span class="text-stone-300">|</span>
+                <span id="editor-status-tool" class="font-mono text-[11px]">Tool: Select</span>
+            </div>
+            <div class="flex items-center">
+                <span id="editor-status-hint" class="font-mono text-[11px] text-stone-500">
+                    Space+Drag or Middle Mouse to Pan · Wheel to Zoom · Click to Select
+                </span>
+            </div>
+        </footer>
+    </div>
+
     <!-- Application Controllers & Landing Scripts -->
     <script src="/static/js/viewer.js?v=20261028-route-polish"></script>
     <script src="/static/js/app.js?v=20261028-route-polish"></script>
-    <script src="/static/js/landing.js?v=20261031-editorial"></script>
+    <script src="/static/js/editor.js?v=20261101"></script>
+    <script src="/static/js/landing.js?v=20261101"></script>
 </body>
 </html>
