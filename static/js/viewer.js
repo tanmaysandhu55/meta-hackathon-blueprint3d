@@ -1919,7 +1919,7 @@ class FloorPlanViewer {
         }
 
         // Expand badge for selected room, collapse others
-        const selectedId = roomMesh?.userData?.roomData?.id;
+        const selectedId = roomMesh?.userData?.roomData?.id || (roomMesh && !roomMesh.isMesh ? roomMesh.id : null);
         this.floorGroups.forEach(floorGroup => {
             const labelGroup = floorGroup.getObjectByName("labels");
             if (labelGroup) {
@@ -1932,7 +1932,8 @@ class FloorPlanViewer {
 
         // Notify global UI handler
         if (typeof window.onFloorPlanRoomSelected === "function") {
-            window.onFloorPlanRoomSelected(roomMesh.userData.roomData);
+            const roomData = roomMesh?.userData?.roomData || roomMesh?.userData?.room || (roomMesh && !roomMesh.isMesh ? roomMesh : null);
+            window.onFloorPlanRoomSelected(roomData);
         }
     }
 

@@ -16,7 +16,7 @@ This report details the comprehensive audit conducted across the FloorPlan3D rep
   - `demo_data.py`: Built-in sample scenes (single-story and two-story) and raster floor plan generator.
   - `usage_tracker.py`: Tracks token and inference call volume.
 - **Frontend**:
-  - `templates/index.html`: Studio shell with top bar, left sidebar, Three.js 3D viewport, 2D segmentation overlay, room inspector, and 2D floor plan editor modal dialogs.
+  - `templates/index.html`: Studio shell with top bar, left sidebar, Three.js 3D viewport, 2D segmentation overlay, room inspector, and 2D floor plan editor dialogs.
   - `static/js/viewer.js`: Three.js 3D rendering engine (Orthographic isometric camera, perspective camera, cutaway, walkthrough, sunlight cycle, blueprint underlay, egress simulation, GLB exporter).
   - `static/js/app.js`: Application controller managing UI tabs, sample loading, file uploads, polling, calibration sliders, and inspection cards.
   - `static/js/editor.js`: 2D CAD floor plan editor with 7 object library groups (26 items), geometric snapping, properties inspector, and 3D sync bridge.
