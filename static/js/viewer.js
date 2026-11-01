@@ -118,6 +118,8 @@ class FloorPlanViewer {
         window.ROOM_FLOOR_COLORS = this.roomColors;
 
         // Initialize WebGL scene
+        this.animationFrameId = null;
+        this._isDestroyed = false;
         this.init();
     }
 
@@ -168,15 +170,22 @@ class FloorPlanViewer {
         this.populateLegend();
 
         // 7. Event Listeners
-        window.addEventListener("resize", () => this.onWindowResize());
-        window.addEventListener("keydown", (event) => {
+        this._onWindowResize = () => this.onWindowResize();
+        this._onKeyDown = (event) => {
             this.panWithArrowKeys(event);
             this.onWalkthroughKeyDown(event);
-        });
-        window.addEventListener("keyup", event => this.onWalkthroughKeyUp(event));
-        window.addEventListener("blur", () => this.walkthroughKeys.clear());
-        document.addEventListener("pointerlockchange", () => this.onPointerLockChange());
-        document.addEventListener("mousemove", event => this.onWalkthroughMouseMove(event));
+        };
+        this._onKeyUp = event => this.onWalkthroughKeyUp(event);
+        this._onBlur = () => this.walkthroughKeys.clear();
+        this._onPointerLockChange = () => this.onPointerLockChange();
+        this._onMouseMove = event => this.onWalkthroughMouseMove(event);
+
+        window.addEventListener("resize", this._onWindowResize);
+        window.addEventListener("keydown", this._onKeyDown);
+        window.addEventListener("keyup", this._onKeyUp);
+        window.addEventListener("blur", this._onBlur);
+        document.addEventListener("pointerlockchange", this._onPointerLockChange);
+        document.addEventListener("mousemove", this._onMouseMove);
         this.renderer.domElement.addEventListener("pointerdown", event => this.onWalkthroughPointerDown(event));
         this.renderer.domElement.addEventListener("pointermove", event => this.onWalkthroughPointerMove(event));
         this.renderer.domElement.addEventListener("pointerup", () => {
@@ -3871,7 +3880,9 @@ class FloorPlanViewer {
     }
 
     animate() {
-        requestAnimationFrame(now => {
+        if (this._isDestroyed) return;
+        this.animationFrameId = requestAnimationFrame(now => {
+            if (this._isDestroyed) return;
             this.updateBuildAnimations();
             this.updateFloorIsolation(now);
             this.animate();
@@ -3895,6 +3906,31 @@ class FloorPlanViewer {
         }
         if (this.renderer && this.scene && this.camera) {
             this.renderer.render(this.scene, this.camera);
+        }
+    }
+
+    destroy() {
+        this._isDestroyed = true;
+        if (this.animationFrameId) {
+            cancelAnimationFrame(this.animationFrameId);
+            this.animationFrameId = null;
+        }
+        if (this.isoRotationTween) {
+            cancelAnimationFrame(this.isoRotationTween);
+            this.isoRotationTween = null;
+        }
+        if (this._onWindowResize) window.removeEventListener("resize", this._onWindowResize);
+        if (this._onKeyDown) window.removeEventListener("keydown", this._onKeyDown);
+        if (this._onKeyUp) window.removeEventListener("keyup", this._onKeyUp);
+        if (this._onBlur) window.removeEventListener("blur", this._onBlur);
+        if (this._onPointerLockChange) document.removeEventListener("pointerlockchange", this._onPointerLockChange);
+        if (this._onMouseMove) document.removeEventListener("mousemove", this._onMouseMove);
+        this.clear();
+        if (this.renderer) {
+            if (this.renderer.domElement && this.renderer.domElement.parentNode) {
+                this.renderer.domElement.parentNode.removeChild(this.renderer.domElement);
+            }
+            this.renderer.dispose();
         }
     }
 }
