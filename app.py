@@ -20,7 +20,7 @@ from jsonschema import Draft202012Validator
 from PIL import Image, UnidentifiedImageError
 from werkzeug.utils import secure_filename
 
-from baseten_service import answer_scene_question, label_rooms, is_labeling_configured, last_error_category
+from baseten_service import answer_scene_question, label_rooms, is_labeling_configured, last_error_category, get_labeling_provider_name
 from meta_sam_service import is_sam_configured, query_sam_concept
 from meta_media_service import generate_floorplan, image_generation_ready, transcribe_audio, voice_transcription_ready
 from demo_data import generate_sample_floorplan_image, get_sample_mask_overlays, get_sample_scene_json, get_two_story_sample_scene_json
@@ -388,9 +388,26 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
         try:
             masks_by_concept[concept], backends_by_concept[concept], provider_error = future.result()
             if provider_error:
-                warnings.append(
-                    f"Meta segmentation for {concept} was unavailable ({provider_error}); local OpenCV fallback was used."
-                )
+                if provider_error == "no_matches":
+                    warnings.append(
+                        f"Meta SAM 3.1 detected no matching '{concept}' regions in this floor plan; local OpenCV fallback was used."
+                    )
+                elif provider_error == "auth":
+                    warnings.append(
+                        f"Meta API authentication failed for {concept}; local OpenCV fallback was used."
+                    )
+                elif provider_error == "timeout":
+                    warnings.append(
+                        f"Meta SAM 3.1 request for {concept} timed out; local OpenCV fallback was used."
+                    )
+                elif provider_error == "unavailable":
+                    warnings.append(
+                        f"Meta SAM 3.1 service was temporarily unavailable for {concept}; local OpenCV fallback was used."
+                    )
+                else:
+                    warnings.append(
+                        f"Meta segmentation for {concept} used local OpenCV fallback ({provider_error})."
+                    )
         except Exception as exc:
             logger.exception("Local %s segmentation failed", concept)
             if concept == "room":
@@ -703,7 +720,11 @@ def ask_about_scene():
             "route": route,
         })
     answer = answer_scene_question(question.strip(), facts) if labeling_ready() else None
-    provider = "Baseten Muse Spark Open (scene-grounded)" if answer else "Offline scene lookup (Baseten returned no usable answer)"
+    labeling_prov = get_labeling_provider_name()
+    if labeling_prov.startswith("Meta"):
+        provider = "Meta Muse Spark (scene-grounded)" if answer else "Offline scene lookup (Muse returned no usable answer)"
+    else:
+        provider = "Baseten Muse Spark Open (scene-grounded)" if answer else "Offline scene lookup (Baseten returned no usable answer)"
     if not answer:
         answer = _offline_scene_answer(question.strip(), facts)
     return jsonify({
@@ -743,7 +764,11 @@ def scene_insight():
     )
     ai_answer = answer_scene_question(kind_prompt + "\nComputed review facts: " + json.dumps(review, ensure_ascii=False), facts) if labeling_ready() else None
     answer = ai_answer or _offline_scene_insight(kind, review, facts)
-    provider = "Baseten Muse Spark Open (scene-grounded)" if ai_answer else "Offline scene analysis (Baseten returned no usable answer)"
+    labeling_prov = get_labeling_provider_name()
+    if labeling_prov.startswith("Meta"):
+        provider = "Meta Muse Spark (scene-grounded)" if ai_answer else "Offline scene analysis (Muse returned no usable answer)"
+    else:
+        provider = "Baseten Muse Spark Open (scene-grounded)" if ai_answer else "Offline scene analysis (Baseten returned no usable answer)"
     return jsonify({"success": True, "kind": kind, "answer": answer, "provider": provider, "review": review})
 
 

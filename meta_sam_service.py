@@ -24,6 +24,12 @@ CONCEPT_PROMPTS = {
     "toilet": "toilet",
 }
 
+# Architectural blueprint fallback prompts for CAD line drawings
+CONCEPT_FALLBACK_PROMPTS = {
+    "wall": "thick line",
+    "door": "curved line",
+}
+
 
 def is_sam_configured():
     api_key = os.getenv("MODEL_API_KEY", "").strip() or os.getenv("META_API_KEY", "").strip()
@@ -44,6 +50,8 @@ def _prepare_image(image_bytes, max_side=2048):
 
 
 def _safe_category(exc):
+    if isinstance(exc, ValueError) and "detected no matching regions" in str(exc).lower():
+        return "no_matches"
     status = getattr(exc, "status_code", None)
     if status in (401, 403):
         return "auth"
@@ -85,6 +93,68 @@ def _decode_masks(output_text, expected_size):
     return masks
 
 
+def _execute_sam_call(client, model, prompt_text, data_url, size, image_size, deadline):
+    for attempt in range(3):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("SAM request exceeded its processing time budget.")
+        try:
+            output_text = ""
+            stream_fn = getattr(client.responses, "stream", None)
+            if callable(stream_fn):
+                try:
+                    with client.with_options(timeout=remaining).responses.stream(
+                        model=model,
+                        input=[{"type": "message", "role": "user", "content": [
+                            {"type": "input_text", "text": prompt_text},
+                            {"type": "input_image", "image_url": data_url},
+                        ]}],
+                        metadata={"mask_encoding": "one_bit", "include_confidence": "true"},
+                    ) as stream:
+                        for event in stream:
+                            if getattr(event, "type", None) == "response.output_text.delta":
+                                output_text += getattr(event, "delta", "")
+                except Exception as stream_exc:
+                    logger.debug("SAM streaming failed, trying create: %s", stream_exc)
+                    output_text = ""
+            if not output_text:
+                response = client.with_options(timeout=remaining).responses.create(
+                    model=model,
+                    input=[{"type": "message", "role": "user", "content": [
+                        {"type": "input_text", "text": prompt_text},
+                        {"type": "input_image", "image_url": data_url},
+                    ]}],
+                    metadata={"mask_encoding": "one_bit", "include_confidence": "true"},
+                )
+                output_text = getattr(response, "output_text", "") or ""
+            masks = _decode_masks(output_text, size)
+            if not masks:
+                raise ValueError(f"SAM 3.1 detected no matching regions for '{prompt_text}'.")
+            original_size = tuple(map(int, image_size))
+            if size != original_size:
+                masks = [
+                    cv2.resize(mask, original_size, interpolation=cv2.INTER_NEAREST)
+                    for mask in masks
+                ]
+            return masks
+        except Exception as exc:
+            category = _safe_category(exc)
+            if category == "no_matches":
+                exc.safe_category = "no_matches"
+                raise
+            retryable = isinstance(exc, (APIConnectionError, APITimeoutError)) or (
+                getattr(exc, "status_code", 0) or 0
+            ) >= 500
+            logger.warning("SAM segmentation failed (category=%s, prompt=%s)", category, prompt_text)
+            delay = 0.4 * (2 ** attempt)
+            if not retryable or attempt == 2 or time.monotonic() + delay >= deadline:
+                exc.safe_category = category
+                raise
+            time.sleep(delay)
+
+    raise TimeoutError("SAM request exceeded its processing time budget.")
+
+
 def query_sam_concept(image_bytes, concept, image_size, timeout=75):
     """Run one SAM prompt and return masks at the uploaded image's original size."""
     if concept not in CONCEPT_PROMPTS:
@@ -106,59 +176,14 @@ def query_sam_concept(image_bytes, concept, image_size, timeout=75):
         max_retries=0,
     )
 
-    for attempt in range(3):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError("SAM request exceeded its processing time budget.")
-        try:
-            output_text = ""
-            stream_fn = getattr(client.responses, "stream", None)
-            if callable(stream_fn):
-                try:
-                    with client.with_options(timeout=remaining).responses.stream(
-                        model=model,
-                        input=[{"type": "message", "role": "user", "content": [
-                            {"type": "input_text", "text": prompt},
-                            {"type": "input_image", "image_url": data_url},
-                        ]}],
-                        metadata={"mask_encoding": "one_bit", "include_confidence": "true"},
-                    ) as stream:
-                        for event in stream:
-                            if getattr(event, "type", None) == "response.output_text.delta":
-                                output_text += getattr(event, "delta", "")
-                except Exception as stream_exc:
-                    logger.debug("SAM streaming failed, trying create: %s", stream_exc)
-                    output_text = ""
-            if not output_text:
-                response = client.with_options(timeout=remaining).responses.create(
-                    model=model,
-                    input=[{"type": "message", "role": "user", "content": [
-                        {"type": "input_text", "text": prompt},
-                        {"type": "input_image", "image_url": data_url},
-                    ]}],
-                    metadata={"mask_encoding": "one_bit", "include_confidence": "true"},
-                )
-                output_text = getattr(response, "output_text", "") or ""
-            masks = _decode_masks(output_text, size)
-            if not masks:
-                raise ValueError("SAM returned no masks for this prompt.")
-            original_size = tuple(map(int, image_size))
-            if size != original_size:
-                masks = [
-                    cv2.resize(mask, original_size, interpolation=cv2.INTER_NEAREST)
-                    for mask in masks
-                ]
-            return masks
-        except Exception as exc:
-            category = _safe_category(exc)
-            retryable = isinstance(exc, (APIConnectionError, APITimeoutError)) or (
-                getattr(exc, "status_code", 0) or 0
-            ) >= 500
-            logger.warning("SAM segmentation failed (category=%s, concept=%s)", category, concept)
-            delay = 0.4 * (2 ** attempt)
-            if not retryable or attempt == 2 or time.monotonic() + delay >= deadline:
-                exc.safe_category = category
-                raise
-            time.sleep(delay)
+    prompts = [prompt]
+    if concept in CONCEPT_FALLBACK_PROMPTS:
+        prompts.append(CONCEPT_FALLBACK_PROMPTS[concept])
 
-    raise TimeoutError("SAM request exceeded its processing time budget.")
+    for current_prompt in prompts:
+        try:
+            return _execute_sam_call(client, model, current_prompt, data_url, size, image_size, deadline)
+        except ValueError as exc:
+            if getattr(exc, "safe_category", None) == "no_matches" and current_prompt != prompts[-1]:
+                continue
+            raise
