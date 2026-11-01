@@ -258,6 +258,12 @@ class FloorPlanViewer {
         const canvas = sprite.userData.canvas;
         const room = sprite.userData.room;
         if (canvas && room) {
+            const label = (room.label || `Room ${room.id}`).toUpperCase();
+            const testCtx = canvas.getContext("2d");
+            testCtx.font = isExpanded ? "600 20px 'Azeret Mono', monospace" : "600 22px 'Azeret Mono', monospace";
+            const tw = testCtx.measureText(label).width;
+            canvas.width = Math.max(160, Math.ceil(tw + 36));
+            canvas.height = isExpanded ? 64 : 44;
             this.renderBadgeCanvas(canvas, room, isExpanded);
             if (sprite.material.map) {
                 sprite.material.map.needsUpdate = true;
@@ -1125,7 +1131,7 @@ class FloorPlanViewer {
                 extrudeGeo.rotateX(-Math.PI / 2);
                 const slabMesh = new THREE.Mesh(extrudeGeo, slabMat);
                 // Position so top of slab is at y = 0.0 and bottom at y = -0.2 (filling gap from below)
-                slabMesh.position.y = 0.0;
+                slabMesh.position.y = -slabThickness;
                 slabMesh.receiveShadow = true;
                 slabMesh.castShadow = true;
                 slabMesh.userData = { isSlab: true, floorIndex: level };
@@ -1538,7 +1544,11 @@ class FloorPlanViewer {
      */
     createRoomBadgeSprite(room) {
         const canvas = document.createElement("canvas");
-        canvas.width = 240;
+        const label = (room.label || `Room ${room.id}`).toUpperCase();
+        const testCtx = canvas.getContext("2d");
+        testCtx.font = "600 22px 'Azeret Mono', monospace";
+        const tw = testCtx.measureText(label).width;
+        canvas.width = Math.max(160, Math.ceil(tw + 36));
         canvas.height = 44;
         this.renderBadgeCanvas(canvas, room, false);
 
@@ -1554,6 +1564,7 @@ class FloorPlanViewer {
         });
 
         const sprite = new THREE.Sprite(spriteMat);
+        sprite.center.set(0.5, 0.0);
         sprite.scale.set(1.3, 0.24, 1.0);
         sprite.userData.canvas = canvas;
         sprite.userData.room = room;
@@ -3456,25 +3467,8 @@ class FloorPlanViewer {
                     return;
                 }
 
-                // Raycast wall occlusion check: ray from camera to sprite
-                const dirToLabel = tempWorldPosition.clone().sub(cameraPosition);
-                const distToLabel = dirToLabel.length();
-                dirToLabel.normalize();
-                this.labelRaycaster.set(cameraPosition, dirToLabel);
-                this.labelRaycaster.near = 0.2;
-                this.labelRaycaster.far = Math.max(0.2, distToLabel - 0.2);
-                const wallHits = this.labelRaycaster.intersectObjects(
-                    this.selectableMeshes.filter(m => m.userData.isWall && m.visible),
-                    false
-                );
-                if (wallHits.length > 0) {
-                    sprite.visible = false;
-                    sprite.material.opacity = 0;
-                    return;
-                }
-
                 // Constant screen size 11px:
-                // Target screen height in pixels for the badge
+                // Target screen height in pixels for the badge (~22px on 2x canvas)
                 const targetBadgeHeightPx = sprite.userData.isExpanded ? 34 : 22;
                 const worldHeight = (targetBadgeHeightPx / viewportHeight) * 2 * tanHalfFov * viewDepth;
                 const aspect = (sprite.userData.canvas?.width || 240) / (sprite.userData.canvas?.height || 44);
@@ -3489,6 +3483,7 @@ class FloorPlanViewer {
 
                 candidates.push({
                     sprite,
+                    floorIndex,
                     rect: {
                         left: centerX - screenWidthPx / 2,
                         right: centerX + screenWidthPx / 2,
@@ -3501,8 +3496,8 @@ class FloorPlanViewer {
             });
         });
 
-        // Overlapping labels: keep the larger room's label
-        candidates.sort((a, b) => b.roomArea - a.roomArea);
+        // Overlapping labels: keep higher story first, then larger room's label
+        candidates.sort((a, b) => (b.floorIndex - a.floorIndex) || (b.roomArea - a.roomArea));
         const accepted = [];
         candidates.forEach(candidate => {
             const overlaps = accepted.some(other =>
