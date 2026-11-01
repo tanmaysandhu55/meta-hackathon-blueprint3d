@@ -4,6 +4,12 @@ recorded_sam_responses/
 local_data/
 FloorPlan3D-project*.zip
 
+# Build, caches, outputs, and projects
+cache/
+out/
+projects/
+scratch/
+
 # Python bytecode
 __pycache__/
 *.py[cod]
