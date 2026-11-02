@@ -3,6 +3,7 @@
 import base64
 import concurrent.futures
 import cv2
+import numpy as np
 import io
 import json
 import logging
@@ -448,7 +449,7 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
     scale_method = "manual"
     if calibrate_scale:
         estimated_scale = estimate_meters_per_pixel_from_doors(door_masks)
-        if estimated_scale is not None and 0.001 <= estimated_scale <= 0.1:
+        if estimated_scale is not None and 0.01 <= estimated_scale <= 0.08:
             meters_per_pixel = estimated_scale
             scale_method = "median detected door width (assumed 0.9 m)"
         else:
@@ -523,8 +524,11 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
     ]
 
     walls_data = []
-    for mask in wall_masks:
-        for polygon in mask_to_polygons_with_holes(mask, meters_per_pixel=meters_per_pixel, min_area_px=100):
+    if wall_masks:
+        combined_wall = np.zeros_like(wall_masks[0])
+        for mask in wall_masks:
+            combined_wall = cv2.bitwise_or(combined_wall, mask)
+        for polygon in mask_to_polygons_with_holes(combined_wall, meters_per_pixel=meters_per_pixel, min_area_px=100):
             walls_data.append({
                 "id": f"w{len(walls_data) + 1}",
                 "polygon": polygon["polygon"],

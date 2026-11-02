@@ -24,11 +24,8 @@ CONCEPT_PROMPTS = {
     "toilet": "toilet",
 }
 
-# Architectural blueprint fallback prompts for CAD line drawings
-CONCEPT_FALLBACK_PROMPTS = {
-    "wall": "thick line",
-    "door": "curved line",
-}
+# Single noun-phrase concept prompts per Meta SAM 3.1 specification
+CONCEPT_FALLBACK_PROMPTS = {}
 
 
 def is_sam_configured():

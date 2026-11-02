@@ -4,6 +4,7 @@ Uses OpenCV, NumPy, and Shapely to convert raw binary segmentation masks
 into clean, simplified architectural polygons scaled to real-world meters.
 """
 
+import math
 import cv2
 import numpy as np
 import shapely.geometry
@@ -39,14 +40,19 @@ def estimate_meters_per_pixel_from_doors(door_masks, target_width_m=0.9, min_are
                 continue
             (_center_x, _center_y), (width, height), _angle = cv2.minAreaRect(contour)
             pixel_width = max(width, height)
-            if pixel_width > 0:
+            # Only consider single door dimensions (between 15 and 100 pixels in typical plans)
+            if 15 <= pixel_width <= 100:
                 widths_px.append(pixel_width)
     if not widths_px:
         return None
     median_width_px = float(np.median(widths_px))
     if median_width_px <= 0:
         return None
-    return target_width_m / median_width_px
+    scale = target_width_m / median_width_px
+    # Architectural scale safety clamp: plans range from 0.01 to 0.08 meters per pixel
+    if not (0.01 <= scale <= 0.08):
+        return None
+    return scale
 
 
 def mask_to_polygons_with_holes(mask_uint8, meters_per_pixel, min_area_px=150, simplify_meters=0.04):
@@ -233,10 +239,21 @@ def extract_doors(door_masks, rooms_list, meters_per_pixel, min_area_px=25):
             connected.sort(key=lambda candidate: candidate[0])
             connected = [room_id for _distance, room_id in connected[:2]]
 
-            if len(connected) == 0:
-                connected = ["outside"]
-            elif len(connected) == 1:
+            # A valid door must connect to at least one room; ignore noise outside the plan
+            if not connected:
+                continue
+            if len(connected) == 1:
                 connected.append("outside")
+
+            # Deduplicate doors within 0.6m of an already detected door
+            duplicate = False
+            for existing in doors:
+                dist = math.hypot(cx_m - existing["center"][0], cy_m - existing["center"][1])
+                if dist < 0.6:
+                    duplicate = True
+                    break
+            if duplicate:
+                continue
 
             doors.append({
                 "id": f"d{door_id_counter}",
