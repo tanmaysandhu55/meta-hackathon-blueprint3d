@@ -85,63 +85,23 @@ def segment_prepared_concept(prepared, concept):
         return [walls] if cv2.countNonZero(walls) else []
 
     if concept == "room":
-        # First, attempt room extraction from white space inside the outer footprint
-        masks = []
-        try:
-            # Find outer footprint
-            k_size = max(25, int(round(min(width, height) * 0.035)) | 1)
-            dilate_k = cv2.getStructuringElement(cv2.MORPH_RECT, (k_size, k_size))
-            dilated = cv2.dilate(walls, dilate_k)
-            cnts, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            if cnts:
-                building_cnt = max(cnts, key=cv2.contourArea)
-                if cv2.contourArea(building_cnt) > 0.05 * width * height:
-                    ox, oy, ow, oh = cv2.boundingRect(building_cnt)
-                    footprint_mask = np.zeros((height, width), dtype=np.uint8)
-                    cv2.rectangle(footprint_mask, (ox + 8, oy + 8), (ox + ow - 8, oy + oh - 8), 255, -1)
-                    
-                    # White space inside footprint (invert walls)
-                    inside_white = cv2.bitwise_and(cv2.bitwise_not(walls), footprint_mask)
-                    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(inside_white, 8)
-                    min_room_area = max(300, int(width * height * 0.003))
-                    
-                    for i in range(1, num_labels):
-                        area = stats[i, cv2.CC_STAT_AREA]
-                        bw_i = stats[i, cv2.CC_STAT_WIDTH]
-                        bh_i = stats[i, cv2.CC_STAT_HEIGHT]
-                        # Drop thin slivers (white gaps inside double-line walls)
-                        if min(bw_i, bh_i) < 20 or area < min_room_area:
-                            continue
-                        masks.append((labels == i).astype(np.uint8) * 255)
-        except Exception:
-            masks = []
-
-        if masks:
-            return masks
-
-        # Fallback for photographic or solid plans
-        door_close_size = max(kernel_size * 7, int(round(min(width, height) / 22)) | 1)
+        # Close likely door gaps before extracting enclosed room regions.
         close_kernel = cv2.getStructuringElement(
-            cv2.MORPH_RECT, (door_close_size, door_close_size)
+            cv2.MORPH_RECT, (kernel_size * 7, kernel_size * 7)
         )
-        closed = cv2.morphologyEx(walls, cv2.MORPH_CLOSE, close_kernel, iterations=1)
+        closed = cv2.morphologyEx(walls, cv2.MORPH_CLOSE, close_kernel, iterations=2)
         free = cv2.bitwise_not(closed)
-        h_f, w_f = free.shape
-        cv2.floodFill(free, None, (0, 0), 0)
-        cv2.floodFill(free, None, (w_f - 1, 0), 0)
-        cv2.floodFill(free, None, (0, h_f - 1), 0)
-        cv2.floodFill(free, None, (w_f - 1, h_f - 1), 0)
         count, labels, stats, _ = cv2.connectedComponentsWithStats(free, 8)
         border_labels = set(
             np.unique(np.concatenate((labels[0], labels[-1], labels[:, 0], labels[:, -1])))
         )
         min_area = max(100, int(width * height * 0.002))
-        fallback_masks = []
+        masks = []
         for index in range(1, count):
             if index in border_labels or stats[index, cv2.CC_STAT_AREA] < min_area:
                 continue
-            fallback_masks.append(np.where(labels == index, 255, 0).astype(np.uint8))
-        return fallback_masks
+            masks.append(np.where(labels == index, 255, 0).astype(np.uint8))
+        return masks
 
     if concept in ("door", "window"):
         # Prepared plans mark these details with colored drafting lines.

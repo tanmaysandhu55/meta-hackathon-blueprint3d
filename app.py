@@ -643,12 +643,13 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
         c0_url = "data:image/png;base64," + base64.b64encode(crop0_bytes).decode("ascii")
         res0 = _process_story_slice(crop0_bytes, c0_size, meters_per_pixel, wall_height, wall_thickness, calibrate_scale, progress, deadline, use_sam, processing_mode, c0_url, story_index=0, filename=filename)
 
+        shared_mpp = res0.get("meters_per_pixel", meters_per_pixel)
         progress("Processing Second Floor story", 65)
         crop1_bytes, bbox1 = crops[1]
         with Image.open(io.BytesIO(crop1_bytes)) as c1_img:
             c1_size = c1_img.size
         c1_url = "data:image/png;base64," + base64.b64encode(crop1_bytes).decode("ascii")
-        res1 = _process_story_slice(crop1_bytes, c1_size, meters_per_pixel, wall_height, wall_thickness, calibrate_scale, progress, deadline, use_sam, processing_mode, c1_url, story_index=1, filename=filename)
+        res1 = _process_story_slice(crop1_bytes, c1_size, shared_mpp, wall_height, wall_thickness, False, progress, deadline, use_sam, processing_mode, c1_url, story_index=1, filename=filename)
 
         coords0 = [pt for r in res0["rooms"] for pt in r["polygon"]]
         coords1 = [pt for r in res1["rooms"] for pt in r["polygon"]]
@@ -740,8 +741,8 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
                 "slabThickness": slab_thickness,
                 "levelCount": 2,
                 "levels": [
-                    {"level": 0, "floorIndex": 0, "name": "Ground Floor", "elevation": 0.0},
-                    {"level": 1, "floorIndex": 1, "name": "Second Floor", "elevation": round(wall_height + slab_thickness, 2)},
+                    {"level": 0, "floorIndex": 0, "name": "Ground Floor", "elevation": 0.0, "planOffset": [-round(bbox0[0] * shared_mpp, 3), -round(bbox0[1] * shared_mpp, 3)]},
+                    {"level": 1, "floorIndex": 1, "name": "Second Floor", "elevation": round(wall_height + slab_thickness, 2), "planOffset": [round(dx - bbox1[0] * shared_mpp, 3), round(dy - bbox1[1] * shared_mpp, 3)]},
                 ],
                 "storyOffsets": [
                     {"level": 0, "dx": 0.0, "dy": 0.0},
