@@ -442,6 +442,18 @@ def snap_polygon_orthogonal(coords, tolerance_deg=7.0, snap_dist=0.15):
         merged.pop()
     if len(merged) < 3:
         return pts
+    try:
+        poly_check = shapely.geometry.Polygon(merged)
+        if not poly_check.is_valid:
+            valid_p = make_valid(poly_check)
+            if valid_p.geom_type == 'Polygon' and len(valid_p.exterior.coords) >= 4:
+                merged = [[round(pt[0], 3), round(pt[1], 3)] for pt in list(valid_p.exterior.coords)[:-1]]
+            elif valid_p.geom_type == 'MultiPolygon':
+                largest = max(valid_p.geoms, key=lambda g: g.area)
+                if len(largest.exterior.coords) >= 4:
+                    merged = [[round(pt[0], 3), round(pt[1], 3)] for pt in list(largest.exterior.coords)[:-1]]
+    except Exception:
+        pass
     return merged
 
 
@@ -991,8 +1003,10 @@ def validate_scene_geometry(scene):
             center = d.get("center", [0, 0])
             pt = shapely.geometry.Point(center[0], center[1])
             dist = combined_walls.distance(pt)
-            if dist > 0.25:
-                warnings.append(f"Door {d.get('id')} center is {dist:.2f} m from nearest wall (exceeds 0.20 m limit).")
+            door_w = float(d.get("width", 0.9))
+            limit = max(0.60, round(door_w / 2 + 0.15, 2))
+            if dist > limit:
+                warnings.append(f"Door {d.get('id')} center is {dist:.2f} m from nearest wall (exceeds {limit:.2f} m limit).")
 
     # 4. Multi-story footprint match within 0.5m
     if len(levels) >= 2:

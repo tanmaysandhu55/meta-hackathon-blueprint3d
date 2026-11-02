@@ -89,12 +89,13 @@ def segment_prepared_concept(prepared, concept):
         masks = []
         try:
             # Find outer footprint
-            dilate_k = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
+            k_size = max(25, int(round(min(width, height) * 0.035)) | 1)
+            dilate_k = cv2.getStructuringElement(cv2.MORPH_RECT, (k_size, k_size))
             dilated = cv2.dilate(walls, dilate_k)
             cnts, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             if cnts:
                 building_cnt = max(cnts, key=cv2.contourArea)
-                if cv2.contourArea(building_cnt) > 0.10 * width * height:
+                if cv2.contourArea(building_cnt) > 0.05 * width * height:
                     ox, oy, ow, oh = cv2.boundingRect(building_cnt)
                     footprint_mask = np.zeros((height, width), dtype=np.uint8)
                     cv2.rectangle(footprint_mask, (ox + 8, oy + 8), (ox + ow - 8, oy + oh - 8), 255, -1)
@@ -102,7 +103,7 @@ def segment_prepared_concept(prepared, concept):
                     # White space inside footprint (invert walls)
                     inside_white = cv2.bitwise_and(cv2.bitwise_not(walls), footprint_mask)
                     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(inside_white, 8)
-                    min_room_area = max(300, int(width * height * 0.004))
+                    min_room_area = max(300, int(width * height * 0.003))
                     
                     for i in range(1, num_labels):
                         area = stats[i, cv2.CC_STAT_AREA]

@@ -49,6 +49,7 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__, template_folder="templates", static_folder="static")
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024 + 64 * 1024  # audio endpoint limit plus multipart overhead
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
 SAMPLE_IMG_PATH = os.path.join(app.root_path, "samples", "sample_floorplan.png")
 if not os.path.exists(SAMPLE_IMG_PATH):
@@ -549,8 +550,21 @@ def _process_story_slice(image_bytes, image_size, meters_per_pixel, wall_height,
                 scale_method = f"median detected door width ({int(med_door_w)} px -> 0.90 m)"
                 scale_ratio = meters_per_pixel / old_mpp
                 # Rescale rooms and walls to match calibrated meters_per_pixel
+                import shapely.geometry
+                from shapely.validation import make_valid
                 for r in cleaned_rooms:
                     r["polygon"] = [[round(pt[0] * scale_ratio, 3), round(pt[1] * scale_ratio, 3)] for pt in r.get("polygon", [])]
+                    try:
+                        p_check = shapely.geometry.Polygon(r["polygon"])
+                        if not p_check.is_valid:
+                            vp = make_valid(p_check)
+                            if vp.geom_type == "Polygon":
+                                r["polygon"] = [[round(pt[0], 3), round(pt[1], 3)] for pt in list(vp.exterior.coords)[:-1]]
+                            elif vp.geom_type == "MultiPolygon":
+                                largest = max(vp.geoms, key=lambda g: g.area)
+                                r["polygon"] = [[round(pt[0], 3), round(pt[1], 3)] for pt in list(largest.exterior.coords)[:-1]]
+                    except Exception:
+                        pass
                     if "centroid" in r:
                         r["centroid"] = [round(r["centroid"][0] * scale_ratio, 3), round(r["centroid"][1] * scale_ratio, 3)]
                     if "area_m2" in r:
