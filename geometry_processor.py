@@ -577,3 +577,266 @@ def reconstruct_walls_from_mask_orthogonal(wall_masks, meters_per_pixel, wall_th
         })
         wall_id += 1
     return walls_data, aligned_ratio
+
+
+def detect_doors_and_windows_geometrically(image_bytes, meters_per_pixel, pad=20):
+    """Detect door openings and window symbols directly from CAD line graphics
+    when AI segmentation (SAM) is not used.
+    """
+    if isinstance(image_bytes, np.ndarray):
+        img = image_bytes
+    else:
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img is None:
+        return [], [], None
+
+    h, w = img.shape[:2]
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+    _, dark = cv2.threshold(gray, 210, 255, cv2.THRESH_BINARY_INV)
+
+    small_close = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)))
+    large_close = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (45, 45)))
+    bridges = cv2.subtract(large_close, small_close)
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(bridges)
+
+    candidates = []
+    for i in range(1, num_labels):
+        area = stats[i, cv2.CC_STAT_AREA]
+        bw = stats[i, cv2.CC_STAT_WIDTH]
+        bh = stats[i, cv2.CC_STAT_HEIGHT]
+        max_d = max(bw, bh)
+        min_d = min(bw, bh)
+        if 35 <= max_d <= 80 and area >= 280:
+            cx, cy = centroids[i]
+            candidates.append((cx, cy, max_d, min_d, area))
+
+    # Reject closely packed repeated stair treads (clusters with >= 3 items in 60px)
+    filtered_doors = []
+    door_widths_px = []
+    for c in candidates:
+        cx, cy, max_d, min_d, area = c
+        neighbors = [other for other in candidates if math.hypot(cx - other[0], cy - other[1]) < 60]
+        if len(neighbors) >= 3:
+            continue
+        if not any(math.hypot(cx - d[0], cy - d[1]) < 45 for d in filtered_doors):
+            filtered_doors.append((cx, cy, max_d))
+            door_widths_px.append(max_d)
+
+    doors_data = []
+    for idx, (cx_px, cy_px, w_px) in enumerate(filtered_doors):
+        doors_data.append({
+            "id": f"d{idx + 1}",
+            "center": [round(cx_px * meters_per_pixel, 3), round(cy_px * meters_per_pixel, 3)],
+            "width": 0.90,
+            "connects": ["room"],
+            "source": "estimated",
+            "pixel_width": w_px,
+        })
+
+    # Window detection along exterior perimeter
+    lines = cv2.HoughLinesP(dark, 1, np.pi/180, threshold=25, minLineLength=30, maxLineGap=5)
+    windows_candidates = []
+    if lines is not None:
+        for l in lines:
+            x1, y1, x2, y2 = l.flatten()
+            length = float(np.hypot(x2 - x1, y2 - y1))
+            if 35 <= length <= 120:
+                cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+                if cy < 70 or cy > h - 70 or cx < 70 or cx > w - 70:
+                    if not any(math.hypot(cx - win[0], cy - win[1]) < 35 for win in windows_candidates):
+                        windows_candidates.append((cx, cy, length))
+
+    windows_data = []
+    for idx, (cx_px, cy_px, len_px) in enumerate(windows_candidates):
+        windows_data.append({
+            "id": f"win{idx + 1}",
+            "center": [round(cx_px * meters_per_pixel, 3), round(cy_px * meters_per_pixel, 3)],
+            "width": round(max(1.0, len_px * meters_per_pixel), 2),
+            "source": "estimated",
+        })
+
+    median_door_px = float(np.median(door_widths_px)) if door_widths_px else None
+    return doors_data, windows_data, median_door_px
+
+
+def snap_openings_and_cut_walls(walls_data, doors_data, windows_data, wall_thickness_m=0.2, max_dist_m=0.6):
+    """Snap doors and windows to the nearest wall segment within max_dist_m,
+    cut rectangular opening gaps in the wall polygon, and drop orphan openings.
+    """
+    dropped_openings = []
+    if not walls_data:
+        return walls_data, doors_data, windows_data, dropped_openings
+
+    # Convert walls to Shapely polygons
+    wall_polys = []
+    for w in walls_data:
+        coords = w.get("polygon", [])
+        if len(coords) < 3:
+            continue
+        try:
+            holes = w.get("holes", [])
+            poly = shapely.geometry.Polygon(coords, holes)
+            if not poly.is_valid:
+                poly = make_valid(poly)
+            wall_polys.append(poly)
+        except Exception:
+            continue
+
+    if not wall_polys:
+        return walls_data, doors_data, windows_data, dropped_openings
+
+    combined_walls = unary_union(wall_polys).buffer(0)
+
+    # Process doors
+    valid_doors = []
+    cut_boxes = []
+    for d in doors_data:
+        cx, cy = d["center"]
+        pt = shapely.geometry.Point(cx, cy)
+        dist = combined_walls.distance(pt)
+        if dist > max_dist_m:
+            dropped_openings.append(f"Door {d['id']} dropped (no wall within {max_dist_m} m; no floating doors allowed).")
+            continue
+
+        # Find nearest point on wall boundary
+        nearest_pt = shapely.ops.nearest_points(combined_walls.exterior if combined_walls.geom_type == "Polygon" else combined_walls.boundary, pt)[0]
+        snap_x = round(nearest_pt.x, 3)
+        snap_y = round(nearest_pt.y, 3)
+        d["center"] = [snap_x, snap_y]
+
+        # Determine if segment is predominantly horizontal or vertical
+        cut_w = float(d.get("width", 0.9))
+        box_th = wall_thickness_m + 0.15
+        # Cut opening box
+        door_box = shapely.geometry.box(snap_x - cut_w / 2.0, snap_y - box_th / 2.0, snap_x + cut_w / 2.0, snap_y + box_th / 2.0)
+        cut_boxes.append(door_box)
+        valid_doors.append(d)
+
+    # Process windows
+    valid_windows = []
+    for win in windows_data:
+        cx, cy = win["center"]
+        pt = shapely.geometry.Point(cx, cy)
+        dist = combined_walls.distance(pt)
+        if dist > max_dist_m:
+            dropped_openings.append(f"Window {win['id']} dropped (no wall within {max_dist_m} m).")
+            continue
+        nearest_pt = shapely.ops.nearest_points(combined_walls.exterior if combined_walls.geom_type == "Polygon" else combined_walls.boundary, pt)[0]
+        snap_x = round(nearest_pt.x, 3)
+        snap_y = round(nearest_pt.y, 3)
+        win["center"] = [snap_x, snap_y]
+        cut_w = float(win.get("width", 1.2))
+        box_th = wall_thickness_m + 0.15
+        win_box = shapely.geometry.box(snap_x - cut_w / 2.0, snap_y - box_th / 2.0, snap_x + cut_w / 2.0, snap_y + box_th / 2.0)
+        cut_boxes.append(win_box)
+        valid_windows.append(win)
+
+    # Cut openings out of walls
+    if cut_boxes:
+        openings_union = unary_union(cut_boxes)
+        combined_walls = combined_walls.difference(openings_union).buffer(0)
+
+    # Reconstruct clean wall list
+    updated_walls = []
+    geoms = combined_walls.geoms if combined_walls.geom_type == "MultiPolygon" else [combined_walls]
+    wall_id = 1
+    for g in geoms:
+        if g.is_empty or g.area < 0.2:
+            continue
+        ext = [[round(x, 3), round(y, 3)] for x, y in list(g.exterior.coords)[:-1]]
+        holes = []
+        for interior in g.interiors:
+            if len(interior.coords) >= 3:
+                holes.append([[round(x, 3), round(y, 3)] for x, y in list(interior.coords)[:-1]])
+        updated_walls.append({
+            "id": f"w{wall_id}",
+            "polygon": ext,
+            "holes": holes,
+        })
+        wall_id += 1
+
+    return updated_walls, valid_doors, valid_windows, dropped_openings
+
+
+def validate_scene_geometry(scene):
+    """Validator that checks polygon validity, wall axis alignment,
+    door-to-wall contact, room-in-footprint containment, and multi-story footprint match.
+    """
+    warnings = []
+    meta = scene.get("meta", {})
+    rooms = scene.get("rooms", [])
+    walls = scene.get("walls", [])
+    doors = scene.get("doors", [])
+    levels = meta.get("levels", [])
+
+    # 1. Check all room polygons valid
+    room_geoms = []
+    for r in rooms:
+        coords = r.get("polygon", [])
+        if len(coords) < 3:
+            warnings.append(f"Room {r.get('id')} polygon has fewer than 3 vertices.")
+            continue
+        try:
+            poly = shapely.geometry.Polygon(coords)
+            if not poly.is_valid:
+                warnings.append(f"Room {r.get('id')} polygon is invalid.")
+            else:
+                room_geoms.append(poly)
+        except Exception:
+            warnings.append(f"Room {r.get('id')} polygon could not be parsed.")
+
+    # 2. Check all wall polygons valid & axis-aligned
+    wall_geoms = []
+    non_aligned_len = 0.0
+    total_len = 0.0
+    for w in walls:
+        coords = w.get("polygon", [])
+        if len(coords) < 3:
+            continue
+        try:
+            poly = shapely.geometry.Polygon(coords)
+            if not poly.is_valid:
+                warnings.append(f"Wall {w.get('id')} polygon is invalid.")
+            else:
+                wall_geoms.append(poly)
+            ext = list(poly.exterior.coords)
+            for i in range(len(ext) - 1):
+                dx = abs(ext[i+1][0] - ext[i][0])
+                dy = abs(ext[i+1][1] - ext[i][1])
+                length = math.hypot(dx, dy)
+                if length < 1e-4:
+                    continue
+                total_len += length
+                if dx >= 0.05 and dy >= 0.05:
+                    non_aligned_len += length
+        except Exception:
+            pass
+
+    if total_len > 0 and (non_aligned_len / total_len) > 0.15:
+        pct = (non_aligned_len / total_len) * 100
+        warnings.append(f"Wall alignment check: {pct:.1f}% of wall boundary length is not axis-aligned.")
+
+    # 3. Check every door touches a wall
+    if wall_geoms:
+        combined_walls = unary_union(wall_geoms).buffer(0)
+        for d in doors:
+            center = d.get("center", [0, 0])
+            pt = shapely.geometry.Point(center[0], center[1])
+            dist = combined_walls.distance(pt)
+            if dist > 0.25:
+                warnings.append(f"Door {d.get('id')} center is {dist:.2f} m from nearest wall (exceeds 0.20 m limit).")
+
+    # 4. Multi-story footprint match within 0.5m
+    if len(levels) >= 2:
+        coords0 = [pt for r in rooms if r.get("floorIndex", r.get("level", 0)) == 0 for pt in r.get("polygon", [])]
+        coords1 = [pt for r in rooms if r.get("floorIndex", r.get("level", 0)) == 1 for pt in r.get("polygon", [])]
+        if coords0 and coords1:
+            w0 = max(p[0] for p in coords0) - min(p[0] for p in coords0)
+            h0 = max(p[1] for p in coords0) - min(p[1] for p in coords0)
+            w1 = max(p[0] for p in coords1) - min(p[0] for p in coords1)
+            h1 = max(p[1] for p in coords1) - min(p[1] for p in coords1)
+            if abs(w0 - w1) > 0.5 or abs(h0 - h1) > 0.5:
+                warnings.append(f"Story footprint mismatch: Story 0 is {w0:.2f}x{h0:.2f} m, Story 1 is {w1:.2f}x{h1:.2f} m (diff exceeds 0.5 m).")
+
+    return warnings

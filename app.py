@@ -28,14 +28,17 @@ from demo_data import generate_sample_floorplan_image, get_sample_mask_overlays,
 from geometry_processor import (
     build_walls_from_rooms,
     check_axis_aligned_fraction,
+    detect_doors_and_windows_geometrically,
     estimate_meters_per_pixel_from_doors,
     extract_doors,
     extract_windows,
     mask_to_polygons_with_holes,
     reconstruct_walls_from_mask_orthogonal,
     reconstruct_walls_room_first,
+    snap_openings_and_cut_walls,
     snap_polygon_orthogonal,
     split_multi_plan_image,
+    validate_scene_geometry,
 )
 from segmentation_service import prepare_segmentation, segment_prepared_concept
 from usage_tracker import get_provider_usage
@@ -524,12 +527,30 @@ def _process_story_slice(image_bytes, image_size, meters_per_pixel, wall_height,
         w["id"] = f"{prefix}w{idx + 1}" 
 
     doors_data = extract_doors(door_masks, cleaned_rooms, meters_per_pixel=meters_per_pixel)
+    windows_data = extract_windows(window_masks, meters_per_pixel=meters_per_pixel)
+
+    # When SAM is not used or found no openings, detect doors and windows geometrically
+    if not doors_data or not windows_data:
+        geo_doors, geo_windows, med_door_w = detect_doors_and_windows_geometrically(image_bytes, meters_per_pixel)
+        if not doors_data and geo_doors:
+            doors_data = geo_doors
+            if calibrate_scale and med_door_w and 15 <= med_door_w <= 100:
+                meters_per_pixel = round(0.90 / med_door_w, 5)
+                scale_method = f"median detected door width ({int(med_door_w)} px -> 0.90 m)"
+        if not windows_data and geo_windows:
+            windows_data = geo_windows
+
     for idx, d in enumerate(doors_data):
         d["id"] = f"{prefix}d{idx + 1}"
-
-    windows_data = extract_windows(window_masks, meters_per_pixel=meters_per_pixel)
     for idx, win in enumerate(windows_data):
         win["id"] = f"{prefix}win{idx + 1}"
+
+    # Snap openings to walls, cut rectangular opening gaps, and drop orphan openings
+    walls_data, doors_data, windows_data, dropped_openings = snap_openings_and_cut_walls(
+        walls_data, doors_data, windows_data, wall_thickness_m=wall_thickness
+    )
+    for drop_msg in dropped_openings:
+        warnings.append(drop_msg)
 
     return {
         "rooms": cleaned_rooms,
@@ -718,6 +739,12 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
             "doors": doors_data,
             "windows": windows_data,
         }
+
+    # Run geometry validator on complete scene
+    val_warnings = validate_scene_geometry(scene)
+    for v_warn in val_warnings:
+        if v_warn not in scene["meta"]["warnings"]:
+            scene["meta"]["warnings"].append(v_warn)
 
     overlays = {
         "room": [{"id": room["id"], "label": room["label"], "polygon": room["polygon"]} for room in cleaned_rooms],

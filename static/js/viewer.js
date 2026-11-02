@@ -1121,6 +1121,38 @@ class FloorPlanViewer {
             opacity: 0.22
         });
 
+        // Continuous floor coverage per story to eliminate any holes or voids
+        const floorBaseMat = new THREE.MeshStandardMaterial({
+            color: 0xE8E6DE,
+            roughness: 0.90,
+            metalness: 0.02,
+            side: THREE.DoubleSide
+        });
+        for (let level = 0; level < this.levelCount; level++) {
+            const levelRooms = rooms.filter(r => this.getItemFloorIndex(r) === level);
+            if (!levelRooms.length) continue;
+            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+            levelRooms.forEach(room => {
+                (room.polygon || []).forEach(pt => {
+                    minX = Math.min(minX, pt[0]);
+                    maxX = Math.max(maxX, pt[0]);
+                    minY = Math.min(minY, pt[1]);
+                    maxY = Math.max(maxY, pt[1]);
+                });
+            });
+            if (Number.isFinite(minX) && maxX > minX && maxY > minY) {
+                const p0 = this.toWorldCoords(minX, minY);
+                const p1 = this.toWorldCoords(maxX, maxY);
+                const baseGeo = new THREE.PlaneGeometry(Math.abs(p1.x - p0.x), Math.abs(p1.z - p0.z));
+                baseGeo.rotateX(-Math.PI / 2);
+                const baseMesh = new THREE.Mesh(baseGeo, floorBaseMat);
+                baseMesh.position.set((p0.x + p1.x) / 2, 0.005, (p0.z + p1.z) / 2);
+                baseMesh.receiveShadow = true;
+                baseMesh.userData = { isFloorBase: true, floorIndex: level };
+                this.getFloorLayer(level, 'rooms')?.add(baseMesh);
+            }
+        }
+
         // 1. Separate stories with a visible 0.2 m slab
         for (let level = 1; level < this.levelCount; level++) {
             const levelRooms = rooms.filter(r => this.getItemFloorIndex(r) === level);
