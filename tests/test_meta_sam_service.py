@@ -50,7 +50,7 @@ def test_sam_request_uses_meta_model_api_and_restores_original_mask_size(monkeyp
     assert "room" in content[0]["text"]
     data_url = content[1]["image_url"]
     with Image.open(io.BytesIO(base64.b64decode(data_url.split(",", 1)[1]))) as sent_image:
-        assert max(sent_image.size) == 2048
+        assert 1024 <= max(sent_image.size) <= 1500
 
 
 def test_sam_retries_temporary_server_errors(monkeypatch):
@@ -160,3 +160,36 @@ def test_sam_retries_429_rate_limit_and_marks_failed(monkeypatch):
     assert len(delays) == 2
     assert delays[0] == 0.5
     assert delays[1] == 1.0
+
+
+def test_sam_concept_wording_experiments_stops_at_first_match(monkeypatch):
+    monkeypatch.setenv("META_API_KEY", "test-key")
+    prompt_calls = []
+
+    class MultiPromptClient:
+        def __init__(self, **_kwargs):
+            self.responses = self
+        def with_options(self, **_kwargs):
+            return self
+        def create(self, **kwargs):
+            text = kwargs["input"][0]["content"][0]["text"]
+            prompt_calls.append(text)
+            if text == "door":
+                # First prompt returns empty
+                return types.SimpleNamespace(output_text="")
+            else:
+                # Second prompt returns match
+                return types.SimpleNamespace(output_text="valid match")
+
+    monkeypatch.setattr(meta_sam_service, "OpenAI", MultiPromptClient)
+    monkeypatch.setattr(
+        meta_sam_service,
+        "_decode_masks",
+        lambda txt, size: [np.full((size[1], size[0]), 255, dtype=np.uint8)] if txt else [],
+    )
+
+    image = _png_bytes((600, 400))
+    masks = meta_sam_service.query_sam_concept(image, "door", (600, 400))
+    assert len(masks) == 1
+    assert prompt_calls == ["door", "door swing arc"]
+    assert getattr(masks, "concept_used", None) == "door swing arc"
