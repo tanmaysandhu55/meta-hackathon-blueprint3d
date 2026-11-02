@@ -887,6 +887,15 @@
                                 <button id="btn-cancel-scale" type="button" class="px-3 py-1.5">Cancel</button>
                                 <span id="scale-calibration-status" class="mono-caption">Use two points on a known length to recalibrate.</span>
                             </div>
+                            <div class="studio-card w-full flex flex-wrap items-center justify-between gap-2 p-3 text-xs" aria-label="Manual opening editing tools">
+                                <div class="flex items-center gap-2">
+                                    <span class="font-semibold">Manual Openings:</span>
+                                    <button id="btn-overlay-tool-select" type="button" class="px-2.5 py-1 font-semibold is-active" data-tool="select">Select / Move</button>
+                                    <button id="btn-overlay-tool-door" type="button" class="px-2.5 py-1" data-tool="door">+ Add Door (0.9m)</button>
+                                    <button id="btn-overlay-tool-window" type="button" class="px-2.5 py-1" data-tool="window">+ Add Window (1.2m)</button>
+                                </div>
+                                <span id="overlay-tool-hint" class="mono-caption">Click a wall to place. Drag along wall. Delete key removes.</span>
+                            </div>
                             <div class="w-full flex items-center justify-between text-xs">
                                 <span class="mono-caption">Detected room, wall, door, and window geometry</span>
                                 <span id="overlay-scale" class="font-mono">Scale: 0.020 m/px</span>

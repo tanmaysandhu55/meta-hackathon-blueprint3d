@@ -105,6 +105,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // 2D Overlay canvas
     const segmentationCanvas = document.getElementById("segmentation-canvas");
+    const btnOverlayToolSelect = document.getElementById("btn-overlay-tool-select");
+    const btnOverlayToolDoor = document.getElementById("btn-overlay-tool-door");
+    const btnOverlayToolWindow = document.getElementById("btn-overlay-tool-window");
+    const overlayToolHint = document.getElementById("overlay-tool-hint");
+
+    let overlayOpeningTool = "select"; // 'select' | 'door' | 'window'
+    let selectedOpening = null; // { type: 'door' | 'window', item: openingObj }
+    let openingDragActive = false;
     const segCtx = segmentationCanvas ? segmentationCanvas.getContext("2d") : null;
     const overlayScale = document.getElementById("overlay-scale");
 
@@ -361,8 +369,15 @@ document.addEventListener("DOMContentLoaded", () => {
         const scaleNeedsReview = !scaleMethod || /fallback/i.test(scaleMethod);
         const samDoors = doors.filter(d => d.source === "sam").length;
         const estDoors = doors.filter(d => d.source === "estimated").length;
+        const manDoors = doors.filter(d => d.source === "manual").length;
         let doorDetail = `${doors.length} detected opening(s); check the 2D overlay for alignment.`;
-        if (doors.length && estDoors === doors.length) {
+        if (manDoors > 0) {
+            const parts = [];
+            if (estDoors > 0) parts.push(`${estDoors} estimated`);
+            if (samDoors > 0) parts.push(`${samDoors} from SAM`);
+            parts.push(`${manDoors} manual`);
+            doorDetail = `${doors.length} (${parts.join(", ")})`;
+        } else if (doors.length && estDoors === doors.length) {
             doorDetail = `${doors.length} (estimated from wall gaps; SAM found none)`;
         } else if (samDoors > 0) {
             doorDetail = `${doors.length} (${samDoors} from SAM, ${estDoors} estimated)`;
@@ -370,8 +385,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const samWins = windows.filter(w => w.source === "sam").length;
         const estWins = windows.filter(w => w.source === "estimated").length;
+        const manWins = windows.filter(w => w.source === "manual").length;
         let winDetail = `${windows.length} detected opening(s); check the 2D overlay for alignment.`;
-        if (windows.length && estWins === windows.length) {
+        if (manWins > 0) {
+            const parts = [];
+            if (estWins > 0) parts.push(`${estWins} estimated`);
+            if (samWins > 0) parts.push(`${samWins} from SAM`);
+            parts.push(`${manWins} manual`);
+            winDetail = `${windows.length} (${parts.join(", ")})`;
+        } else if (windows.length && estWins === windows.length) {
             winDetail = `${windows.length} (estimated from line symbols; SAM found none)`;
         } else if (samWins > 0) {
             winDetail = `${windows.length} (${samWins} from SAM, ${estWins} estimated)`;
@@ -1350,6 +1372,189 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     // -------------------------------------------------------------
+    // Manual Opening Tools (Add Door, Add Window, Drag, Delete)
+    // -------------------------------------------------------------
+    function findNearestWallSegment(pointMeters, maxDist = 1.0) {
+        if (!currentSceneData || !Array.isArray(currentSceneData.walls)) return null;
+        let best = null;
+        let minDistance = maxDist;
+        currentSceneData.walls.forEach(wall => {
+            const poly = wall.polygon || [];
+            for (let i = 0; i < poly.length; i++) {
+                const p1 = poly[i];
+                const p2 = poly[(i + 1) % poly.length];
+                const dx = p2[0] - p1[0];
+                const dy = p2[1] - p1[1];
+                const lenSq = dx * dx + dy * dy;
+                if (lenSq < 1e-6) continue;
+                const t = Math.max(0, Math.min(1, ((pointMeters[0] - p1[0]) * dx + (pointMeters[1] - p1[1]) * dy) / lenSq));
+                const projX = p1[0] + t * dx;
+                const projY = p1[1] + t * dy;
+                const dist = Math.hypot(pointMeters[0] - projX, pointMeters[1] - projY);
+                if (dist < minDistance) {
+                    minDistance = dist;
+                    let angle = Math.atan2(dy, dx);
+                    const deg = (Math.abs(angle) * 180 / Math.PI) % 180;
+                    if (deg < 10 || deg > 170) angle = 0.0;
+                    else if (Math.abs(deg - 90) < 10) angle = Math.PI / 2;
+                    best = {
+                        wall,
+                        edge: [p1, p2],
+                        proj: [Number(projX.toFixed(3)), Number(projY.toFixed(3))],
+                        dist,
+                        angle: Number(angle.toFixed(4))
+                    };
+                }
+            }
+        });
+        return best;
+    }
+
+    function setOverlayOpeningTool(tool) {
+        overlayOpeningTool = tool;
+        [btnOverlayToolSelect, btnOverlayToolDoor, btnOverlayToolWindow].forEach(btn => {
+            if (!btn) return;
+            if (btn.getAttribute("data-tool") === tool) {
+                btn.classList.add("is-active", "font-semibold");
+            } else {
+                btn.classList.remove("is-active", "font-semibold");
+            }
+        });
+        if (overlayToolHint) {
+            if (tool === "door") overlayToolHint.textContent = "Click a wall to place a 0.9 m door.";
+            else if (tool === "window") overlayToolHint.textContent = "Click a wall to place a 1.2 m window.";
+            else overlayToolHint.textContent = "Click an opening to select or drag along wall. Delete key removes.";
+        }
+    }
+
+    if (btnOverlayToolSelect) btnOverlayToolSelect.addEventListener("click", () => setOverlayOpeningTool("select"));
+    if (btnOverlayToolDoor) btnOverlayToolDoor.addEventListener("click", () => setOverlayOpeningTool("door"));
+    if (btnOverlayToolWindow) btnOverlayToolWindow.addEventListener("click", () => setOverlayOpeningTool("window"));
+
+    if (segmentationCanvas) {
+        segmentationCanvas.addEventListener("pointerdown", event => {
+            if (scaleCalibrationActive || polygonEditActive || !currentSceneData) return;
+            const rect = segmentationCanvas.getBoundingClientRect();
+            if (!rect.width || !rect.height) return;
+            const mpp = Number(currentSceneData.meta.metersPerPixel) || 0.02;
+            const px = (event.clientX - rect.left) * segmentationCanvas.width / rect.width;
+            const py = (event.clientY - rect.top) * segmentationCanvas.height / rect.height;
+            const ptM = [px * mpp, py * mpp];
+
+            if (overlayOpeningTool === "door" || overlayOpeningTool === "window") {
+                const snap = findNearestWallSegment(ptM, 1.2);
+                if (snap) {
+                    if (overlayOpeningTool === "door") {
+                        const newDoor = {
+                            id: `d_manual_${Date.now().toString(36)}`,
+                            center: snap.proj,
+                            width: 0.90,
+                            angle: snap.angle,
+                            source: "manual",
+                            connects: ["room"]
+                        };
+                        currentSceneData.doors = currentSceneData.doors || [];
+                        currentSceneData.doors.push(newDoor);
+                        selectedOpening = { type: "door", item: newDoor };
+                        showMessage("Placed 0.9 m door snapped to wall.", "info");
+                    } else {
+                        const newWin = {
+                            id: `win_manual_${Date.now().toString(36)}`,
+                            center: snap.proj,
+                            width: 1.20,
+                            angle: snap.angle,
+                            source: "manual"
+                        };
+                        currentSceneData.windows = currentSceneData.windows || [];
+                        currentSceneData.windows.push(newWin);
+                        selectedOpening = { type: "window", item: newWin };
+                        showMessage("Placed 1.2 m window snapped to wall.", "info");
+                    }
+                    refreshEditedScene();
+                    updateAreaSummary();
+                    render2DSegmentationCanvas();
+                } else {
+                    showMessage("Click closer to a wall segment to snap the opening.", "warning");
+                }
+                return;
+            }
+
+            if (overlayOpeningTool === "select") {
+                const hitRadiusM = 0.5;
+                let hit = null;
+                (currentSceneData.doors || []).forEach(d => {
+                    if (d.center && Math.hypot(d.center[0] - ptM[0], d.center[1] - ptM[1]) < hitRadiusM) {
+                        hit = { type: "door", item: d };
+                    }
+                });
+                if (!hit) {
+                    (currentSceneData.windows || []).forEach(w => {
+                        if (w.center && Math.hypot(w.center[0] - ptM[0], w.center[1] - ptM[1]) < hitRadiusM) {
+                            hit = { type: "window", item: w };
+                        }
+                    });
+                }
+                selectedOpening = hit;
+                if (hit) {
+                    openingDragActive = true;
+                    segmentationCanvas.setPointerCapture(event.pointerId);
+                }
+                render2DSegmentationCanvas();
+            }
+        });
+
+        segmentationCanvas.addEventListener("pointermove", event => {
+            if (!openingDragActive || !selectedOpening || !currentSceneData) return;
+            const rect = segmentationCanvas.getBoundingClientRect();
+            if (!rect.width || !rect.height) return;
+            const mpp = Number(currentSceneData.meta.metersPerPixel) || 0.02;
+            const px = (event.clientX - rect.left) * segmentationCanvas.width / rect.width;
+            const py = (event.clientY - rect.top) * segmentationCanvas.height / rect.height;
+            const ptM = [px * mpp, py * mpp];
+
+            const snap = findNearestWallSegment(ptM, 1.5);
+            if (snap) {
+                selectedOpening.item.center = snap.proj;
+                selectedOpening.item.angle = snap.angle;
+                selectedOpening.item.source = "manual";
+                viewer.loadScene(currentSceneData, { animateBuild: false, resetCamera: false });
+                render2DSegmentationCanvas();
+            }
+        });
+
+        const finishOpeningDrag = () => {
+            if (openingDragActive) {
+                openingDragActive = false;
+                refreshEditedScene();
+                updateAreaSummary();
+            }
+        };
+        segmentationCanvas.addEventListener("pointerup", finishOpeningDrag);
+        segmentationCanvas.addEventListener("pointercancel", finishOpeningDrag);
+    }
+
+    window.addEventListener("keydown", event => {
+        if (event.key === "Delete" || event.key === "Backspace") {
+            const activeTag = (document.activeElement?.tagName || "").toUpperCase();
+            if (activeTag === "INPUT" || activeTag === "TEXTAREA") return;
+            if (selectedOpening && currentSceneData) {
+                event.preventDefault();
+                const openingId = selectedOpening.item.id;
+                if (selectedOpening.type === "door") {
+                    currentSceneData.doors = (currentSceneData.doors || []).filter(d => d.id !== openingId);
+                } else {
+                    currentSceneData.windows = (currentSceneData.windows || []).filter(w => w.id !== openingId);
+                }
+                selectedOpening = null;
+                refreshEditedScene();
+                updateAreaSummary();
+                render2DSegmentationCanvas();
+                showMessage("Removed opening from the scene.", "warning");
+            }
+        }
+    });
+
+    // -------------------------------------------------------------
     // Tab Navigation
     // -------------------------------------------------------------
     tabBtns.forEach(btn => {
@@ -1846,11 +2051,16 @@ document.addEventListener("DOMContentLoaded", () => {
             const cy = sourceY / mpp;
             const w = (door.width || 0.9) / mpp;
 
-            segCtx.strokeStyle = "#D02020";
-            segCtx.lineWidth = 4;
+            const isSelected = selectedOpening && selectedOpening.item && selectedOpening.item.id === door.id;
+            segCtx.strokeStyle = isSelected ? "#00E5FF" : (door.source === "manual" ? "#FF007F" : "#D02020");
+            segCtx.lineWidth = isSelected ? 6 : 4;
             segCtx.beginPath();
             segCtx.arc(cx, cy, w / 2, 0, Math.PI * 2);
             segCtx.stroke();
+            if (isSelected) {
+                segCtx.fillStyle = "rgba(0, 229, 255, 0.25)";
+                segCtx.fill();
+            }
         });
 
         // Draw Windows
@@ -1860,12 +2070,19 @@ document.addEventListener("DOMContentLoaded", () => {
             const cy = sourceY / mpp;
             const w = (win.width || 1.2) / mpp;
 
-            segCtx.strokeStyle = "#1040C0";
-            segCtx.lineWidth = 4;
+            const isSelected = selectedOpening && selectedOpening.item && selectedOpening.item.id === win.id;
+            segCtx.strokeStyle = isSelected ? "#00E5FF" : (win.source === "manual" ? "#00B0FF" : "#1040C0");
+            segCtx.lineWidth = isSelected ? 6 : 4;
             segCtx.beginPath();
             segCtx.moveTo(cx - w / 2, cy);
             segCtx.lineTo(cx + w / 2, cy);
             segCtx.stroke();
+            if (isSelected) {
+                segCtx.beginPath();
+                segCtx.arc(cx, cy, Math.max(8, w / 3), 0, Math.PI * 2);
+                segCtx.fillStyle = "rgba(0, 229, 255, 0.25)";
+                segCtx.fill();
+            }
         });
 
         scaleCalibrationPoints.forEach((point, index) => {
