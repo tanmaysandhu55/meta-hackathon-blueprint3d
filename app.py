@@ -27,10 +27,14 @@ from meta_media_service import generate_floorplan, image_generation_ready, trans
 from demo_data import generate_sample_floorplan_image, get_sample_mask_overlays, get_sample_scene_json, get_two_story_sample_scene_json
 from geometry_processor import (
     build_walls_from_rooms,
+    check_axis_aligned_fraction,
     estimate_meters_per_pixel_from_doors,
     extract_doors,
     extract_windows,
     mask_to_polygons_with_holes,
+    reconstruct_walls_from_mask_orthogonal,
+    reconstruct_walls_room_first,
+    snap_polygon_orthogonal,
     split_multi_plan_image,
 )
 from segmentation_service import prepare_segmentation, segment_prepared_concept
@@ -487,22 +491,37 @@ def _process_story_slice(image_bytes, image_size, meters_per_pixel, wall_height,
         r["centroid"] = rooms_data[idx]["centroid"]
         r["area_m2"] = rooms_data[idx]["area_m2"]
 
+    # Snap room polygons orthogonally (7 degrees, 0.15m merge)
+    for r in rooms_data:
+        r["polygon"] = snap_polygon_orthogonal(r["polygon"], tolerance_deg=7.0, snap_dist=0.15)
+
+    cleaned_rooms = [
+        {key: room[key] for key in ("id", "type", "label", "confidence", "polygon")}
+        for room in rooms_data
+    ]
+    for idx, r in enumerate(cleaned_rooms):
+        r["centroid"] = rooms_data[idx]["centroid"]
+        r["area_m2"] = rooms_data[idx]["area_m2"]
+
+    # Rebuild walls: Room-first as primary method
     walls_data = []
-    if wall_masks:
-        combined_wall = np.zeros_like(wall_masks[0])
-        for mask in wall_masks:
-            combined_wall = cv2.bitwise_or(combined_wall, mask)
-        for polygon in mask_to_polygons_with_holes(combined_wall, meters_per_pixel=meters_per_pixel, min_area_px=100):
-            walls_data.append({
-                "id": f"{prefix}w{len(walls_data) + 1}",
-                "polygon": polygon["polygon"],
-                "holes": polygon["holes"],
-            })
+    wall_method = "none"
+    rf_walls, rf_ratio = reconstruct_walls_room_first(cleaned_rooms, wall_thickness_m=wall_thickness)
+    if rf_walls and rf_ratio >= 0.85:
+        walls_data = rf_walls
+        wall_method = "room-boundary-reconstruction"
+    elif wall_masks:
+        mask_walls, mask_ratio = reconstruct_walls_from_mask_orthogonal(wall_masks, meters_per_pixel, wall_thickness_m=wall_thickness)
+        if mask_walls:
+            walls_data = mask_walls
+            wall_method = "orthogonal-mask-snapping"
     if not walls_data:
         walls_data = build_walls_from_rooms(cleaned_rooms, meters_per_pixel, image_size, wall_thickness)
-        for idx, w in enumerate(walls_data):
-            w["id"] = f"{prefix}w{idx + 1}"
+        wall_method = "approximate-room-outlines"
         warnings.append("Walls were approximated from detected room outlines.")
+
+    for idx, w in enumerate(walls_data):
+        w["id"] = f"{prefix}w{idx + 1}" 
 
     doors_data = extract_doors(door_masks, cleaned_rooms, meters_per_pixel=meters_per_pixel)
     for idx, d in enumerate(doors_data):
@@ -521,6 +540,7 @@ def _process_story_slice(image_bytes, image_size, meters_per_pixel, wall_height,
         "meters_per_pixel": meters_per_pixel,
         "scale_method": scale_method,
         "segmentation_backend": segmentation_backend,
+        "wall_method": wall_method,
     }
 
 
@@ -646,6 +666,7 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
                 "scaleMethod": scale_method,
                 "wallHeight": wall_height,
                 "wallThickness": wall_thickness,
+                "wall_method": res0.get("wall_method", "room-boundary-reconstruction"),
                 "floorHeight": round(wall_height + slab_thickness, 2),
                 "slabThickness": slab_thickness,
                 "levelCount": 2,
@@ -689,6 +710,7 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
                 "scaleMethod": scale_method,
                 "wallHeight": wall_height,
                 "wallThickness": wall_thickness,
+                "wall_method": res.get("wall_method", "room-boundary-reconstruction"),
                 "warnings": warnings,
             },
             "rooms": cleaned_rooms,

@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 import shapely.geometry
 from shapely.validation import make_valid
+from shapely.ops import polylabel, unary_union
 
 
 def clean_mask(mask_uint8, kernel_size=5):
@@ -389,3 +390,190 @@ def build_walls_from_rooms(rooms_list, meters_per_pixel, image_size, wall_thickn
             continue
 
     return walls
+
+
+def snap_polygon_orthogonal(coords, tolerance_deg=7.0, snap_dist=0.15):
+    """Force edges within tolerance_deg of axis alignment to be strictly orthogonal,
+    merge collinear consecutive edges, and snap vertices within snap_dist to one point.
+    """
+    pts = [[float(p[0]), float(p[1])] for p in coords]
+    if len(pts) < 3:
+        return pts
+    n = len(pts)
+    snapped = []
+    for i in range(n):
+        p1 = pts[i]
+        p2 = pts[(i + 1) % n]
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        length = math.hypot(dx, dy)
+        if length < 1e-4:
+            continue
+        angle = math.degrees(math.atan2(dy, dx)) % 360
+        near_h = min(abs(angle - 0), abs(angle - 180), abs(angle - 360)) <= tolerance_deg
+        near_v = min(abs(angle - 90), abs(angle - 270)) <= tolerance_deg
+        snapped.append([p1[0], p1[1]])
+        if near_h:
+            p2[1] = p1[1]
+        elif near_v:
+            p2[0] = p1[0]
+
+    # Merge consecutive collinear edges
+    merged_collinear = []
+    for p in snapped:
+        if len(merged_collinear) < 2:
+            merged_collinear.append(p)
+        else:
+            p0 = merged_collinear[-2]
+            p1 = merged_collinear[-1]
+            if (abs(p0[1] - p1[1]) < 1e-3 and abs(p1[1] - p[1]) < 1e-3) or \
+               (abs(p0[0] - p1[0]) < 1e-3 and abs(p1[0] - p[0]) < 1e-3):
+                merged_collinear[-1] = p
+            else:
+                merged_collinear.append(p)
+
+    # Snap vertices within snap_dist
+    merged = []
+    for p in merged_collinear:
+        if not merged or math.hypot(p[0] - merged[-1][0], p[1] - merged[-1][1]) >= snap_dist:
+            merged.append(p)
+    if len(merged) > 2 and math.hypot(merged[0][0] - merged[-1][0], merged[0][1] - merged[-1][1]) < snap_dist:
+        merged.pop()
+    return merged
+
+
+def check_axis_aligned_fraction(shapely_geom, angle_tol_deg=5.0):
+    """Calculate the fraction of wall boundary segments that are strictly axis-aligned."""
+    if shapely_geom is None or shapely_geom.is_empty:
+        return 0.0
+    geoms = shapely_geom.geoms if shapely_geom.geom_type == "MultiPolygon" else [shapely_geom]
+    total_len = 0.0
+    aligned_len = 0.0
+    for g in geoms:
+        coords = list(g.exterior.coords)
+        for i in range(len(coords) - 1):
+            p1 = coords[i]
+            p2 = coords[i + 1]
+            dx = abs(p2[0] - p1[0])
+            dy = abs(p2[1] - p1[1])
+            length = math.hypot(dx, dy)
+            if length < 1e-4:
+                continue
+            total_len += length
+            angle = math.degrees(math.atan2(dy, dx)) % 360
+            near_h = min(abs(angle - 0), abs(angle - 180), abs(angle - 360)) <= angle_tol_deg
+            near_v = min(abs(angle - 90), abs(angle - 270)) <= angle_tol_deg
+            if near_h or near_v:
+                aligned_len += length
+    return (aligned_len / total_len) if total_len > 0 else 1.0
+
+
+def reconstruct_walls_room_first(rooms_list, wall_thickness_m=0.2):
+    """Primary wall reconstructor: takes clean snapped room outlines and synthesizes
+    a uniform closed wall system of constant thickness (0.2m) with Shapely unary_union.
+    """
+    buffered_boundaries = []
+    for r in rooms_list:
+        poly_coords = r.get("polygon", [])
+        if len(poly_coords) < 3:
+            continue
+        try:
+            poly = shapely.geometry.Polygon(poly_coords)
+            if not poly.is_valid:
+                poly = make_valid(poly)
+            if poly.geom_type == "MultiPolygon":
+                poly = max(poly.geoms, key=lambda p: p.area)
+            if poly.is_valid and poly.area >= 0.3:
+                # Buffer boundary by wall_thickness / 2 so shared walls sum to wall_thickness
+                buf = poly.exterior.buffer(wall_thickness_m / 2.0, cap_style=3, join_style=2)
+                buffered_boundaries.append(buf)
+        except Exception:
+            continue
+
+    if not buffered_boundaries:
+        return [], 0.0
+
+    walls_union = unary_union(buffered_boundaries).buffer(0)
+    aligned_ratio = check_axis_aligned_fraction(walls_union)
+
+    walls_data = []
+    wall_id = 1
+    geoms = walls_union.geoms if walls_union.geom_type == "MultiPolygon" else [walls_union]
+    for g in geoms:
+        if g.is_empty or g.area < 0.2:
+            continue
+        ext = [[round(x, 3), round(y, 3)] for x, y in list(g.exterior.coords)[:-1]]
+        holes = []
+        for interior in g.interiors:
+            if len(interior.coords) >= 3:
+                holes.append([[round(x, 3), round(y, 3)] for x, y in list(interior.coords)[:-1]])
+        walls_data.append({
+            "id": f"w{wall_id}",
+            "polygon": ext,
+            "holes": holes,
+        })
+        wall_id += 1
+    return walls_data, aligned_ratio
+
+
+def reconstruct_walls_from_mask_orthogonal(wall_masks, meters_per_pixel, wall_thickness_m=0.2):
+    """Fallback wall reconstructor: simplifies extracted wall mask, snaps orthogonally,
+    removes slivers, and rebuilds walls with uniform 0.2m thickness.
+    """
+    if not wall_masks:
+        return [], 0.0
+    combined = np.zeros_like(wall_masks[0])
+    for mask in wall_masks:
+        combined = cv2.bitwise_or(combined, mask)
+
+    # Morphological clean and gap closure under 0.1m
+    gap_px = max(3, int(round(0.10 / meters_per_pixel)))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (gap_px, gap_px))
+    cleaned = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel)
+
+    polys = mask_to_polygons_with_holes(cleaned, meters_per_pixel=meters_per_pixel, min_area_px=100)
+    buffered_pieces = []
+    for p in polys:
+        coords = p.get("polygon", [])
+        if len(coords) < 3:
+            continue
+        snapped = snap_polygon_orthogonal(coords, tolerance_deg=7.0, snap_dist=0.15)
+        if len(snapped) < 3:
+            continue
+        try:
+            poly = shapely.geometry.Polygon(snapped)
+            if not poly.is_valid:
+                poly = make_valid(poly)
+            if poly.geom_type == "MultiPolygon":
+                poly = max(poly.geoms, key=lambda item: item.area)
+            # Remove slivers: area under 0.3 m2
+            if poly.is_valid and poly.area >= 0.3:
+                # Rebuild with constant thickness along boundary
+                buf = poly.exterior.buffer(wall_thickness_m / 2.0, cap_style=3, join_style=2)
+                buffered_pieces.append(buf)
+        except Exception:
+            continue
+
+    if not buffered_pieces:
+        return [], 0.0
+
+    walls_union = unary_union(buffered_pieces).buffer(0)
+    aligned_ratio = check_axis_aligned_fraction(walls_union)
+    walls_data = []
+    wall_id = 1
+    geoms = walls_union.geoms if walls_union.geom_type == "MultiPolygon" else [walls_union]
+    for g in geoms:
+        if g.is_empty or g.area < 0.2:
+            continue
+        ext = [[round(x, 3), round(y, 3)] for x, y in list(g.exterior.coords)[:-1]]
+        holes = []
+        for interior in g.interiors:
+            if len(interior.coords) >= 3:
+                holes.append([[round(x, 3), round(y, 3)] for x, y in list(interior.coords)[:-1]])
+        walls_data.append({
+            "id": f"w{wall_id}",
+            "polygon": ext,
+            "holes": holes,
+        })
+        wall_id += 1
+    return walls_data, aligned_ratio
