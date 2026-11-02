@@ -1727,7 +1727,7 @@ class FloorPlanViewer {
             const backKnob = knob.clone();
             backKnob.position.z = -0.04;
             panelMesh.add(backKnob);
-            hinge.rotation.y = doorGroup.userData.open ? Math.PI / 2 : 0;
+            hinge.rotation.y = doorGroup.userData.open ? Math.PI / 2 : (15 * Math.PI / 180);
             doorGroup.add(hinge);
             doorGroup.userData.hinge = hinge;
             doorGroup.userData.targetAngle = doorGroup.userData.open ? Math.PI / 2 : 0;

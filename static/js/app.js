@@ -359,11 +359,29 @@ document.addEventListener("DOMContentLoaded", () => {
         const namedRoomCount = rooms.filter(room => room.confidence > 0 && !genericLabel(room.label)).length;
         const scaleMethod = String(meta.scaleMethod || "");
         const scaleNeedsReview = !scaleMethod || /fallback/i.test(scaleMethod);
+        const samDoors = doors.filter(d => d.source === "sam").length;
+        const estDoors = doors.filter(d => d.source === "estimated").length;
+        let doorDetail = `${doors.length} detected opening(s); check the 2D overlay for alignment.`;
+        if (doors.length && estDoors === doors.length) {
+            doorDetail = `${doors.length} (estimated from wall gaps; SAM found none)`;
+        } else if (samDoors > 0) {
+            doorDetail = `${doors.length} (${samDoors} from SAM, ${estDoors} estimated)`;
+        }
+
+        const samWins = windows.filter(w => w.source === "sam").length;
+        const estWins = windows.filter(w => w.source === "estimated").length;
+        let winDetail = `${windows.length} detected opening(s); check the 2D overlay for alignment.`;
+        if (windows.length && estWins === windows.length) {
+            winDetail = `${windows.length} (estimated from line symbols; SAM found none)`;
+        } else if (samWins > 0) {
+            winDetail = `${windows.length} (${samWins} from SAM, ${estWins} estimated)`;
+        }
+
         const rows = [
             { state: validRoomCount === rooms.length && rooms.length > 0 ? "ok" : "review", label: "Room outlines", detail: `${validRoomCount} of ${rooms.length} have a usable polygon.` },
             { state: walls.length ? "ok" : "review", label: "Walls", detail: `${walls.length} wall region(s) in the scene.` },
-            { state: doors.length ? "ok" : "review", label: "Doors", detail: `${doors.length} detected opening(s); check the 2D overlay for alignment.` },
-            { state: windows.length ? "ok" : "review", label: "Windows", detail: `${windows.length} detected opening(s); check the 2D overlay for alignment.` },
+            { state: doors.length ? "ok" : "review", label: "Doors", detail: doorDetail },
+            { state: windows.length ? "ok" : "review", label: "Windows", detail: winDetail },
             { state: scaleNeedsReview ? "review" : "info", label: "Scale", detail: scaleNeedsReview ? "No verified calibration recorded. Compare with a known dimension." : `${scaleMethod}; confirm against a known dimension.` },
             { state: floorCount < 2 || connectorCount > 0 ? "ok" : "review", label: "Floor connection", detail: floorCount < 2 ? "Single-story scene." : `${connectorCount} stair/elevator room(s) for ${floorCount} floors.` },
             { state: namedRoomCount === rooms.length && rooms.length > 0 ? "ok" : "review", label: "Room labels", detail: `${namedRoomCount} of ${rooms.length} have non-generic labels.` },

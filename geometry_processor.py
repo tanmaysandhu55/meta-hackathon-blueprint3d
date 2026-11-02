@@ -440,6 +440,8 @@ def snap_polygon_orthogonal(coords, tolerance_deg=7.0, snap_dist=0.15):
             merged.append(p)
     if len(merged) > 2 and math.hypot(merged[0][0] - merged[-1][0], merged[0][1] - merged[-1][1]) < snap_dist:
         merged.pop()
+    if len(merged) < 3:
+        return pts
     return merged
 
 
@@ -580,6 +582,78 @@ def reconstruct_walls_from_mask_orthogonal(wall_masks, meters_per_pixel, wall_th
     return walls_data, aligned_ratio
 
 
+
+def _find_wall_segment_orientation(combined_walls, pt):
+    """Find the orientation (tangent u and normal n) of the wall boundary nearest to pt."""
+    boundary = combined_walls.boundary
+    best_dist = float("inf")
+    best_u = (1.0, 0.0)
+    best_n = (0.0, 1.0)
+    best_nearest = pt
+
+    lines = []
+    if boundary.geom_type == "LineString":
+        lines = [boundary]
+    elif boundary.geom_type in ("MultiLineString", "GeometryCollection"):
+        lines = [g for g in boundary.geoms if g.geom_type == "LineString"]
+
+    for line in lines:
+        coords = list(line.coords)
+        for i in range(len(coords) - 1):
+            p1 = coords[i]
+            p2 = coords[i + 1]
+            seg = shapely.geometry.LineString([p1, p2])
+            d = seg.distance(pt)
+            if d < best_dist:
+                best_dist = d
+                n_pt = shapely.ops.nearest_points(seg, pt)[0]
+                best_nearest = n_pt
+                dx = p2[0] - p1[0]
+                dy = p2[1] - p1[1]
+                L = math.hypot(dx, dy)
+                if L > 1e-4:
+                    best_u = (dx / L, dy / L)
+                    best_n = (-dy / L, dx / L)
+
+    return best_nearest, best_u, best_n
+
+
+def _oriented_opening_box(center_x, center_y, u, n, width, thickness):
+    """Create an oriented rectangular polygon along tangent u and normal n."""
+    half_w = width / 2.0
+    half_t = thickness / 2.0
+    c1 = (center_x + u[0] * half_w + n[0] * half_t, center_y + u[1] * half_w + n[1] * half_t)
+    c2 = (center_x - u[0] * half_w + n[0] * half_t, center_y - u[1] * half_w + n[1] * half_t)
+    c3 = (center_x - u[0] * half_w - n[0] * half_t, center_y - u[1] * half_w - n[1] * half_t)
+    c4 = (center_x + u[0] * half_w - n[0] * half_t, center_y + u[1] * half_w - n[1] * half_t)
+    return shapely.geometry.Polygon([c1, c2, c3, c4])
+
+
+def _determine_opening_connects(snap_x, snap_y, n, cleaned_rooms):
+    """Determine which two rooms an opening connects based on normal offsets."""
+    if not cleaned_rooms:
+        return ["room", "room"]
+    p_a = shapely.geometry.Point(snap_x + n[0] * 0.35, snap_y + n[1] * 0.35)
+    p_b = shapely.geometry.Point(snap_x - n[0] * 0.35, snap_y - n[1] * 0.35)
+    room_a = "outside"
+    room_b = "outside"
+    for r in cleaned_rooms:
+        poly_coords = r.get("polygon", [])
+        if len(poly_coords) >= 3:
+            try:
+                poly = shapely.geometry.Polygon(poly_coords)
+                if poly.contains(p_a):
+                    room_a = r.get("id", "room")
+                if poly.contains(p_b):
+                    room_b = r.get("id", "room")
+            except Exception:
+                pass
+    if room_a == "outside" and room_b == "outside":
+        return ["room", "outside"]
+    if room_a == room_b:
+        return [room_a, "outside"]
+    return [room_a, room_b]
+
 def detect_doors_and_windows_geometrically(image_bytes, meters_per_pixel, pad=20):
     """Detect door openings and window symbols directly from CAD line graphics
     when AI segmentation (SAM) is not used.
@@ -596,64 +670,139 @@ def detect_doors_and_windows_geometrically(image_bytes, meters_per_pixel, pad=20
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
     _, dark = cv2.threshold(gray, 210, 255, cv2.THRESH_BINARY_INV)
 
+    # 1. Door swing arcs (quarter-circle curved contours)
+    contours, _ = cv2.findContours(dark, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+    arcs = []
+    for cnt in contours:
+        length = cv2.arcLength(cnt, False)
+        area = cv2.contourArea(cnt)
+        if 45 <= length <= 350 and area < 400:
+            (cx, cy), radius = cv2.minEnclosingCircle(cnt)
+            if 20 <= radius <= 70:
+                arcs.append((float(cx), float(cy), float(radius)))
+
+    # 2. Wall breaks / gaps via morphological differences
     small_close = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)))
     large_close = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (45, 45)))
     bridges = cv2.subtract(large_close, small_close)
     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(bridges)
 
-    candidates = []
+    gap_candidates = []
     for i in range(1, num_labels):
         area = stats[i, cv2.CC_STAT_AREA]
         bw = stats[i, cv2.CC_STAT_WIDTH]
         bh = stats[i, cv2.CC_STAT_HEIGHT]
         max_d = max(bw, bh)
         min_d = min(bw, bh)
-        if 35 <= max_d <= 80 and area >= 280:
+        if 25 <= max_d <= 80 and area >= 180:
             cx, cy = centroids[i]
-            candidates.append((cx, cy, max_d, min_d, area))
+            gap_candidates.append((float(cx), float(cy), float(max_d), float(min_d), area))
 
-    # Reject closely packed repeated stair treads (clusters with >= 3 items in 60px)
-    filtered_doors = []
-    door_widths_px = []
-    for c in candidates:
+    # Reject closely packed repeated stair treads
+    filtered_gaps = []
+    for c in gap_candidates:
         cx, cy, max_d, min_d, area = c
-        neighbors = [other for other in candidates if math.hypot(cx - other[0], cy - other[1]) < 60]
-        if len(neighbors) >= 3:
+        neighbors = [other for other in gap_candidates if math.hypot(cx - other[0], cy - other[1]) < 60]
+        if len(neighbors) >= 4:
             continue
-        if not any(math.hypot(cx - d[0], cy - d[1]) < 45 for d in filtered_doors):
-            filtered_doors.append((cx, cy, max_d))
+        filtered_gaps.append((cx, cy, max_d))
+
+    final_doors = []
+    door_widths_px = []
+
+    # First add arcs: each arc defines a door
+    for arc_cx, arc_cy, arc_r in arcs:
+        matching_gap = None
+        min_gap_dist = 50.0
+        for gap in filtered_gaps:
+            d = math.hypot(arc_cx - gap[0], arc_cy - gap[1])
+            if d < min_gap_dist:
+                min_gap_dist = d
+                matching_gap = gap
+
+        if matching_gap:
+            door_cx = matching_gap[0]
+            door_cy = matching_gap[1]
+            door_w = matching_gap[2]
+        else:
+            door_cx = arc_cx
+            door_cy = arc_cy
+            door_w = arc_r * 1.414
+
+        if not any(math.hypot(door_cx - d[0], door_cy - d[1]) < 35 for d in final_doors):
+            final_doors.append((door_cx, door_cy, door_w, True))
+            door_widths_px.append(door_w)
+
+    # Second add gaps that are not covered by any arc (e.g. open entrance doorway)
+    for gap in filtered_gaps:
+        cx, cy, max_d = gap
+        if not any(math.hypot(cx - d[0], cy - d[1]) < 45 for d in final_doors):
+            final_doors.append((cx, cy, max_d, False))
             door_widths_px.append(max_d)
 
     doors_data = []
-    for idx, (cx_px, cy_px, w_px) in enumerate(filtered_doors):
+    for idx, (cx_px, cy_px, w_px, has_arc) in enumerate(final_doors):
         doors_data.append({
             "id": f"d{idx + 1}",
             "center": [round(cx_px * meters_per_pixel, 3), round(cy_px * meters_per_pixel, 3)],
+            "pixel_center": [cx_px, cy_px],
             "width": 0.90,
             "connects": ["room"],
             "source": "estimated",
+            "has_arc": has_arc,
             "pixel_width": w_px,
         })
 
-    # Window detection along exterior perimeter
-    lines = cv2.HoughLinesP(dark, 1, np.pi/180, threshold=25, minLineLength=30, maxLineGap=5)
+    # 3. Window detection
+    lines = cv2.HoughLinesP(dark, 1, np.pi/180, threshold=25, minLineLength=25, maxLineGap=10)
     windows_candidates = []
     if lines is not None:
+        h_lines = []
+        v_lines = []
         for l in lines:
             x1, y1, x2, y2 = l.flatten()
             length = float(np.hypot(x2 - x1, y2 - y1))
-            if 35 <= length <= 120:
-                cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
-                if cy < 70 or cy > h - 70 or cx < 70 or cx > w - 70:
-                    if not any(math.hypot(cx - win[0], cy - win[1]) < 35 for win in windows_candidates):
-                        windows_candidates.append((cx, cy, length))
+            if 25 <= length <= 140:
+                angle = float(np.degrees(np.arctan2(abs(y2 - y1), abs(x2 - x1))))
+                if angle < 15:
+                    h_lines.append((min(x1, x2), max(x1, x2), (y1 + y2)/2.0, length))
+                elif angle > 75:
+                    v_lines.append((min(y1, y2), max(y1, y2), (x1 + x2)/2.0, length))
+
+        for i in range(len(h_lines)):
+            for j in range(i + 1, len(h_lines)):
+                l1, l2 = h_lines[i], h_lines[j]
+                overlap = min(l1[1], l2[1]) - max(l1[0], l2[0])
+                y_dist = abs(l1[2] - l2[2])
+                if overlap > 25 and 6 <= y_dist <= 25:
+                    cx = (max(l1[0], l2[0]) + min(l1[1], l2[1])) / 2.0
+                    cy = (l1[2] + l2[2]) / 2.0
+                    if not any(math.hypot(cx - d[0], cy - d[1]) < 40 for d in final_doors):
+                        windows_candidates.append((cx, cy, overlap))
+
+        for i in range(len(v_lines)):
+            for j in range(i + 1, len(v_lines)):
+                l1, l2 = v_lines[i], v_lines[j]
+                overlap = min(l1[1], l2[1]) - max(l1[0], l2[0])
+                x_dist = abs(l1[2] - l2[2])
+                if overlap > 25 and 6 <= x_dist <= 25:
+                    cy = (max(l1[0], l2[0]) + min(l1[1], l2[1])) / 2.0
+                    cx = (l1[2] + l2[2]) / 2.0
+                    if not any(math.hypot(cx - d[0], cy - d[1]) < 40 for d in final_doors):
+                        windows_candidates.append((cx, cy, overlap))
+
+    filtered_windows = []
+    for win in windows_candidates:
+        if not any(math.hypot(win[0] - w_item[0], win[1] - w_item[1]) < 35 for w_item in filtered_windows):
+            filtered_windows.append(win)
 
     windows_data = []
-    for idx, (cx_px, cy_px, len_px) in enumerate(windows_candidates):
+    for idx, (cx_px, cy_px, len_px) in enumerate(filtered_windows):
         windows_data.append({
             "id": f"win{idx + 1}",
             "center": [round(cx_px * meters_per_pixel, 3), round(cy_px * meters_per_pixel, 3)],
-            "width": round(max(1.0, len_px * meters_per_pixel), 2),
+            "pixel_center": [cx_px, cy_px],
+            "width": round(max(1.0, min(2.0, len_px * meters_per_pixel)), 2),
             "source": "estimated",
         })
 
@@ -661,15 +810,14 @@ def detect_doors_and_windows_geometrically(image_bytes, meters_per_pixel, pad=20
     return doors_data, windows_data, median_door_px
 
 
-def snap_openings_and_cut_walls(walls_data, doors_data, windows_data, wall_thickness_m=0.2, max_dist_m=0.6):
+def snap_openings_and_cut_walls(walls_data, doors_data, windows_data, wall_thickness_m=0.2, max_dist_m=0.6, cleaned_rooms=None):
     """Snap doors and windows to the nearest wall segment within max_dist_m,
-    cut rectangular opening gaps in the wall polygon, and drop orphan openings.
+    cut rectangular opening gaps oriented along the wall, and compute room connectivity.
     """
     dropped_openings = []
     if not walls_data:
         return walls_data, doors_data, windows_data, dropped_openings
 
-    # Convert walls to Shapely polygons
     wall_polys = []
     for w in walls_data:
         coords = w.get("polygon", [])
@@ -689,7 +837,6 @@ def snap_openings_and_cut_walls(walls_data, doors_data, windows_data, wall_thick
 
     combined_walls = unary_union(wall_polys).buffer(0)
 
-    # Process doors
     valid_doors = []
     cut_boxes = []
     for d in doors_data:
@@ -700,21 +847,29 @@ def snap_openings_and_cut_walls(walls_data, doors_data, windows_data, wall_thick
             dropped_openings.append(f"Door {d['id']} dropped (no wall within {max_dist_m} m; no floating doors allowed).")
             continue
 
-        # Find nearest point on wall boundary
-        nearest_pt = shapely.ops.nearest_points(combined_walls.exterior if combined_walls.geom_type == "Polygon" else combined_walls.boundary, pt)[0]
+        nearest_pt, u, n = _find_wall_segment_orientation(combined_walls, pt)
         snap_x = round(nearest_pt.x, 3)
         snap_y = round(nearest_pt.y, 3)
         d["center"] = [snap_x, snap_y]
 
-        # Determine if segment is predominantly horizontal or vertical
+        angle = math.atan2(u[1], u[0])
+        # Force strict axis alignment if close to horizontal or vertical
+        if abs(math.cos(angle)) >= abs(math.sin(angle)):
+            rot = 0.0
+        else:
+            rot = round(math.pi / 2, 4)
+        d["rotation"] = rot
+        d["angle"] = rot
+
+        d["connects"] = _determine_opening_connects(snap_x, snap_y, n, cleaned_rooms)
+        d.setdefault("source", "estimated")
+
         cut_w = float(d.get("width", 0.9))
         box_th = wall_thickness_m + 0.15
-        # Cut opening box
-        door_box = shapely.geometry.box(snap_x - cut_w / 2.0, snap_y - box_th / 2.0, snap_x + cut_w / 2.0, snap_y + box_th / 2.0)
+        door_box = _oriented_opening_box(snap_x, snap_y, u, n, cut_w, box_th)
         cut_boxes.append(door_box)
         valid_doors.append(d)
 
-    # Process windows
     valid_windows = []
     for win in windows_data:
         cx, cy = win["center"]
@@ -723,22 +878,33 @@ def snap_openings_and_cut_walls(walls_data, doors_data, windows_data, wall_thick
         if dist > max_dist_m:
             dropped_openings.append(f"Window {win['id']} dropped (no wall within {max_dist_m} m).")
             continue
-        nearest_pt = shapely.ops.nearest_points(combined_walls.exterior if combined_walls.geom_type == "Polygon" else combined_walls.boundary, pt)[0]
+
+        nearest_pt, u, n = _find_wall_segment_orientation(combined_walls, pt)
         snap_x = round(nearest_pt.x, 3)
         snap_y = round(nearest_pt.y, 3)
         win["center"] = [snap_x, snap_y]
+
+        angle = math.atan2(u[1], u[0])
+        if abs(math.cos(angle)) >= abs(math.sin(angle)):
+            rot = 0.0
+        else:
+            rot = round(math.pi / 2, 4)
+        win["rotation"] = rot
+        win["angle"] = rot
+
+        win["connects"] = _determine_opening_connects(snap_x, snap_y, n, cleaned_rooms)
+        win.setdefault("source", "estimated")
+
         cut_w = float(win.get("width", 1.2))
         box_th = wall_thickness_m + 0.15
-        win_box = shapely.geometry.box(snap_x - cut_w / 2.0, snap_y - box_th / 2.0, snap_x + cut_w / 2.0, snap_y + box_th / 2.0)
+        win_box = _oriented_opening_box(snap_x, snap_y, u, n, cut_w, box_th)
         cut_boxes.append(win_box)
         valid_windows.append(win)
 
-    # Cut openings out of walls
     if cut_boxes:
         openings_union = unary_union(cut_boxes)
         combined_walls = combined_walls.difference(openings_union).buffer(0)
 
-    # Reconstruct clean wall list
     updated_walls = []
     geoms = combined_walls.geoms if combined_walls.geom_type == "MultiPolygon" else [combined_walls]
     wall_id = 1

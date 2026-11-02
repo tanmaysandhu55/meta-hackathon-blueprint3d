@@ -244,11 +244,11 @@ def _scene_review_facts(scene, facts):
     findings = [
         {"status": "check" if not rooms or valid_rooms < len(rooms) else "ok", "title": "Room outlines", "detail": f"{valid_rooms} of {len(rooms)} rooms have polygons with at least three points."},
         {"status": "check" if not walls else "ok", "title": "Wall geometry", "detail": f"{len(walls)} wall region(s) are present." if walls else "No wall regions are recorded."},
-        {"status": "check" if not doors else "ok", "title": "Door openings", "detail": f"{len(doors)} door opening(s) are recorded; compare them with the source plan."},
+        {"status": "check" if not doors else "ok", "title": "Door openings", "detail": f"{len(doors)} (estimated from wall gaps; SAM found none)" if (doors and all(d.get("source") == "estimated" for d in doors)) else f"{len(doors)} door opening(s) are recorded; compare them with the source plan."},
         {"status": "check" if len(floor_ids) > 1 and not connectors else "ok", "title": "Floor connection", "detail": f"{len(connectors)} stair/elevator room(s) are recorded across {len(floor_ids) or 1} floor(s)."},
         {"status": "check" if not interactive_scale or "fallback" in scale_method else "ok", "title": "Scale", "detail": "Scale is an estimate; verify it against a known dimension." if not interactive_scale else "Interactive scale calibration is recorded; still verify against a known dimension."},
         {"status": "check" if named_rooms < len(rooms) else "ok", "title": "Room labels", "detail": f"{named_rooms} of {len(rooms)} rooms have specific labels."},
-        {"status": "info", "title": "Windows", "detail": f"{len(windows)} window opening(s) are recorded."},
+        {"status": "info", "title": "Windows", "detail": f"{len(windows)} (estimated from line symbols; SAM found none)" if (windows and all(w.get("source") == "estimated" for w in windows)) else f"{len(windows)} window opening(s) are recorded."},
     ]
     sam_status = meta.get("sam_status", {})
     for concept, sinfo in sam_status.items():
@@ -528,28 +528,55 @@ def _process_story_slice(image_bytes, image_size, meters_per_pixel, wall_height,
     for idx, w in enumerate(walls_data):
         w["id"] = f"{prefix}w{idx + 1}" 
 
-    doors_data = extract_doors(door_masks, cleaned_rooms, meters_per_pixel=meters_per_pixel)
-    windows_data = extract_windows(window_masks, meters_per_pixel=meters_per_pixel)
+    sam_door_ok = sam_status_by_concept.get("door", {}).get("status") == "OK"
+    sam_win_ok = sam_status_by_concept.get("window", {}).get("status") == "OK"
 
-    # When SAM is not used or found no openings, detect doors and windows geometrically
+    doors_data = extract_doors(door_masks, cleaned_rooms, meters_per_pixel=meters_per_pixel) if sam_door_ok else []
+    for d in doors_data:
+        d["source"] = "sam"
+    windows_data = extract_windows(window_masks, meters_per_pixel=meters_per_pixel) if sam_win_ok else []
+    for win in windows_data:
+        win["source"] = "sam"
+
+    # Geometric fallback from drawing when SAM finds none or not run
     if not doors_data or not windows_data:
         geo_doors, geo_windows, med_door_w = detect_doors_and_windows_geometrically(image_bytes, meters_per_pixel)
         if not doors_data and geo_doors:
             doors_data = geo_doors
             if calibrate_scale and med_door_w and 15 <= med_door_w <= 100:
+                old_mpp = meters_per_pixel
                 meters_per_pixel = round(0.90 / med_door_w, 5)
                 scale_method = f"median detected door width ({int(med_door_w)} px -> 0.90 m)"
+                scale_ratio = meters_per_pixel / old_mpp
+                # Rescale rooms and walls to match calibrated meters_per_pixel
+                for r in cleaned_rooms:
+                    r["polygon"] = [[round(pt[0] * scale_ratio, 3), round(pt[1] * scale_ratio, 3)] for pt in r.get("polygon", [])]
+                    if "centroid" in r:
+                        r["centroid"] = [round(r["centroid"][0] * scale_ratio, 3), round(r["centroid"][1] * scale_ratio, 3)]
+                    if "area_m2" in r:
+                        r["area_m2"] = round(r["area_m2"] * scale_ratio * scale_ratio, 2)
+                for w in walls_data:
+                    w["polygon"] = [[round(pt[0] * scale_ratio, 3), round(pt[1] * scale_ratio, 3)] for pt in w.get("polygon", [])]
+                    if w.get("holes"):
+                        w["holes"] = [[[round(pt[0] * scale_ratio, 3), round(pt[1] * scale_ratio, 3)] for pt in hole] for hole in w["holes"]]
+                for d in doors_data:
+                    if "pixel_center" in d:
+                        d["center"] = [round(d["pixel_center"][0] * meters_per_pixel, 3), round(d["pixel_center"][1] * meters_per_pixel, 3)]
         if not windows_data and geo_windows:
             windows_data = geo_windows
+            if calibrate_scale and med_door_w and 15 <= med_door_w <= 100:
+                for win in windows_data:
+                    if "pixel_center" in win:
+                        win["center"] = [round(win["pixel_center"][0] * meters_per_pixel, 3), round(win["pixel_center"][1] * meters_per_pixel, 3)]
 
     for idx, d in enumerate(doors_data):
         d["id"] = f"{prefix}d{idx + 1}"
     for idx, win in enumerate(windows_data):
         win["id"] = f"{prefix}win{idx + 1}"
 
-    # Snap openings to walls, cut rectangular opening gaps, and drop orphan openings
+    # Snap openings to walls, cut rectangular opening gaps, and compute connects
     walls_data, doors_data, windows_data, dropped_openings = snap_openings_and_cut_walls(
-        walls_data, doors_data, windows_data, wall_thickness_m=wall_thickness
+        walls_data, doors_data, windows_data, wall_thickness_m=wall_thickness, cleaned_rooms=cleaned_rooms
     )
     for drop_msg in dropped_openings:
         warnings.append(drop_msg)
