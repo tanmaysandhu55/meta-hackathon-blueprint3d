@@ -368,6 +368,29 @@ document.addEventListener("DOMContentLoaded", () => {
             { state: floorCount < 2 || connectorCount > 0 ? "ok" : "review", label: "Floor connection", detail: floorCount < 2 ? "Single-story scene." : `${connectorCount} stair/elevator room(s) for ${floorCount} floors.` },
             { state: namedRoomCount === rooms.length && rooms.length > 0 ? "ok" : "review", label: "Room labels", detail: `${namedRoomCount} of ${rooms.length} have non-generic labels.` },
         ];
+        const samStatus = meta.sam_status || {};
+        Object.entries(samStatus).forEach(([concept, sinfo]) => {
+            if (!sinfo || typeof sinfo !== "object") return;
+            if (sinfo.status === "FAILED") {
+                rows.push({
+                    state: "review",
+                    label: `SAM ${concept}`,
+                    detail: `SAM failed for '${concept}': ${sinfo.reason || "unavailable"}.`,
+                });
+            } else if (sinfo.status === "EMPTY") {
+                rows.push({
+                    state: "review",
+                    label: `SAM ${concept}`,
+                    detail: `SAM found no '${concept}'.`,
+                });
+            } else if (sinfo.status === "OK") {
+                rows.push({
+                    state: "ok",
+                    label: `SAM ${concept}`,
+                    detail: `SAM detected ${sinfo.count || 1} region(s).`,
+                });
+            }
+        });
         if (mapQualityChecks) {
             mapQualityChecks.replaceChildren();
             rows.forEach(item => {

@@ -112,3 +112,51 @@ def test_sam_decoder_accepts_documented_mask_payload():
     assert len(masks) == 1
     assert masks[0].shape == (5, 5)
     assert set(np.unique(masks[0])).issubset({0, 255})
+
+
+def test_sam_distinguishes_empty_outcome_from_failure(monkeypatch):
+    monkeypatch.setenv("META_API_KEY", "test-key")
+    
+    class EmptyClient:
+        def __init__(self, **_kwargs):
+            self.responses = self
+        def with_options(self, **_kwargs):
+            return self
+        def create(self, **_kwargs):
+            return types.SimpleNamespace(output_text="")
+
+    monkeypatch.setattr(meta_sam_service, "OpenAI", EmptyClient)
+    with pytest.raises(meta_sam_service.SamEmptyOutcome) as exc_info:
+        meta_sam_service.query_sam_concept(_png_bytes(), "door", (80, 60))
+    assert exc_info.value.outcome == "EMPTY"
+    assert "SAM found no 'door'" in str(exc_info.value)
+
+
+def test_sam_retries_429_rate_limit_and_marks_failed(monkeypatch):
+    monkeypatch.setenv("META_API_KEY", "test-key")
+    delays = []
+    attempts = []
+
+    class RateLimitError(Exception):
+        status_code = 429
+
+    class RateLimitClient:
+        def __init__(self, **_kwargs):
+            self.responses = self
+        def with_options(self, **_kwargs):
+            return self
+        def create(self, **_kwargs):
+            attempts.append(1)
+            raise RateLimitError("rate limit exceeded")
+
+    monkeypatch.setattr(meta_sam_service, "OpenAI", RateLimitClient)
+    monkeypatch.setattr(meta_sam_service.time, "sleep", lambda d: delays.append(d))
+
+    with pytest.raises(RateLimitError) as exc_info:
+        meta_sam_service.query_sam_concept(_png_bytes(), "window", (80, 60))
+    assert exc_info.value.outcome == "FAILED"
+    assert "429 rate limit (retried 3 times)" in exc_info.value.reason
+    assert len(attempts) == 3
+    assert len(delays) == 2
+    assert delays[0] == 0.5
+    assert delays[1] == 1.0

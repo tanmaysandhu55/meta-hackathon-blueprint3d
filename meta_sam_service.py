@@ -28,6 +28,34 @@ CONCEPT_PROMPTS = {
 CONCEPT_FALLBACK_PROMPTS = {}
 
 
+class SamOutcomeError(Exception):
+    """Base error for SAM outcome classification."""
+    pass
+
+
+class SamEmptyOutcome(ValueError, SamOutcomeError):
+    """SAM returned 200 OK with zero matching regions."""
+    def __init__(self, concept, prompt_text=""):
+        super().__init__(f"SAM found no '{concept}'.")
+        self.concept = concept
+        self.prompt_text = prompt_text
+        self.outcome = "EMPTY"
+        self.safe_category = "no_matches"
+        self.reason = f"SAM found no '{concept}'"
+
+
+class SamFailedOutcome(SamOutcomeError):
+    """SAM call failed due to API error, rate limit, timeout, or parsing failure."""
+    def __init__(self, concept, reason, status_code=None, retries=0):
+        super().__init__(f"SAM failed for '{concept}': {reason}")
+        self.concept = concept
+        self.reason = reason
+        self.status_code = status_code
+        self.retries = retries
+        self.outcome = "FAILED"
+        self.safe_category = "unavailable"
+
+
 def is_sam_configured():
     api_key = os.getenv("MODEL_API_KEY", "").strip() or os.getenv("META_API_KEY", "").strip()
     return bool(
@@ -90,11 +118,13 @@ def _decode_masks(output_text, expected_size):
     return masks
 
 
-def _execute_sam_call(client, model, prompt_text, data_url, size, image_size, deadline):
+def _execute_sam_call(client, model, concept, prompt_text, data_url, size, image_size, deadline):
     for attempt in range(3):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            raise TimeoutError("SAM request exceeded its processing time budget.")
+            exc = SamFailedOutcome(concept, "timeout (retried 3 times)", status_code=408, retries=attempt)
+            exc.safe_category = "timeout"
+            raise exc
         try:
             output_text = ""
             stream_fn = getattr(client.responses, "stream", None)
@@ -124,9 +154,10 @@ def _execute_sam_call(client, model, prompt_text, data_url, size, image_size, de
                     metadata={"mask_encoding": "one_bit", "include_confidence": "true"},
                 )
                 output_text = getattr(response, "output_text", "") or ""
+            
             masks = _decode_masks(output_text, size)
             if not masks:
-                raise ValueError(f"SAM 3.1 detected no matching regions for '{prompt_text}'.")
+                raise SamEmptyOutcome(concept, prompt_text)
             original_size = tuple(map(int, image_size))
             if size != original_size:
                 masks = [
@@ -134,22 +165,42 @@ def _execute_sam_call(client, model, prompt_text, data_url, size, image_size, de
                     for mask in masks
                 ]
             return masks
+        except SamEmptyOutcome:
+            # Succeeded with 200 OK but 0 masks
+            raise
         except Exception as exc:
+            status = getattr(exc, "status_code", None)
             category = _safe_category(exc)
-            if category == "no_matches":
-                exc.safe_category = "no_matches"
-                raise
-            retryable = isinstance(exc, (APIConnectionError, APITimeoutError)) or (
-                getattr(exc, "status_code", 0) or 0
-            ) >= 500
-            logger.warning("SAM segmentation failed (category=%s, prompt=%s)", category, prompt_text)
-            delay = 0.4 * (2 ** attempt)
+            exc.safe_category = category
+            exc.outcome = "FAILED"
+            
+            is_429 = (status == 429) or ("rate" in str(exc).lower() and "limit" in str(exc).lower())
+            if is_429:
+                reason = f"429 rate limit (retried {attempt + 1} times)"
+            elif isinstance(exc, APITimeoutError):
+                reason = f"timeout (retried {attempt + 1} times)"
+            elif isinstance(exc, APIConnectionError):
+                reason = f"connection error (retried {attempt + 1} times)"
+            elif status in (401, 403):
+                reason = "authentication failed"
+            elif status and status >= 500:
+                reason = f"{status} server error (retried {attempt + 1} times)"
+            elif isinstance(exc, ValueError) and "malformed" in str(exc).lower():
+                reason = f"parse error: {exc}"
+            else:
+                reason = f"error ({category}): {str(exc)[:80]}"
+            exc.reason = reason
+
+            retryable = is_429 or isinstance(exc, (APIConnectionError, APITimeoutError)) or ((status or 0) >= 500)
+            logger.warning("SAM segmentation failed for %s (attempt=%d, reason=%s)", concept, attempt + 1, reason)
+            delay = 0.5 * (2 ** attempt)
             if not retryable or attempt == 2 or time.monotonic() + delay >= deadline:
-                exc.safe_category = category
                 raise
             time.sleep(delay)
 
-    raise TimeoutError("SAM request exceeded its processing time budget.")
+    final_exc = SamFailedOutcome(concept, "processing time budget exceeded", status_code=408, retries=3)
+    final_exc.safe_category = "timeout"
+    raise final_exc
 
 
 def query_sam_concept(image_bytes, concept, image_size, timeout=75):
@@ -179,7 +230,17 @@ def query_sam_concept(image_bytes, concept, image_size, timeout=75):
 
     for current_prompt in prompts:
         try:
-            return _execute_sam_call(client, model, current_prompt, data_url, size, image_size, deadline)
+            masks = _execute_sam_call(client, model, concept, current_prompt, data_url, size, image_size, deadline)
+            # Store concept used as attribute on the masks list
+            try:
+                masks.concept_used = current_prompt
+            except Exception:
+                pass
+            return masks
+        except SamEmptyOutcome as exc:
+            if current_prompt != prompts[-1]:
+                continue
+            raise
         except ValueError as exc:
             if getattr(exc, "safe_category", None) == "no_matches" and current_prompt != prompts[-1]:
                 continue

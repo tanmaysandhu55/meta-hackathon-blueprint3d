@@ -22,7 +22,7 @@ from PIL import Image, UnidentifiedImageError
 from werkzeug.utils import secure_filename
 
 from baseten_service import answer_scene_question, label_rooms, is_labeling_configured, last_error_category, get_labeling_provider_name
-from meta_sam_service import is_sam_configured, query_sam_concept
+from meta_sam_service import is_sam_configured, query_sam_concept, SamEmptyOutcome, SamFailedOutcome
 from meta_media_service import generate_floorplan, image_generation_ready, transcribe_audio, voice_transcription_ready
 from demo_data import generate_sample_floorplan_image, get_sample_mask_overlays, get_sample_scene_json, get_two_story_sample_scene_json
 from geometry_processor import (
@@ -250,6 +250,16 @@ def _scene_review_facts(scene, facts):
         {"status": "check" if named_rooms < len(rooms) else "ok", "title": "Room labels", "detail": f"{named_rooms} of {len(rooms)} rooms have specific labels."},
         {"status": "info", "title": "Windows", "detail": f"{len(windows)} window opening(s) are recorded."},
     ]
+    sam_status = meta.get("sam_status", {})
+    for concept, sinfo in sam_status.items():
+        if isinstance(sinfo, dict):
+            status = sinfo.get("status")
+            if status == "FAILED":
+                findings.append({"status": "check", "title": f"SAM {concept}", "detail": f"SAM failed for '{concept}': {sinfo.get('reason', 'unknown error')}."})
+            elif status == "EMPTY":
+                findings.append({"status": "check", "title": f"SAM {concept}", "detail": f"SAM found no '{concept}'."})
+            elif status == "OK":
+                findings.append({"status": "ok", "title": f"SAM {concept}", "detail": f"SAM detected {sinfo.get('count', 1)} matching region(s)."})
     warnings = [str(item)[:240] for item in meta.get("warnings", [])[:12] if isinstance(item, str)]
     return {
         "room_count": len(rooms), "valid_room_count": valid_rooms,
@@ -337,22 +347,26 @@ def _process_story_slice(image_bytes, image_size, meters_per_pixel, wall_height,
     def segment_one(concept):
         if use_sam:
             try:
-                return query_sam_concept(
+                masks = query_sam_concept(
                     image_bytes,
                     concept,
                     image_size,
                     timeout=min(75, max(1, deadline - time.monotonic())),
-                ), "sam-3.1", None
+                )
+                concept_used = getattr(masks, "concept_used", concept)
+                return masks, "sam-3.1", None, {"status": "OK", "count": len(masks), "concept_used": concept_used}
+            except SamEmptyOutcome as exc:
+                logger.info("SAM found no %s: %s", concept, exc)
+                return segment_prepared_concept(prepared_image, concept), "opencv-fallback", "no_matches", {"status": "EMPTY", "reason": getattr(exc, "reason", f"SAM found no '{concept}'"), "concept": concept}
             except Exception as exc:
-                logger.warning(
-                    "SAM failed for %s; using local OpenCV fallback (%s)",
-                    concept,
-                    type(exc).__name__,
-                )
-                return segment_prepared_concept(prepared_image, concept), "opencv-fallback", getattr(
-                    exc, "safe_category", "unavailable"
-                )
-        return segment_prepared_concept(prepared_image, concept), "opencv-heuristic", None
+                outcome = getattr(exc, "outcome", None)
+                reason = getattr(exc, "reason", str(exc))
+                cat = getattr(exc, "safe_category", "unavailable")
+                if outcome == "EMPTY" or cat == "no_matches":
+                    return segment_prepared_concept(prepared_image, concept), "opencv-fallback", "no_matches", {"status": "EMPTY", "reason": f"SAM found no '{concept}'", "concept": concept}
+                logger.warning("SAM failed for %s (%s): %s", concept, type(exc).__name__, reason)
+                return segment_prepared_concept(prepared_image, concept), "opencv-fallback", cat, {"status": "FAILED", "reason": reason, "concept": concept}
+        return segment_prepared_concept(prepared_image, concept), "opencv-heuristic", None, {"status": "NOT_RUN", "reason": "no live key or local mode", "concept": concept}
 
     futures = {executor.submit(segment_one, concept): concept for concept in concepts}
     done, pending = concurrent.futures.wait(
@@ -366,34 +380,22 @@ def _process_story_slice(image_bytes, image_size, meters_per_pixel, wall_height,
 
     masks_by_concept = {concept: [] for concept in concepts}
     backends_by_concept = {}
+    sam_status_by_concept = {}
+    concept_used_by_concept = {}
     room_failure = None
     for future in done:
         concept = futures[future]
         try:
-            masks_by_concept[concept], backends_by_concept[concept], provider_error = future.result()
-            if provider_error:
-                if not use_sam:
-                    warnings.append(f"SAM not run (no live key or local mode); {concept} detection used local OpenCV.")
-                elif provider_error == "no_matches":
-                    warnings.append(
-                        f"Meta SAM 3.1 detected no matching '{concept}' regions in this floor plan; local OpenCV fallback was used."
-                    )
-                elif provider_error == "auth":
-                    warnings.append(
-                        f"Meta API authentication failed for {concept}; local OpenCV fallback was used."
-                    )
-                elif provider_error == "timeout":
-                    warnings.append(
-                        f"Meta SAM 3.1 request for {concept} timed out; local OpenCV fallback was used."
-                    )
-                elif provider_error == "unavailable":
-                    warnings.append(
-                        f"Meta SAM 3.1 service was temporarily unavailable for {concept}; local OpenCV fallback was used."
-                    )
-                else:
-                    warnings.append(
-                        f"Meta segmentation for {concept} used local OpenCV fallback ({provider_error})."
-                    )
+            masks_by_concept[concept], backends_by_concept[concept], provider_error, sinfo = future.result()
+            sam_status_by_concept[concept] = sinfo
+            if sinfo.get("concept_used"):
+                concept_used_by_concept[concept] = sinfo["concept_used"]
+            if not use_sam:
+                warnings.append(f"SAM not run (no live key or local mode); {concept} detection used local OpenCV.")
+            elif sinfo["status"] == "EMPTY":
+                warnings.append(f"SAM found no '{concept}'.")
+            elif sinfo["status"] == "FAILED":
+                warnings.append(f"SAM failed for '{concept}': {sinfo.get('reason', 'unavailable')}.")
         except Exception as exc:
             logger.exception("Local %s segmentation failed", concept)
             if concept == "room":
@@ -562,6 +564,8 @@ def _process_story_slice(image_bytes, image_size, meters_per_pixel, wall_height,
         "scale_method": scale_method,
         "segmentation_backend": segmentation_backend,
         "wall_method": wall_method,
+        "sam_status": sam_status_by_concept,
+        "concept_used": concept_used_by_concept,
     }
 
 
@@ -676,10 +680,13 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
         doors_data = res0["doors"] + res1["doors"]
         windows_data = res0["windows"] + res1["windows"]
 
+        combined_sam = dict(res0.get("sam_status", {}), **res1.get("sam_status", {}))
+        combined_cu = dict(res0.get("concept_used", {}), **res1.get("concept_used", {}))
         scene = {
             "meta": {
                 "source": filename,
-                "processingMode": "MOCK" if processing_mode == "MOCK" else "LIVE" if "sam-3.1" in segmentation_backend else "LOCAL",
+                "sam_status": combined_sam,
+                "concept_used": combined_cu,
                 "segmentation": segmentation_backend,
                 "mock": processing_mode == "MOCK",
                 "imageSize": [img_w, img_h],
@@ -723,6 +730,8 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
         scene = {
             "meta": {
                 "source": filename,
+                "sam_status": res.get("sam_status", {}),
+                "concept_used": res.get("concept_used", {}),
                 "processingMode": "MOCK" if processing_mode == "MOCK" else "LIVE" if "sam-3.1" in segmentation_backend else "LOCAL",
                 "segmentation": segmentation_backend,
                 "mock": processing_mode == "MOCK",
