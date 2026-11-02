@@ -23,21 +23,10 @@ def voice_transcription_ready():
     return _configured("MUSE_VOICE_MODEL", "muse-voice-transcribe-1.0")
 
 
-def generate_floorplan(prompt):
-    if not image_generation_ready():
-        raise RuntimeError("Muse Image is not configured.")
-    api_key = os.getenv("MODEL_API_KEY", "").strip() or os.getenv("META_API_KEY", "").strip()
-    client = OpenAI(
-        api_key=api_key,
-        base_url=os.getenv("META_API_BASE_URL", os.getenv("MODEL_BASE_URL", "https://api.meta.ai/v1")).strip(),
-        timeout=120,
-        max_retries=0,
-    )
+def _generate_single_image(client, model, prompt_text):
     result = client.images.generate(
-        model=os.getenv("MUSE_IMAGE_MODEL", "muse-image-1.0").strip(),
-        prompt=("Create a clean, top-down 2D architectural floor plan drawing on a white background. "
-                "Use crisp dark wall lines, clear room boundaries, visible door gaps, no perspective, "
-                "no furniture, no text, and no shadows. Layout request: " + prompt),
+        model=model,
+        prompt=prompt_text,
         n=1,
         response_format="b64_json",
     )
@@ -48,8 +37,55 @@ def generate_floorplan(prompt):
         image = image.convert("RGB")
         if image.width * image.height > 20_000_000:
             image.thumbnail((4096, 4096), Image.Resampling.LANCZOS)
+        return image
+
+
+def generate_floorplan(prompt):
+    if not image_generation_ready():
+        raise RuntimeError("Muse Image is not configured.")
+    api_key = os.getenv("MODEL_API_KEY", "").strip() or os.getenv("META_API_KEY", "").strip()
+    client = OpenAI(
+        api_key=api_key,
+        base_url=os.getenv("META_API_BASE_URL", os.getenv("MODEL_BASE_URL", "https://api.meta.ai/v1")).strip(),
+        timeout=120,
+        max_retries=0,
+    )
+    model = os.getenv("MUSE_IMAGE_MODEL", "muse-image-1.0").strip()
+    prompt_lower = prompt.lower()
+    is_multi_story = any(kw in prompt_lower for kw in (
+        "2-story", "2 story", "two story", "two-story", "2 floors", "two floors", "2 floor", "two floor"
+    ))
+
+    if is_multi_story:
+        prompt_f0 = (
+            "Ground floor, rectangular footprint of about 10 m by 8 m, stairwell at the north-east corner, "
+            "top-down orthographic floor plan, black walls on white background, no furniture, no text except room names."
+        )
+        prompt_f1 = (
+            "Second floor, rectangular footprint of about 10 m by 8 m, stairwell at the north-east corner, "
+            "top-down orthographic floor plan, black walls on white background, no furniture, no text except room names."
+        )
+        img0 = _generate_single_image(client, model, prompt_f0)
+        img1 = _generate_single_image(client, model, prompt_f1)
+
+        total_w = img0.width + img1.width + 100
+        max_h = max(img0.height, img1.height)
+        composite = Image.new("RGB", (total_w, max_h), (255, 255, 255))
+        composite.paste(img0, (0, 0))
+        composite.paste(img1, (img0.width + 100, 0))
+
         output = io.BytesIO()
-        image.save(output, format="PNG", optimize=True)
+        composite.save(output, format="PNG", optimize=True)
+    else:
+        full_prompt = (
+            "Create a clean, top-down 2D architectural floor plan drawing on a white background. "
+            "Use crisp dark wall lines, clear room boundaries, visible door gaps, no perspective, "
+            "no furniture, no text, and no shadows. Layout request: " + prompt
+        )
+        img = _generate_single_image(client, model, full_prompt)
+        output = io.BytesIO()
+        img.save(output, format="PNG", optimize=True)
+
     result_bytes = output.getvalue()
     if len(result_bytes) > 10 * 1024 * 1024:
         raise ValueError("The generated image exceeded the upload limit.")

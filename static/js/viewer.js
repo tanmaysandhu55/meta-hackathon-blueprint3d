@@ -766,9 +766,9 @@ class FloorPlanViewer {
 
     syncFloorSpacing() {
         if (!this.currentSceneData?.meta) return;
-        // The wall-height control also defines story-to-story spacing. Keeping both
-        // values in sync prevents a visible vertical gap when the height is changed.
-        this.floorHeight = this.wallHeight;
+        // The story-to-story spacing includes wall height plus the separating slab thickness (0.2m).
+        const slabThickness = Number(this.currentSceneData.meta.slabThickness) || 0.2;
+        this.floorHeight = this.wallHeight + slabThickness;
         this.currentSceneData.meta.floorHeight = this.floorHeight;
         const metaLevels = Array.isArray(this.currentSceneData.meta.levels) ? this.currentSceneData.meta.levels : [];
         metaLevels.forEach(level => {

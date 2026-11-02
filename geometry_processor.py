@@ -25,6 +25,55 @@ def clean_mask(mask_uint8, kernel_size=5):
     return opened
 
 
+def split_multi_plan_image(image_bytes, min_plan_ratio=0.04, pad=20):
+    """Detect whether a single image contains multiple separate floor plans.
+
+    Returns a list of tuples: [(cropped_image_bytes, (x, y, w, h)), ...]
+    If only one plan is found, returns [(image_bytes, (0, 0, w, h))].
+    """
+    if isinstance(image_bytes, np.ndarray):
+        img = image_bytes
+    else:
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img is None:
+        return [(image_bytes, (0, 0, 0, 0))]
+
+    h, w = img.shape[:2]
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+    _, dark = cv2.threshold(gray, 210, 255, cv2.THRESH_BINARY_INV)
+
+    kernel_size = max(15, int(min(w, h) / 60))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
+    closed = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, kernel)
+
+    contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    plans = []
+    min_area = min_plan_ratio * (w * h)
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        if area >= min_area:
+            bx, by, bw, bh = cv2.boundingRect(cnt)
+            aspect = bw / (bh + 1e-5)
+            if 0.3 <= aspect <= 3.0:
+                plans.append((bx, by, bw, bh, area))
+
+    if len(plans) < 2:
+        return [(image_bytes, (0, 0, w, h))]
+
+    plans.sort(key=lambda p: (p[1] // (h // 2), p[0]))
+    crops = []
+    for bx, by, bw, bh, _ in plans:
+        x0 = max(0, bx - pad)
+        y0 = max(0, by - pad)
+        x1 = min(w, bx + bw + pad)
+        y1 = min(h, by + bh + pad)
+        crop_img = img[y0:y1, x0:x1]
+        _, enc = cv2.imencode('.png', crop_img)
+        crops.append((enc.tobytes(), (bx, by, bw, bh)))
+    return crops
+
+
 def estimate_meters_per_pixel_from_doors(door_masks, target_width_m=0.9, min_area_px=40):
     """Estimate plan scale from the median pixel width of detected doors.
 

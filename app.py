@@ -31,6 +31,7 @@ from geometry_processor import (
     extract_doors,
     extract_windows,
     mask_to_polygons_with_holes,
+    split_multi_plan_image,
 )
 from segmentation_service import prepare_segmentation, segment_prepared_concept
 from usage_tracker import get_provider_usage
@@ -317,40 +318,15 @@ def _validate_image(file_storage):
     return output.getvalue(), (width, height), filename
 
 
-def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_height, wall_thickness, calibrate_scale, progress):
-    processing_mode = _processing_mode()
-    if processing_mode == "MOCK":
-        # Mock masks are deliberately tied to the prepared sample plan, never to
-        # the uploaded pixels. Show the same sample image to avoid implying AI analysis.
-        with open(SAMPLE_IMG_PATH, "rb") as sample_file:
-            image_bytes = sample_file.read()
-        with Image.open(io.BytesIO(image_bytes)) as sample_image:
-            image_size = sample_image.size
-        filename = "sample_plan_mock.png"
-    image_url = "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
-    img_w, img_h = image_size
+def _process_story_slice(image_bytes, image_size, meters_per_pixel, wall_height, wall_thickness, calibrate_scale, progress, deadline, use_sam, processing_mode, image_url, story_index=0, filename=""):
     warnings = []
-    use_sam = processing_mode != "MOCK" and sam_ready()
-    if processing_mode == "MOCK":
-        warnings.append("MOCK MODE: generated from prepared sample geometry; uploaded pixels were not analyzed by AI.")
-    elif not use_sam:
-        warnings.append("Local OpenCV heuristic segmentation was used; results are estimates best suited to clean, high-contrast plans.")
-
-    progress("Detecting rooms, walls, doors, and windows", 30)
-    job_budget = 180.0
-    deadline = time.monotonic() + job_budget
-
-    def ensure_budget(stage):
-        if time.monotonic() >= deadline:
-            raise ProviderError("budget", f"The job time budget expired during {stage}.")
-
     concepts = ("room", "wall", "door", "window")
     try:
         prepared_image = prepare_segmentation(image_bytes, image_size)
     except (ValueError, cv2.error) as exc:
         raise ProviderError("configuration", str(exc)) from exc
 
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="local-segmentation")
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix=f"local-segmentation-s{story_index}")
     def segment_one(concept):
         if use_sam:
             try:
@@ -374,7 +350,7 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
     futures = {executor.submit(segment_one, concept): concept for concept in concepts}
     done, pending = concurrent.futures.wait(
         futures,
-        timeout=job_budget,
+        timeout=max(1, deadline - time.monotonic()),
         return_when=concurrent.futures.ALL_COMPLETED,
     )
     for future in pending:
@@ -389,7 +365,9 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
         try:
             masks_by_concept[concept], backends_by_concept[concept], provider_error = future.result()
             if provider_error:
-                if provider_error == "no_matches":
+                if not use_sam:
+                    warnings.append(f"SAM not run (no live key or local mode); {concept} detection used local OpenCV.")
+                elif provider_error == "no_matches":
                     warnings.append(
                         f"Meta SAM 3.1 detected no matching '{concept}' regions in this floor plan; local OpenCV fallback was used."
                     )
@@ -417,15 +395,6 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
                 safe_message = exc.safe_message if isinstance(exc, ProviderError) else ProviderError("down").safe_message
                 warnings.append(f"{concept.title()} detection was unavailable: {safe_message}")
 
-    if pending:
-        pending_concepts = {futures[future] for future in pending}
-        for future in pending:
-            future.cancel()
-        if "room" in pending_concepts:
-            room_failure = ProviderError("budget", "Room segmentation exceeded the job time budget.")
-        for concept in pending_concepts - {"room"}:
-            warnings.append(f"{concept.title()} detection exceeded the processing time limit and was skipped.")
-
     if room_failure:
         if isinstance(room_failure, ProviderError):
             raise room_failure
@@ -439,12 +408,6 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
     wall_masks = masks_by_concept["wall"]
     door_masks = masks_by_concept["door"]
     window_masks = masks_by_concept["window"]
-    if not wall_masks:
-        warnings.append("Local wall segmentation returned no reliable masks; walls will be approximated from room outlines.")
-    if not door_masks:
-        warnings.append("No reliable door masks were found; door-based scale calibration may use the manual scale instead.")
-    if not window_masks:
-        warnings.append("No reliable window masks were found; windows may be omitted from the scene.")
 
     scale_method = "manual"
     if calibrate_scale:
@@ -455,15 +418,17 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
         else:
             scale_method = "manual fallback; no reliable door width detected"
 
-    progress("Cleaning geometry", 62)
     rooms_data = []
+    prefix = f"s{story_index}_" if story_index > 0 else ""
     for mask in room_masks:
         for polygon in mask_to_polygons_with_holes(mask, meters_per_pixel=meters_per_pixel, min_area_px=200):
-            room_id = f"r{len(rooms_data) + 1}"
+            room_num = len(rooms_data) + 1
+            room_id = f"{prefix}r{room_num}"
+            default_label = f"Room G{room_num}" if story_index == 0 else f"Room {story_index}.{room_num}"
             rooms_data.append({
                 "id": room_id,
                 "type": "room",
-                "label": f"Room {len(rooms_data) + 1}",
+                "label": default_label,
                 "confidence": 0.0,
                 "polygon": polygon["polygon"],
                 "centroid": polygon["centroid"],
@@ -484,9 +449,7 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
     else:
         segmentation_backend = "opencv-heuristic"
 
-    progress("Classifying rooms", 79)
     try:
-        ensure_budget("room geometry processing")
         if processing_mode == "MOCK":
             labels = {}
         elif labeling_ready():
@@ -505,23 +468,24 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
             warnings.append(f"Room labels are unavailable: {exc.safe_message}")
         else:
             warnings.append("Room labels are unavailable; generic room labels are shown.")
+
     for room in rooms_data:
         label = labels.get(room["id"])
         if label:
             room.update(label)
         else:
             room["type"] = "room"
-            room["label"] = f"Room {room['id'][1:]}"
+            room_num = room["id"].split("r")[-1]
+            room["label"] = f"Room G{room_num}" if story_index == 0 else f"Room {story_index}.{room_num}"
             room["confidence"] = 0.0
-            fallback_warning = "Some room labels are unavailable; generic room labels are shown."
-            if fallback_warning not in warnings:
-                warnings.append(fallback_warning)
-    ensure_budget("room labeling")
 
     cleaned_rooms = [
         {key: room[key] for key in ("id", "type", "label", "confidence", "polygon")}
         for room in rooms_data
     ]
+    for idx, r in enumerate(cleaned_rooms):
+        r["centroid"] = rooms_data[idx]["centroid"]
+        r["area_m2"] = rooms_data[idx]["area_m2"]
 
     walls_data = []
     if wall_masks:
@@ -530,46 +494,216 @@ def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_heigh
             combined_wall = cv2.bitwise_or(combined_wall, mask)
         for polygon in mask_to_polygons_with_holes(combined_wall, meters_per_pixel=meters_per_pixel, min_area_px=100):
             walls_data.append({
-                "id": f"w{len(walls_data) + 1}",
+                "id": f"{prefix}w{len(walls_data) + 1}",
                 "polygon": polygon["polygon"],
                 "holes": polygon["holes"],
             })
     if not walls_data:
         walls_data = build_walls_from_rooms(cleaned_rooms, meters_per_pixel, image_size, wall_thickness)
+        for idx, w in enumerate(walls_data):
+            w["id"] = f"{prefix}w{idx + 1}"
         warnings.append("Walls were approximated from detected room outlines.")
-    ensure_budget("wall geometry processing")
-    if calibrate_scale and scale_method.startswith("manual fallback"):
-        warnings.append("Automatic scale calibration could not find reliable doors; the selected scale was used.")
 
     doors_data = extract_doors(door_masks, cleaned_rooms, meters_per_pixel=meters_per_pixel)
-    windows_data = extract_windows(window_masks, meters_per_pixel=meters_per_pixel)
-    ensure_budget("opening geometry processing")
-    progress("Preparing 3D scene", 94)
+    for idx, d in enumerate(doors_data):
+        d["id"] = f"{prefix}d{idx + 1}"
 
-    scene = {
-        "meta": {
-            "source": filename,
-            "processingMode": "MOCK" if processing_mode == "MOCK" else "LIVE" if "sam-3.1" in segmentation_backend else "LOCAL",
-            "segmentation": segmentation_backend,
-            "mock": processing_mode == "MOCK",
-            "imageSize": [img_w, img_h],
-            "metersPerPixel": meters_per_pixel,
-            "scaleMethod": scale_method,
-            "wallHeight": wall_height,
-            "wallThickness": wall_thickness,
-            "warnings": warnings,
-        },
+    windows_data = extract_windows(window_masks, meters_per_pixel=meters_per_pixel)
+    for idx, win in enumerate(windows_data):
+        win["id"] = f"{prefix}win{idx + 1}"
+
+    return {
         "rooms": cleaned_rooms,
         "walls": walls_data,
         "doors": doors_data,
         "windows": windows_data,
+        "warnings": warnings,
+        "meters_per_pixel": meters_per_pixel,
+        "scale_method": scale_method,
+        "segmentation_backend": segmentation_backend,
     }
+
+
+def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_height, wall_thickness, calibrate_scale, progress):
+    processing_mode = _processing_mode()
+    if processing_mode == "MOCK":
+        with open(SAMPLE_IMG_PATH, "rb") as sample_file:
+            image_bytes = sample_file.read()
+        with Image.open(io.BytesIO(image_bytes)) as sample_image:
+            image_size = sample_image.size
+        filename = "sample_plan_mock.png"
+    image_url = "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
+    img_w, img_h = image_size
+    warnings = []
+    use_sam = processing_mode != "MOCK" and sam_ready()
+    if processing_mode == "MOCK":
+        warnings.append("MOCK MODE: generated from prepared sample geometry; uploaded pixels were not analyzed by AI.")
+    elif not use_sam:
+        warnings.append("Local OpenCV heuristic segmentation was used; results are estimates best suited to clean, high-contrast plans.")
+
+    progress("Detecting plans and layout structure", 15)
+    job_budget = 180.0
+    deadline = time.monotonic() + job_budget
+
+    crops = split_multi_plan_image(image_bytes) if processing_mode != "MOCK" else [(image_bytes, (0, 0, img_w, img_h))]
+    slab_thickness = 0.2
+
+    if len(crops) >= 2:
+        warnings.append("Multi-story plan detected in single image; automatically split into 2 stories.")
+        progress("Processing Ground Floor story", 30)
+        crop0_bytes, bbox0 = crops[0]
+        with Image.open(io.BytesIO(crop0_bytes)) as c0_img:
+            c0_size = c0_img.size
+        c0_url = "data:image/png;base64," + base64.b64encode(crop0_bytes).decode("ascii")
+        res0 = _process_story_slice(crop0_bytes, c0_size, meters_per_pixel, wall_height, wall_thickness, calibrate_scale, progress, deadline, use_sam, processing_mode, c0_url, story_index=0, filename=filename)
+
+        progress("Processing Second Floor story", 65)
+        crop1_bytes, bbox1 = crops[1]
+        with Image.open(io.BytesIO(crop1_bytes)) as c1_img:
+            c1_size = c1_img.size
+        c1_url = "data:image/png;base64," + base64.b64encode(crop1_bytes).decode("ascii")
+        res1 = _process_story_slice(crop1_bytes, c1_size, meters_per_pixel, wall_height, wall_thickness, calibrate_scale, progress, deadline, use_sam, processing_mode, c1_url, story_index=1, filename=filename)
+
+        coords0 = [pt for r in res0["rooms"] for pt in r["polygon"]]
+        coords1 = [pt for r in res1["rooms"] for pt in r["polygon"]]
+        if coords0 and coords1:
+            x_min_0 = min(pt[0] for pt in coords0)
+            y_min_0 = min(pt[1] for pt in coords0)
+            x_min_1 = min(pt[0] for pt in coords1)
+            y_min_1 = min(pt[1] for pt in coords1)
+            dx = round(x_min_0 - x_min_1, 3)
+            dy = round(y_min_0 - y_min_1, 3)
+        else:
+            dx, dy = 0.0, 0.0
+
+        for r in res0["rooms"]:
+            r["floor"] = 0
+            r["floorIndex"] = 0
+            r["level"] = 0
+        for w in res0["walls"]:
+            w["floorIndex"] = 0
+            w["level"] = 0
+        for d in res0["doors"]:
+            d["floorIndex"] = 0
+            d["level"] = 0
+        for win in res0["windows"]:
+            win["floorIndex"] = 0
+            win["level"] = 0
+
+        for r in res1["rooms"]:
+            r["polygon"] = [[round(p[0] + dx, 3), round(p[1] + dy, 3)] for p in r["polygon"]]
+            if "centroid" in r:
+                r["centroid"] = [round(r["centroid"][0] + dx, 3), round(r["centroid"][1] + dy, 3)]
+            r["floor"] = 1
+            r["floorIndex"] = 1
+            r["level"] = 1
+        for w in res1["walls"]:
+            w["polygon"] = [[round(p[0] + dx, 3), round(p[1] + dy, 3)] for p in w["polygon"]]
+            w["holes"] = [[[round(p[0] + dx, 3), round(p[1] + dy, 3)] for p in h] for h in w.get("holes", [])]
+            w["floorIndex"] = 1
+            w["level"] = 1
+        for d in res1["doors"]:
+            d["center"] = [round(d["center"][0] + dx, 3), round(d["center"][1] + dy, 3)]
+            d["floorIndex"] = 1
+            d["level"] = 1
+        for win in res1["windows"]:
+            win["center"] = [round(win["center"][0] + dx, 3), round(win["center"][1] + dy, 3)]
+            win["floorIndex"] = 1
+            win["level"] = 1
+
+        stair0 = next((r for r in res0["rooms"] if "stair" in r.get("type", "").lower() or "stair" in r.get("label", "").lower()), None)
+        stair1 = next((r for r in res1["rooms"] if "stair" in r.get("type", "").lower() or "stair" in r.get("label", "").lower()), None)
+        if stair0 and stair1:
+            stair_dist = math.hypot(stair0["centroid"][0] - stair1["centroid"][0], stair0["centroid"][1] - stair1["centroid"][1])
+            if stair_dist > 1.0:
+                warnings.append("stairs not aligned between floors")
+            stair0["connectsTo"] = stair1["id"]
+            stair1["connectsTo"] = stair0["id"]
+            stair0["type"] = "stairs"
+            stair1["type"] = "stairs"
+
+        for w_item in res0["warnings"] + res1["warnings"]:
+            if w_item not in warnings:
+                warnings.append(w_item)
+
+        mpp = res0.get("meters_per_pixel", meters_per_pixel)
+        scale_method = res0.get("scale_method", "manual")
+        segmentation_backend = res0.get("segmentation_backend", "opencv-fallback")
+
+        cleaned_rooms = res0["rooms"] + res1["rooms"]
+        walls_data = res0["walls"] + res1["walls"]
+        doors_data = res0["doors"] + res1["doors"]
+        windows_data = res0["windows"] + res1["windows"]
+
+        scene = {
+            "meta": {
+                "source": filename,
+                "processingMode": "MOCK" if processing_mode == "MOCK" else "LIVE" if "sam-3.1" in segmentation_backend else "LOCAL",
+                "segmentation": segmentation_backend,
+                "mock": processing_mode == "MOCK",
+                "imageSize": [img_w, img_h],
+                "metersPerPixel": mpp,
+                "scaleMethod": scale_method,
+                "wallHeight": wall_height,
+                "wallThickness": wall_thickness,
+                "floorHeight": round(wall_height + slab_thickness, 2),
+                "slabThickness": slab_thickness,
+                "levelCount": 2,
+                "levels": [
+                    {"level": 0, "floorIndex": 0, "name": "Ground Floor", "elevation": 0.0},
+                    {"level": 1, "floorIndex": 1, "name": "Second Floor", "elevation": round(wall_height + slab_thickness, 2)},
+                ],
+                "storyOffsets": [
+                    {"level": 0, "dx": 0.0, "dy": 0.0},
+                    {"level": 1, "dx": dx, "dy": dy},
+                ],
+                "warnings": warnings,
+            },
+            "rooms": cleaned_rooms,
+            "walls": walls_data,
+            "doors": doors_data,
+            "windows": windows_data,
+        }
+    else:
+        progress("Detecting rooms, walls, doors, and windows", 30)
+        res = _process_story_slice(image_bytes, image_size, meters_per_pixel, wall_height, wall_thickness, calibrate_scale, progress, deadline, use_sam, processing_mode, image_url, story_index=0, filename=filename)
+        for w_item in res["warnings"]:
+            if w_item not in warnings:
+                warnings.append(w_item)
+        cleaned_rooms = res["rooms"]
+        walls_data = res["walls"]
+        doors_data = res["doors"]
+        windows_data = res["windows"]
+        mpp = res["meters_per_pixel"]
+        scale_method = res["scale_method"]
+        segmentation_backend = res["segmentation_backend"]
+
+        scene = {
+            "meta": {
+                "source": filename,
+                "processingMode": "MOCK" if processing_mode == "MOCK" else "LIVE" if "sam-3.1" in segmentation_backend else "LOCAL",
+                "segmentation": segmentation_backend,
+                "mock": processing_mode == "MOCK",
+                "imageSize": [img_w, img_h],
+                "metersPerPixel": mpp,
+                "scaleMethod": scale_method,
+                "wallHeight": wall_height,
+                "wallThickness": wall_thickness,
+                "warnings": warnings,
+            },
+            "rooms": cleaned_rooms,
+            "walls": walls_data,
+            "doors": doors_data,
+            "windows": windows_data,
+        }
+
     overlays = {
         "room": [{"id": room["id"], "label": room["label"], "polygon": room["polygon"]} for room in cleaned_rooms],
         "wall": [{"id": wall["id"], "polygon": wall["polygon"]} for wall in walls_data],
         "door": [{"id": door["id"], "center": door["center"], "width": door["width"]} for door in doors_data],
         "window": [{"id": window["id"], "center": window["center"], "width": window["width"]} for window in windows_data],
     }
+    progress("Preparing 3D scene", 94)
     return {"scene": scene, "overlays": overlays, "imageUrl": image_url}
 
 
