@@ -400,23 +400,24 @@ def snap_polygon_orthogonal(coords, tolerance_deg=7.0, snap_dist=0.15):
     if len(pts) < 3:
         return pts
     n = len(pts)
-    snapped = []
-    for i in range(n):
-        p1 = pts[i]
-        p2 = pts[(i + 1) % n]
-        dx = p2[0] - p1[0]
-        dy = p2[1] - p1[1]
-        length = math.hypot(dx, dy)
-        if length < 1e-4:
-            continue
-        angle = math.degrees(math.atan2(dy, dx)) % 360
-        near_h = min(abs(angle - 0), abs(angle - 180), abs(angle - 360)) <= tolerance_deg
-        near_v = min(abs(angle - 90), abs(angle - 270)) <= tolerance_deg
-        snapped.append([p1[0], p1[1]])
-        if near_h:
-            p2[1] = p1[1]
-        elif near_v:
-            p2[0] = p1[0]
+    snapped = [p[:] for p in pts]
+    for _pass in range(2):
+        for i in range(n):
+            p1 = snapped[i]
+            next_idx = (i + 1) % n
+            p2 = snapped[next_idx]
+            dx = p2[0] - p1[0]
+            dy = p2[1] - p1[1]
+            length = math.hypot(dx, dy)
+            if length < 1e-4:
+                continue
+            angle = math.degrees(math.atan2(dy, dx)) % 360
+            near_h = min(abs(angle - 0), abs(angle - 180), abs(angle - 360)) <= tolerance_deg
+            near_v = min(abs(angle - 90), abs(angle - 270)) <= tolerance_deg
+            if near_h:
+                p2[1] = p1[1]
+            elif near_v:
+                p2[0] = p1[0]
 
     # Merge consecutive collinear edges
     merged_collinear = []
