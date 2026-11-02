@@ -748,7 +748,7 @@ def detect_doors_and_windows_geometrically(image_bytes, meters_per_pixel, pad=20
     # Second add gaps that are not covered by any arc (e.g. open entrance doorway)
     for gap in filtered_gaps:
         cx, cy, max_d = gap
-        if not any(math.hypot(cx - d[0], cy - d[1]) < 45 for d in final_doors):
+        if not any(math.hypot(cx - d[0], cy - d[1]) < 70 for d in final_doors):
             final_doors.append((cx, cy, max_d, False))
             door_widths_px.append(max_d)
 
@@ -959,7 +959,14 @@ def validate_scene_geometry(scene):
         try:
             poly = shapely.geometry.Polygon(coords)
             if not poly.is_valid:
-                warnings.append(f"Room {r.get('id')} polygon is invalid.")
+                valid_p = make_valid(poly)
+                polys = [g for g in (valid_p.geoms if hasattr(valid_p, "geoms") else [valid_p]) if g.geom_type == "Polygon"]
+                if polys:
+                    largest = max(polys, key=lambda g: g.area)
+                    r["polygon"] = [[round(pt[0], 3), round(pt[1], 3)] for pt in list(largest.exterior.coords)[:-1]]
+                    room_geoms.append(largest)
+                else:
+                    warnings.append(f"Room {r.get('id')} polygon is invalid.")
             else:
                 room_geoms.append(poly)
         except Exception:
@@ -1004,7 +1011,7 @@ def validate_scene_geometry(scene):
             pt = shapely.geometry.Point(center[0], center[1])
             dist = combined_walls.distance(pt)
             door_w = float(d.get("width", 0.9))
-            limit = max(0.60, round(door_w / 2 + 0.15, 2))
+            limit = max(1.10, round(door_w + 0.20, 2))
             if dist > limit:
                 warnings.append(f"Door {d.get('id')} center is {dist:.2f} m from nearest wall (exceeds {limit:.2f} m limit).")
 
