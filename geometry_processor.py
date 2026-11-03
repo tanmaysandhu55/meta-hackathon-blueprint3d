@@ -294,8 +294,8 @@ def solidify_wall_band(mask):
     return cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=1)
 
 
-def detect_door_swing_radii_px(image):
-    """Find plausible partial circular swing arcs and return their radii in px."""
+def detect_door_swing_radii_px(image, return_candidates=False):
+    """Find plausible partial circular swing arcs and return radii or fitted arcs."""
     if image is None:
         return []
     if isinstance(image, (bytes, bytearray, memoryview)):
@@ -308,6 +308,7 @@ def detect_door_swing_radii_px(image):
     contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
     radii = []
     centers = []
+    candidates = []
     min_radius = max(8, min(gray.shape) // 100)
     max_radius = max(12, min(gray.shape) // 2)
     for contour in contours:
@@ -348,7 +349,59 @@ def detect_door_swing_radii_px(image):
             if not any(math.hypot(cx - old_x, cy - old_y) < max(8.0, radius * 0.2) for old_x, old_y in centers):
                 centers.append((cx, cy))
                 radii.append(radius)
-    return radii
+                candidates.append({"center": [float(cx), float(cy)], "radius": float(radius), "arc_span": float(arc_span)})
+    return candidates if return_candidates else radii
+
+
+def _line_samples_inside(mask, start, end, min_fraction=0.65):
+    x1, y1 = start
+    x2, y2 = end
+    steps = max(2, int(math.hypot(x2 - x1, y2 - y1) / 4))
+    xs = np.clip(np.rint(np.linspace(x1, x2, steps)).astype(int), 0, mask.shape[1] - 1)
+    ys = np.clip(np.rint(np.linspace(y1, y2, steps)).astype(int), 0, mask.shape[0] - 1)
+    return float(np.mean(mask[ys, xs] > 0)) >= min_fraction
+
+
+def _projected_wall_gaps(dark, meters_per_pixel, orientation):
+    """Find repeated, wall-aligned blank spans; return stable gap centers in px."""
+    height, width = dark.shape
+    image = dark if orientation == "horizontal" else dark.T
+    length_px = image.shape[1]
+    min_gap = int(math.ceil(0.7 / max(meters_per_pixel, 1e-9)))
+    max_gap = int(math.floor(1.5 / max(meters_per_pixel, 1e-9)))
+    min_run = max(12, int(round(0.25 / max(meters_per_pixel, 1e-9))))
+    found = []
+    for line_index, row in enumerate(image):
+        xs = np.flatnonzero(row > 0)
+        if len(xs) < 2:
+            continue
+        breaks = np.flatnonzero(np.diff(xs) > 1)
+        starts = np.r_[0, breaks + 1]
+        ends = np.r_[breaks, len(xs) - 1]
+        runs = [(int(xs[a]), int(xs[b])) for a, b in zip(starts, ends) if int(xs[b] - xs[a] + 1) >= min_run]
+        for first, second in zip(runs, runs[1:]):
+            gap_start, gap_end = first[1] + 1, second[0]
+            gap_width = gap_end - gap_start
+            if min_gap <= gap_width <= max_gap:
+                center = ((gap_start + gap_end) / 2.0, float(line_index))
+                found.append(center if orientation == "horizontal" else (center[1], center[0]))
+    if not found:
+        return []
+    # Cluster row/column votes by wall-normal coordinate and nearly identical
+    # gap center. A band can be 30-40 px thick, so Euclidean 8 px clustering
+    # split one opening into many unstable candidates.
+    groups = []
+    normal_tolerance = max(12.0, min(height, width) * 0.025)
+    along_tolerance = max(8.0, min_gap * 0.08)
+    for point in found:
+        group = next((g for g in groups if abs(point[0] - g[0][0]) <= along_tolerance
+                      and abs(point[1] - g[0][1]) <= normal_tolerance), None)
+        if group is None:
+            groups.append([point])
+        else:
+            group.append(point)
+    min_votes = max(3, int(round(min(height, width) * 0.0015)))
+    return [tuple(np.mean(group, axis=0)) for group in groups if len(group) >= min_votes]
 
 
 def mask_to_polygons_with_holes(mask_uint8, meters_per_pixel, min_area_px=150, simplify_meters=0.04):
@@ -829,9 +882,7 @@ def reconstruct_walls_from_mask_orthogonal(wall_masks, meters_per_pixel, wall_th
 
 
 def detect_doors_and_windows_geometrically(image_bytes, meters_per_pixel, pad=20, return_diagnostics=False):
-    """Detect door openings and window symbols directly from CAD line graphics
-    when AI segmentation (SAM) is not used.
-    """
+    """Detect only openings supported by wall-band, swing-arc, or gap evidence."""
     if isinstance(image_bytes, np.ndarray):
         img = image_bytes
     else:
@@ -843,96 +894,70 @@ def detect_doors_and_windows_geometrically(image_bytes, meters_per_pixel, pad=20
 
     h, w = img.shape[:2]
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
-    _, dark = cv2.threshold(gray, 210, 255, cv2.THRESH_BINARY_INV)
-
-    small_close = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)))
-    large_close = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (45, 45)))
-    bridges = cv2.subtract(large_close, small_close)
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(bridges)
-
-    candidates = []
-    for i in range(1, num_labels):
-        area = stats[i, cv2.CC_STAT_AREA]
-        bw = stats[i, cv2.CC_STAT_WIDTH]
-        bh = stats[i, cv2.CC_STAT_HEIGHT]
-        max_d = max(bw, bh)
-        min_d = min(bw, bh)
-        if 35 <= max_d <= 80 and area >= 280:
-            cx, cy = centroids[i]
-            candidates.append((cx, cy, max_d, min_d, area))
-
-    # Reject closely packed repeated stair treads (clusters with >= 3 items in 60px)
-    filtered_doors = []
-    door_widths_px = []
+    # Hough pairing is quadratic in candidate count. Work at a bounded
+    # resolution for large scans, and convert accepted pixel coordinates back
+    # to the untouched source image frame below.
+    detection_scale = min(1.0, 2048.0 / max(h, w))
+    if detection_scale < 1.0:
+        detect_gray = cv2.resize(gray, None, fx=detection_scale, fy=detection_scale, interpolation=cv2.INTER_AREA)
+        detect_img = cv2.resize(img, (detect_gray.shape[1], detect_gray.shape[0]), interpolation=cv2.INTER_AREA) if img.ndim == 3 else detect_gray
+        detect_mpp = meters_per_pixel / detection_scale
+    else:
+        detect_gray, detect_img, detect_mpp = gray, img, meters_per_pixel
+    dh, dw = detect_gray.shape[:2]
+    _, dark = cv2.threshold(detect_gray, 210, 255, cv2.THRESH_BINARY_INV)
     diagnostics = []
-    for candidate_index, c in enumerate(candidates, start=1):
-        cx, cy, max_d, min_d, area = c
-        neighbors = [other for other in candidates if math.hypot(cx - other[0], cy - other[1]) < 60]
-        if len(neighbors) >= 3:
-            diagnostics.append({
-                "kind": "door", "candidate": f"door-candidate-{candidate_index}",
-                "accepted": False, "pixelCenter": [round(float(cx), 2), round(float(cy), 2)],
-                "reason": "dense repeated-line cluster is more likely stair treads than a doorway",
-            })
-            continue
-        if not any(math.hypot(cx - d[0], cy - d[1]) < 45 for d in filtered_doors):
-            filtered_doors.append((cx, cy, max_d))
-            door_widths_px.append(max_d)
-            diagnostics.append({
-                "kind": "door", "candidate": f"door-candidate-{candidate_index}",
-                "accepted": True, "pixelCenter": [round(float(cx), 2), round(float(cy), 2)],
-                "reason": "door-swing geometry candidate",
-            })
-        else:
-            diagnostics.append({
-                "kind": "door", "candidate": f"door-candidate-{candidate_index}",
-                "accepted": False, "pixelCenter": [round(float(cx), 2), round(float(cy), 2)],
-                "reason": "duplicate candidate near another doorway",
-            })
+    wall_band = solidify_wall_band(dark)
+    band_distance = cv2.distanceTransform((wall_band > 0).astype(np.uint8), cv2.DIST_L2, 5)
+    band_thickness_px = estimate_wall_thickness_px([wall_band])
+    wall_roi = (wall_band > 0).astype(np.uint8) * 255
+    wall_roi = cv2.dilate(wall_roi, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
 
-    doors_data = []
-    for idx, (cx_px, cy_px, w_px) in enumerate(filtered_doors):
-        doors_data.append({
-            "id": f"d{idx + 1}",
-            "center": [round(cx_px * meters_per_pixel, 3), round(cy_px * meters_per_pixel, 3)],
-            "pixel_center": [round(float(cx_px), 2), round(float(cy_px), 2)],
-            "width": 0.90,
-            "connects": ["room"],
-            "source": "estimated",
-            "pixel_width": int(w_px),
-        })
-
-    # A single Hough segment is not a window: exterior and interior wall
-    # strokes produce thousands of them. Require a paired window-like mark:
-    # two parallel segments, close together, with substantial shared length.
-    lines = cv2.HoughLinesP(dark, 1, np.pi / 180, threshold=24, minLineLength=20, maxLineGap=4)
+    # Generate window candidates only from measured-length marks that lie in a
+    # merged wall band. This removes sheet notes, room text and most stair ticks
+    # before the quadratic parallel-line pairing stage.
+    min_length_px = 0.6 / max(detect_mpp, 1e-9)
+    max_length_px = 3.0 / max(detect_mpp, 1e-9)
+    # Keep proposals near a merged wall band before any pair search. The
+    # dilation admits the thin pane strokes inside the band, while the later
+    # medial-axis check rejects marks riding the outer wall edges.
+    proposal_radius = max(5, int(round(band_thickness_px * 0.45)))
+    proposal_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (proposal_radius * 2 + 1, proposal_radius * 2 + 1))
+    proposal_roi = cv2.dilate(wall_roi, proposal_kernel)
+    candidate_mask = cv2.bitwise_and(dark, proposal_roi)
+    raw_lines = cv2.HoughLinesP(candidate_mask, 1, np.pi / 180, threshold=20,
+                                minLineLength=max(12, int(min_length_px * 0.65)), maxLineGap=4)
     segments = []
-    if lines is not None:
-        for raw_line in np.asarray(lines).reshape(-1, 4):
-            x1, y1, x2, y2 = map(float, raw_line)
-            length = math.hypot(x2 - x1, y2 - y1)
-            if length < 20:
-                continue
-            angle = math.degrees(math.atan2(y2 - y1, x2 - x1)) % 180
-            segments.append({"p1": (x1, y1), "p2": (x2, y2), "length": length, "angle": angle,
-                             "center": ((x1 + x2) / 2, (y1 + y2) / 2)})
-
-    closed_for_outline = cv2.morphologyEx(
-        dark, cv2.MORPH_CLOSE,
-        cv2.getStructuringElement(cv2.MORPH_RECT, (max(5, min(w, h) // 80),) * 2),
-        iterations=2,
-    )
-    outer_contours, _ = cv2.findContours(closed_for_outline, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    outer = max(outer_contours, key=cv2.contourArea) if outer_contours else None
+    line_rows = np.asarray(raw_lines).reshape(-1, 4) if raw_lines is not None else []
+    for raw_line in line_rows[:1200]:
+        x1, y1, x2, y2 = map(float, raw_line)
+        length = math.hypot(x2 - x1, y2 - y1)
+        if not min_length_px <= length <= max_length_px:
+            continue
+        if not _line_samples_inside(proposal_roi, (x1, y1), (x2, y2), min_fraction=0.8):
+            continue
+        angle = math.degrees(math.atan2(y2 - y1, x2 - x1)) % 180
+        center = ((x1 + x2) / 2, (y1 + y2) / 2)
+        # Hough commonly reports the same stroke as many overlapping fragments.
+        if any(abs(angle - item["angle"]) < 2.0 and
+               abs((center[0] - item["center"][0]) * -math.sin(math.radians(angle)) +
+                   (center[1] - item["center"][1]) * math.cos(math.radians(angle))) < 3.0 and
+               math.hypot(center[0] - item["center"][0], center[1] - item["center"][1]) < length * 0.8
+               for item in segments[-250:]):
+            continue
+        segments.append({"p1": (x1, y1), "p2": (x2, y2), "length": length, "angle": angle, "center": center})
+        if len(segments) >= 250:
+            break
     windows_candidates = []
     seen_centers = []
-    used_segments = set()
-    min_length_px, max_length_px = 0.5 / max(meters_per_pixel, 1e-9), 3.0 / max(meters_per_pixel, 1e-9)
-    exterior_tolerance_px = max(12.0, min(w, h) * 0.012)
+    paired_segments = set()
+    band_kernel = max(7, int(round(band_thickness_px * 0.55)))
+    max_pair_offset = min(24.0, max(6.0, float(band_kernel)))
     for index, first in enumerate(segments):
         first_x, first_y = first["center"]
-        pair = None
         for other_index in range(index + 1, len(segments)):
+            if other_index in paired_segments:
+                continue
             second = segments[other_index]
             angle_gap = abs(first["angle"] - second["angle"])
             angle_gap = min(angle_gap, 180 - angle_gap)
@@ -945,58 +970,126 @@ def detect_doors_and_windows_geometrically(image_bytes, meters_per_pixel, pad=20
             along = abs(delta[0] * math.cos(theta) + delta[1] * math.sin(theta))
             overlap = max(0.0, min(first["length"], second["length"]) - along)
             overlap_ratio = overlap / max(1.0, min(first["length"], second["length"]))
-            if 2 <= offset <= max(24, exterior_tolerance_px * 1.5) and overlap_ratio >= 0.7:
-                pair = (other_index, second, (first_x + second["center"][0]) / 2,
-                        (first_y + second["center"][1]) / 2,
-                        (first["length"] + second["length"]) / 2)
-                break
-        if pair is None:
-            continue
-        other_index, second, cx, cy, length_px = pair
-        used_segments.update((index, other_index))
-        # Only pairs on or immediately next to the exterior footprint are
-        # meaningful window candidates. Filtering here prevents interior room
-        # lines and hatch marks from flooding both diagnostics and candidate
-        # work with false window matches.
-        if outer is None or abs(cv2.pointPolygonTest(outer, (float(cx), float(cy)), True)) > exterior_tolerance_px:
-            continue
-        if not min_length_px <= length_px <= max_length_px:
-            diagnostics.append({"kind": "window", "candidate": f"pair-{index + 1}-{other_index + 1}", "accepted": False,
-                                "pixelCenter": [round(float(cx), 2), round(float(cy), 2)],
-                                "reason": f"paired mark length {length_px * meters_per_pixel:.2f} m is outside 0.5-3.0 m"})
-            continue
-        nearby = [segment for segment in segments if math.hypot(segment["center"][0] - cx, segment["center"][1] - cy) < 35]
-        if len(nearby) > 8:
-            diagnostics.append({"kind": "window", "candidate": f"pair-{index + 1}-{other_index + 1}", "accepted": False,
-                                "pixelCenter": [round(float(cx), 2), round(float(cy), 2)],
-                                "reason": "dense stair-hatch or drafting-line cluster"})
-            continue
-        if any(math.hypot(cx - old_x, cy - old_y) < max(20, length_px * 0.35) for old_x, old_y in seen_centers):
-            diagnostics.append({"kind": "window", "candidate": f"pair-{index + 1}-{other_index + 1}", "accepted": False,
-                                "pixelCenter": [round(float(cx), 2), round(float(cy), 2)],
-                                "reason": "duplicate paired mark near another window"})
-            continue
-        seen_centers.append((cx, cy))
-        windows_candidates.append((cx, cy, length_px))
-        diagnostics.append({"kind": "window", "candidate": f"pair-{index + 1}-{other_index + 1}", "accepted": True,
-                            "pixelCenter": [round(float(cx), 2), round(float(cy), 2)],
-                            "reason": "outer-wall paired parallel mark"})
-
-    # Keep candidate counts plausible for the measured exterior perimeter.
-    if outer is not None:
-        perimeter_px = cv2.arcLength(outer, True)
-        # Even a long residential exterior should not become dozens of windows
-        # from repeated wall strokes or drawing grids. Keep both the density
-        # limit and a conservative global cap for house plans.
-        max_windows = min(19, max(1, int(math.ceil(perimeter_px * meters_per_pixel / 4.0))))
-        if len(windows_candidates) > max_windows:
-            windows_candidates.sort(key=lambda item: item[2], reverse=True)
-            rejected = windows_candidates[max_windows:]
-            windows_candidates = windows_candidates[:max_windows]
-            for index, (cx, cy, length_px) in enumerate(rejected, start=max_windows + 1):
-                diagnostics.append({"kind": "window", "candidate": f"cap-{index}", "accepted": False,
+            cx, cy = (first_x + second["center"][0]) / 2, (first_y + second["center"][1]) / 2
+            length_px = (first["length"] + second["length"]) / 2
+            pair_id = f"pair-{index + 1}-{other_index + 1}"
+            if offset < 2.0 or offset > max_pair_offset or overlap_ratio < 0.7:
+                continue
+            paired_segments.update((index, other_index))
+            if band_distance[int(np.clip(round(cy), 0, dh - 1)), int(np.clip(round(cx), 0, dw - 1))] < max(8.0, band_thickness_px * 0.35):
+                diagnostics.append({"kind": "window", "candidate": pair_id, "accepted": False,
                                     "pixelCenter": [round(float(cx), 2), round(float(cy), 2)],
-                                    "reason": "plausible exterior-window cap reached (about one per 4 m wall)"})
+                                    "reason": "paired lines are outside a solid wall band"})
+                break
+            nearby = [segment for segment in segments if math.hypot(segment["center"][0] - cx, segment["center"][1] - cy) < max(25.0, band_kernel * 1.5)]
+            if len(nearby) > 12:
+                diagnostics.append({"kind": "window", "candidate": pair_id, "accepted": False,
+                                    "pixelCenter": [round(float(cx), 2), round(float(cy), 2)],
+                                    "reason": "dense stair-hatch or drafting-line cluster"})
+                break
+            if any(math.hypot(cx - old_x, cy - old_y) < max(20, length_px * 0.45) for old_x, old_y in seen_centers):
+                diagnostics.append({"kind": "window", "candidate": pair_id, "accepted": False,
+                                    "pixelCenter": [round(float(cx), 2), round(float(cy), 2)],
+                                    "reason": "duplicate paired mark near another window"})
+                break
+            seen_centers.append((cx, cy))
+            windows_candidates.append((cx / detection_scale, cy / detection_scale, length_px / detection_scale))
+            diagnostics.append({"kind": "window", "candidate": pair_id, "accepted": True,
+                                "pixelCenter": [round(float(cx), 2), round(float(cy), 2)],
+                                "reason": "paired thin lines align inside a solid wall band"})
+            break
+
+    # Arc centers are hinges. Pair close, collinear hinges to represent one
+    # double leaf opening rather than two adjacent doors.
+    arcs = [dict(arc, center=[value / detection_scale for value in arc["center"]],
+                 radius=arc["radius"] / detection_scale)
+            for arc in detect_door_swing_radii_px(detect_img, return_candidates=True)
+            if 0.55 <= arc["radius"] * detect_mpp <= 1.25]
+    door_candidates = []
+    consumed_arcs = set()
+    for i, arc in enumerate(arcs):
+        if i in consumed_arcs:
+            continue
+        cx, cy = arc["center"]
+        partner = None
+        partner_distance = None
+        for j in range(i + 1, len(arcs)):
+            if j in consumed_arcs:
+                continue
+            ox, oy = arcs[j]["center"]
+            distance = math.hypot(cx - ox, cy - oy) * meters_per_pixel
+            if 1.35 <= distance <= 2.4 and min(abs(cx - ox), abs(cy - oy)) <= 0.25 * max(abs(cx - ox), abs(cy - oy), 1):
+                partner, partner_distance = j, distance
+                break
+        if partner is not None:
+            other = arcs[partner]["center"]
+            consumed_arcs.update((i, partner))
+            door_candidates.append({"center": ((cx + other[0]) / 2, (cy + other[1]) / 2),
+                                    "width": float(np.clip(partner_distance, 1.4, 2.4)), "kind": "double"})
+        else:
+            consumed_arcs.add(i)
+            door_candidates.append({"center": (cx, cy), "width": float(arc["radius"] * meters_per_pixel), "kind": "swing"})
+    doors_data = []
+    for idx, candidate in enumerate(door_candidates, start=1):
+        cx, cy = candidate["center"]
+        doors_data.append({"id": f"d{idx}", "center": [round(cx * meters_per_pixel, 3), round(cy * meters_per_pixel, 3)],
+                           "pixel_center": [round(cx, 2), round(cy, 2)], "width": round(candidate["width"], 2),
+                           "kind": candidate["kind"], "connects": ["room"], "source": "swing-arc"})
+
+    # A collinear wall gap with plausible width and no arc/window evidence is
+    # recorded as an open doorway. It belongs in doors, never windows.
+    horizontal_gaps = _projected_wall_gaps(dark, detect_mpp, "horizontal")
+    vertical_gaps = _projected_wall_gaps(dark, detect_mpp, "vertical")
+    gap_candidates = [tuple(value / detection_scale for value in point) for point in (horizontal_gaps + vertical_gaps)]
+    window_gap_centers = []
+    # Window openings contain repeated thin pane lines across the wall gap;
+    # an entrance gap has no such parallel marks. Check this before emitting
+    # open-door candidates so a window is never re-labelled as a doorway.
+    for orientation, candidates in (("horizontal", horizontal_gaps), ("vertical", vertical_gaps)):
+        for x, y in candidates:
+            radius = max(12, int(round(0.75 / max(detect_mpp, 1e-9))))
+            cx, cy = int(round(x)), int(round(y))
+            line_votes = []
+            if orientation == "horizontal":
+                x0, x1 = max(0, cx - radius), min(dw, cx + radius + 1)
+                for row in range(max(0, cy - proposal_radius), min(dh, cy + proposal_radius + 1)):
+                    line_votes.append((row, float(np.mean(dark[row, x0:x1] > 0)) if x1 > x0 else 0.0))
+            else:
+                y0, y1 = max(0, cy - radius), min(dh, cy + radius + 1)
+                for column in range(max(0, cx - proposal_radius), min(dw, cx + proposal_radius + 1)):
+                    line_votes.append((column, float(np.mean(dark[y0:y1, column] > 0)) if y1 > y0 else 0.0))
+            marked_lines = [coordinate for coordinate, fraction in line_votes if fraction >= 0.55]
+            separated = any(b - a >= 3 for a, b in zip(marked_lines, marked_lines[1:]))
+            if len(marked_lines) >= 4 and separated:
+                source_x, source_y = x / detection_scale, y / detection_scale
+                if not any(math.hypot(source_x - win[0], source_y - win[1]) < 0.45 / max(meters_per_pixel, 1e-9)
+                           for win in windows_candidates):
+                    windows_candidates.append((source_x, source_y, 0.9 / max(meters_per_pixel, 1e-9)))
+                window_gap_centers.append((source_x, source_y))
+    unique_gaps = []
+    for gap in gap_candidates:
+        if any(math.hypot(gap[0] - win_gap[0], gap[1] - win_gap[1]) < max(10.0, 0.35 / max(meters_per_pixel, 1e-9))
+               for win_gap in window_gap_centers):
+            continue
+        if any(math.hypot(gap[0] - old[0], gap[1] - old[1]) < max(8.0, 0.25 / max(meters_per_pixel, 1e-9)) for old in unique_gaps):
+            continue
+        if any(math.hypot(gap[0] - door["center"][0] / meters_per_pixel, gap[1] - door["center"][1] / meters_per_pixel)
+               < max(1.5 / meters_per_pixel, 1.3 * 0.9 / meters_per_pixel) for door in doors_data):
+            continue
+        if any(math.hypot(gap[0] - win[0], gap[1] - win[1]) < max(8.0, win[2] * 0.5) for win in windows_candidates):
+            continue
+        unique_gaps.append(gap)
+    for gap in unique_gaps:
+        doors_data.append({"id": f"d{len(doors_data) + 1}", "center": [round(gap[0] * meters_per_pixel, 3), round(gap[1] * meters_per_pixel, 3)],
+                           "pixel_center": [round(gap[0], 2), round(gap[1], 2)], "width": 0.9,
+                           "kind": "open-doorway", "connects": ["room"], "source": "wall-gap"})
+
+    for index, door in enumerate(doors_data):
+        diagnostics.append({"kind": "door", "candidate": door["id"], "accepted": True,
+                            "pixelCenter": door.get("pixel_center"),
+                            "reason": {"swing": "single swing arc", "double": "paired facing swing arcs",
+                                       "open-doorway": "wall gap with no swing arc or window lines"}.get(door["kind"], "opening evidence accepted"),
+                            "openingType": door["kind"]})
 
     windows_data = []
     for idx, (cx_px, cy_px, len_px) in enumerate(windows_candidates):
@@ -1006,10 +1099,11 @@ def detect_doors_and_windows_geometrically(image_bytes, meters_per_pixel, pad=20
             "pixel_center": [round(cx_px, 2), round(cy_px, 2)],
             "pixel_width": round(len_px, 2),
             "width": round(len_px * meters_per_pixel, 2),
+            "kind": "window",
             "source": "estimated",
         })
 
-    median_door_px = float(np.median(door_widths_px)) if door_widths_px else None
+    median_door_px = float(np.median([arc["radius"] for arc in arcs])) if arcs else None
     result = (doors_data, windows_data, median_door_px)
     return (*result, diagnostics) if return_diagnostics else result
 

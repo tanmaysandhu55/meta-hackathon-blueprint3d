@@ -31,3 +31,6 @@ Thumbs.db
 
 samples/eval/hard/
 samples/eval/private/
+samples/eval/clean/c1_apartment.jpg
+samples/eval/clean/plan_30x50.jpg
+samples/eval/clean/two_plans_test.png

@@ -327,8 +327,13 @@ def _make_overlays(plan, original, capture, payload, summary, output_root):
             is_kept = identifier in kept_ids
             is_dropped = identifier in dropped_reasons
             color = (245, 55, 55) if is_dropped else (40, 190, 95) if collection == "door" else (40, 120, 240)
+            display_kind = {
+                "swing": "Door",
+                "double": "Double door",
+                "open-doorway": "Open doorway",
+            }.get(str(entry.get("kind") or ""), collection.title())
             add_opening_marker(
-                collection, x, y, color, identifier,
+                display_kind, x, y, color, identifier,
                 dropped_reasons.get(identifier, "kept" if is_kept else "candidate"),
                 rejected=is_dropped,
             )

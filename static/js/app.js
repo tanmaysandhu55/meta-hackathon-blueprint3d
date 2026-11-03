@@ -558,14 +558,21 @@ document.addEventListener("DOMContentLoaded", () => {
                 detail: `Doors ${openingCounts.doorsKept ?? doors.length}/${openingCounts.doorsDetected ?? doors.length}; windows ${openingCounts.windowsKept ?? windows.length}/${openingCounts.windowsDetected ?? windows.length}; ${openingCounts.dropped || 0} dropped.`,
             });
         }
-        (meta.openingDiagnostics || [])
-            .filter(item => item && item.accepted === false)
-            .slice(0, 12)
-            .forEach(item => rows.push({
-                state: "review",
-                label: `${String(item.kind || "opening").toUpperCase()} ${item.candidate || "candidate"}`,
-                detail: String(item.reason || "Candidate was rejected by geometry checks."),
-            }));
+        const rejectedOpenings = (meta.openingDiagnostics || []).filter(item => item && item.accepted === false);
+        if (rejectedOpenings.length) {
+            const byReason = new Map();
+            rejectedOpenings.forEach(item => {
+                const rawReason = String(item.reason || "Rejected by geometry checks.");
+                const reason = /^estimated .* width .* is outside /i.test(rawReason)
+                    ? "Opening width outside the allowed range"
+                    : /^nearest wall /i.test(rawReason) || /no wall within/i.test(rawReason)
+                        ? "Candidate too far from a wall"
+                        : rawReason;
+                if (!byReason.has(reason)) byReason.set(reason, []);
+                byReason.get(reason).push(item);
+            });
+            rows.push({ state: "review", kind: "opening-rejections", label: "Opening candidates rejected", detail: `${rejectedOpenings.length} total; grouped by reason.`, byReason });
+        }
         if (meta.needsReview) {
             rows.unshift({ state: "review", label: "Needs review", detail: (meta.reviewIssues || []).join(" ") || "Quality checks failed; inspect the 2D overlay before viewing 3D." });
         }
@@ -587,14 +594,52 @@ document.addEventListener("DOMContentLoaded", () => {
             mapQualityChecks.replaceChildren();
             rows.forEach(item => {
                 const row = document.createElement("li");
-                row.className = "flex items-center gap-2 text-[12.5px] truncate cursor-default";
+                row.className = "flex items-start gap-2 text-[12.5px] cursor-default";
+                if (item.kind === "opening-rejections") {
+                    const marker = document.createElement("span");
+                    marker.className = "mono-check text-[var(--pigment)] shrink-0";
+                    marker.textContent = "!";
+                    marker.setAttribute("aria-label", "Review");
+                    const details = document.createElement("details");
+                    details.className = "min-w-0 text-[var(--secondary-ink)]";
+                    const summary = document.createElement("summary");
+                    summary.className = "cursor-pointer break-words";
+                    summary.textContent = `${item.label}: ${item.detail}`;
+                    details.appendChild(summary);
+                    const reasonList = document.createElement("ul");
+                    reasonList.className = "mt-1 ml-4 list-disc space-y-1";
+                    item.byReason.forEach((candidates, reason) => {
+                        const reasonRow = document.createElement("li");
+                        reasonRow.textContent = `${reason} (${candidates.length})`;
+                        const candidateDetails = document.createElement("details");
+                        candidateDetails.className = "ml-2";
+                        const candidateSummary = document.createElement("summary");
+                        candidateSummary.className = "cursor-pointer";
+                        candidateSummary.textContent = "Show candidates";
+                        const candidateList = document.createElement("ul");
+                        candidateList.className = "ml-4 list-disc";
+                        candidates.forEach(candidate => {
+                            const entry = document.createElement("li");
+                            const point = Array.isArray(candidate.pixelCenter) ? ` at ${candidate.pixelCenter.map(value => Number(value).toFixed(0)).join(", ")} px` : "";
+                            entry.textContent = `${String(candidate.kind || "opening").toUpperCase()} ${candidate.candidate || "candidate"}${point}`;
+                            candidateList.appendChild(entry);
+                        });
+                        candidateDetails.append(candidateSummary, candidateList);
+                        reasonRow.appendChild(candidateDetails);
+                        reasonList.appendChild(reasonRow);
+                    });
+                    details.appendChild(reasonList);
+                    row.append(marker, details);
+                    mapQualityChecks.appendChild(row);
+                    return;
+                }
                 row.title = `${item.label}: ${item.detail}`;
                 const marker = document.createElement("span");
                 marker.className = item.state === "ok" ? "mono-check text-[var(--ink)]" : "mono-check text-[var(--pigment)]";
                 marker.textContent = item.state === "ok" ? "OK" : "!";
                 marker.setAttribute("aria-label", item.state === "ok" ? "Checked" : "Review");
                 const text = document.createElement("span");
-                text.className = "truncate text-[var(--secondary-ink)]";
+                text.className = "min-w-0 whitespace-normal break-words text-[var(--secondary-ink)]";
                 text.textContent = `${item.label}: ${item.detail}`;
                 row.append(marker, text);
                 mapQualityChecks.appendChild(row);

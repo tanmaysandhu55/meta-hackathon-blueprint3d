@@ -993,6 +993,7 @@ class FloorPlanViewer {
         const wallThickness = this.getWallThickness();
         doors.forEach(door => {
             if (!Array.isArray(door.center) || door.center.length < 2) return;
+            if (door.kind === "open-doorway") return;
             const level = this.getItemFloorIndex(door);
             const center = this.toWorldCoords(door.center[0], door.center[1]);
             const width = Math.max(0.55, Number(door.width) || 0.9);
@@ -1693,26 +1694,42 @@ class FloorPlanViewer {
                 this.animatingMeshes.push(header);
             }
 
-            // Hinged wood door. The leaf rotates only when the user presses E nearby.
-            const hinge = new THREE.Group();
-            hinge.position.set(-width / 2 + 0.045, 0, 0);
-            const panelGeo = new THREE.BoxGeometry(width - 0.09, doorHeight, 0.05);
-            const panelMesh = new THREE.Mesh(panelGeo, doorPanelMat);
-            panelMesh.position.set((width - 0.09) / 2, doorHeight / 2, 0);
-            panelMesh.castShadow = true;
-            panelMesh.receiveShadow = true;
-            hinge.add(panelMesh);
-            const knob = new THREE.Mesh(new THREE.SphereGeometry(0.045, 12, 8), knobMat);
-            knob.position.set(width - 0.18, 1.0, 0.04);
-            panelMesh.add(knob);
-            const backKnob = knob.clone();
-            backKnob.position.z = -0.04;
-            panelMesh.add(backKnob);
-            hinge.rotation.y = doorGroup.userData.open ? Math.PI / 2 : 0;
-            doorGroup.add(hinge);
-            doorGroup.userData.hinge = hinge;
-            doorGroup.userData.targetAngle = doorGroup.userData.open ? Math.PI / 2 : 0;
-            this.walkthroughDoors.push({ data: door, group: doorGroup, hinge, level, width });
+            // An open doorway is a real passage, not a closed panel with a
+            // misleading swing interaction. Keep its frame, but leave the
+            // opening unobstructed for walkthrough collision and visibility.
+            if (door.kind === "open-doorway") {
+                this.getFloorLayer(level, "doors")?.add(doorGroup);
+                return;
+            }
+
+            // Hinged wooden panel(s). A paired swing symbol becomes two leaves
+            // under one door record so the passage is counted and toggled once.
+            const doubleLeaf = door.kind === "double";
+            const leafWidth = doubleLeaf ? Math.max(0.35, width / 2 - 0.045) : width - 0.09;
+            const leaves = doubleLeaf ? [-1, 1] : [-1];
+            const hinges = leaves.map(side => {
+                const hinge = new THREE.Group();
+                hinge.position.set(side < 0 ? -width / 2 + 0.045 : 0, 0, 0);
+                const panelMesh = new THREE.Mesh(new THREE.BoxGeometry(leafWidth, doorHeight, 0.05), doorPanelMat);
+                panelMesh.position.set(leafWidth / 2, doorHeight / 2, 0);
+                panelMesh.castShadow = true;
+                panelMesh.receiveShadow = true;
+                hinge.add(panelMesh);
+                const knob = new THREE.Mesh(new THREE.SphereGeometry(0.045, 12, 8), knobMat);
+                knob.position.set(leafWidth - 0.12, 1.0, 0.04);
+                panelMesh.add(knob);
+                const backKnob = knob.clone();
+                backKnob.position.z = -0.04;
+                panelMesh.add(backKnob);
+                const openAngle = doubleLeaf ? side * Math.PI / 2 : Math.PI / 2;
+                hinge.rotation.y = doorGroup.userData.open ? openAngle : 0;
+                doorGroup.add(hinge);
+                return { hinge, openAngle };
+            });
+            doorGroup.userData.hinge = hinges[0].hinge;
+            doorGroup.userData.hinges = hinges;
+            doorGroup.userData.targetAngle = doorGroup.userData.open ? hinges[0].openAngle : 0;
+            this.walkthroughDoors.push({ data: door, group: doorGroup, hinge: hinges[0].hinge, hinges, level, width });
 
             this.getFloorLayer(level, "doors")?.add(doorGroup);
         });
@@ -3539,8 +3556,11 @@ class FloorPlanViewer {
     updateWalkthroughDoors(deltaSeconds) {
         const blend = 1 - Math.exp(-9 * Math.min(deltaSeconds, 0.05));
         this.walkthroughDoors.forEach(({ group }) => {
-            const hinge = group.userData.hinge;
-            hinge.rotation.y = THREE.MathUtils.lerp(hinge.rotation.y, group.userData.targetAngle, blend);
+            const hinges = group.userData.hinges || [{ hinge: group.userData.hinge, openAngle: group.userData.targetAngle }];
+            hinges.forEach(({ hinge, openAngle }) => {
+                const target = group.userData.open ? openAngle : 0;
+                hinge.rotation.y = THREE.MathUtils.lerp(hinge.rotation.y, target, blend);
+            });
         });
     }
 

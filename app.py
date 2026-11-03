@@ -576,6 +576,13 @@ def _process_story_slice(image_bytes, image_size, meters_per_pixel, wall_height,
     meters_per_pixel = round(float(scale_choice["meters_per_pixel"]), 7)
     scale_source = scale_choice["source"]
     scale_confidence = float(scale_choice["confidence"])
+    # Opening evidence is filtered at the final selected scale. The first pass
+    # above only provides measurements for scale selection.
+    geometric_openings = detect_doors_and_windows_geometrically(
+        image_bytes, meters_per_pixel, return_diagnostics=True
+    )
+    geo_doors = geometric_openings[0]
+    initial_meters_per_pixel = meters_per_pixel
     scale_method = {
         "user": "interactive two-point calibration",
         "manual": "user-entered scale",
@@ -616,11 +623,13 @@ def _process_story_slice(image_bytes, image_size, meters_per_pixel, wall_height,
     if geometric_openings:
         rescale_pixel_openings(geometric_openings[:2])
         for item in geo_doors[:]:
-            if not 0.7 <= float(item.get("width") or 0.0) <= 1.2:
+            opening_kind = str(item.get("kind") or "swing")
+            low, high = (0.7, 1.5) if opening_kind == "open-doorway" else (1.4, 2.4) if opening_kind == "double" else (0.7, 1.2)
+            if not low <= float(item.get("width") or 0.0) <= high:
                 opening_diagnostics.append({
                     "kind": "door", "candidate": item.get("id"), "accepted": False,
                     "pixelCenter": item.get("pixel_center"),
-                    "reason": f"estimated width {float(item.get('width') or 0.0):.2f} m is outside 0.7-1.2 m",
+                    "reason": f"estimated {opening_kind} width {float(item.get('width') or 0.0):.2f} m is outside {low:.1f}-{high:.1f} m",
                 })
                 geo_doors.remove(item)
         for item in geometric_openings[1][:]:
