@@ -1112,17 +1112,22 @@ def snap_openings_and_cut_walls(
     walls_data, doors_data, windows_data, wall_thickness_m=0.2, max_dist_m=0.6,
     meters_per_pixel=None, wall_thickness_px=None,
 ):
-    """Snap openings in source-pixel space, then convert the accepted point to meters.
+    """Snap openings and subtract their cutouts in one source-pixel frame.
 
-    ``max_dist_m`` remains for compatibility with older callers/tests. The live
-    pipeline supplies ``meters_per_pixel`` and uses a tolerance derived from the
-    measured raster wall thickness instead.
+    Scene polygons and opening centers are stored in meters. They are converted
+    to pixels once on entry; all unions, distance checks, orientation checks,
+    and differences then use pixels. Results are converted back only here.
+    Legacy callers without a scale retain their meter-coordinate behavior.
     """
     dropped_openings = []
     if not walls_data:
         return walls_data, doors_data, windows_data, dropped_openings
 
-    # Convert walls to Shapely polygons
+    pixel_mode = meters_per_pixel is not None and float(meters_per_pixel) > 0
+    scale = float(meters_per_pixel) if pixel_mode else 1.0
+    from shapely.affinity import scale as scale_geometry
+
+    # Convert source scene walls from meters to pixels before any geometry work.
     wall_polys = []
     for w in walls_data:
         coords = w.get("polygon", [])
@@ -1131,6 +1136,8 @@ def snap_openings_and_cut_walls(
         try:
             holes = w.get("holes", [])
             poly = shapely.geometry.Polygon(coords, holes)
+            if pixel_mode:
+                poly = scale_geometry(poly, xfact=1.0 / scale, yfact=1.0 / scale, origin=(0, 0))
             if not poly.is_valid:
                 poly = make_valid(poly)
             wall_polys.append(poly)
@@ -1141,42 +1148,34 @@ def snap_openings_and_cut_walls(
         return walls_data, doors_data, windows_data, dropped_openings
 
     combined_walls = unary_union(wall_polys).buffer(0)
+    thickness_px = float(wall_thickness_px or (wall_thickness_m / scale))
+    tolerance_px = max(6.0, 1.5 * thickness_px) if pixel_mode else max_dist_m
 
-    pixel_walls = combined_walls
-    tolerance_px = None
-    if meters_per_pixel is not None and meters_per_pixel > 0:
-        from shapely.affinity import scale as scale_geometry
-        pixel_walls = scale_geometry(combined_walls, xfact=1.0 / meters_per_pixel, yfact=1.0 / meters_per_pixel, origin=(0, 0))
-        wall_thickness_px = float(wall_thickness_px or (wall_thickness_m / meters_per_pixel))
-        tolerance_px = max(6.0, 1.5 * wall_thickness_px)
+    def source_point(item):
+        if pixel_mode and item.get("pixel_center") is not None:
+            return tuple(map(float, item["pixel_center"]))
+        return (float(item["center"][0]) / scale, float(item["center"][1]) / scale)
 
-    def snap_point(cx_m, cy_m, opening_id, kind):
-        if tolerance_px is None:
-            check_point = shapely.geometry.Point(cx_m, cy_m)
-            distance = combined_walls.distance(check_point)
-            if distance > max_dist_m:
-                dropped_openings.append(
-                    f"{kind.title()} {opening_id} dropped (nearest wall {distance / meters_per_pixel:.1f} px; {distance:.3f} m, over {max_dist_m} m tolerance)."
-                    if meters_per_pixel else
-                    f"{kind.title()} {opening_id} dropped (no wall within {max_dist_m} m; no floating openings allowed)."
-                )
-                return None
-            nearest = shapely.ops.nearest_points(combined_walls.boundary, check_point)[0]
-            return round(nearest.x, 3), round(nearest.y, 3)
-
-        check_point_px = shapely.geometry.Point(cx_m / meters_per_pixel, cy_m / meters_per_pixel)
-        distance_px = pixel_walls.distance(check_point_px)
+    def snap_point(item, kind):
+        check_point = shapely.geometry.Point(source_point(item))
+        distance_px = combined_walls.distance(check_point)
         if distance_px > tolerance_px:
-            distance_m = distance_px * meters_per_pixel
+            distance_m = distance_px * scale
             dropped_openings.append(
-                f"{kind.title()} {opening_id} dropped (nearest wall {distance_px:.1f} px / {distance_m:.3f} m; tolerance {tolerance_px:.1f} px from wall thickness)."
+                f"{kind.title()} {item['id']} dropped (nearest wall {distance_px:.1f} px / {distance_m:.3f} m; tolerance {tolerance_px:.1f} px)."
+                if pixel_mode else
+                f"{kind.title()} {item['id']} dropped (no wall within {max_dist_m} m; no floating openings allowed)."
             )
             return None
-        nearest_px = shapely.ops.nearest_points(pixel_walls.boundary, check_point_px)[0]
-        return round(nearest_px.x * meters_per_pixel, 3), round(nearest_px.y * meters_per_pixel, 3)
+        # A center already inside the solid band is correctly localized; moving
+        # it to the boundary would shift the cutout off-center and leave a lip.
+        if combined_walls.covers(check_point):
+            return check_point.x, check_point.y
+        nearest_px = shapely.ops.nearest_points(combined_walls.boundary, check_point)[0]
+        return nearest_px.x, nearest_px.y
 
-    def opening_orientation(center):
-        point = shapely.geometry.Point(center)
+    def opening_orientation(center_px):
+        point = shapely.geometry.Point(center_px)
         best = None
         for polygon in wall_polys:
             rings = [polygon.exterior, *polygon.interiors]
@@ -1189,18 +1188,17 @@ def snap_openings_and_cut_walls(
                         best = (distance, end[0] - start[0], end[1] - start[1])
         return "horizontal" if best is None or abs(best[1]) >= abs(best[2]) else "vertical"
 
-    # Process doors
+    # Validate every candidate against the untouched solid wall union, before cuts.
     valid_doors = []
     cut_boxes = []
     for d in doors_data:
-        cx, cy = d["center"]
-        snapped = snap_point(cx, cy, d["id"], "door")
+        snapped = snap_point(d, "door")
         if snapped is None:
             continue
         snap_x, snap_y = snapped
-        d["center"] = [snap_x, snap_y]
-        cut_w = float(d.get("width", 0.9))
-        box_th = wall_thickness_m + 0.15
+        d["center"] = [round(snap_x * scale, 3), round(snap_y * scale, 3)]
+        cut_w = float(d.get("pixel_width") or (float(d.get("width", 0.9)) / scale))
+        box_th = max(2.0, thickness_px + 4.0)
         if opening_orientation((snap_x, snap_y)) == "horizontal":
             door_box = shapely.geometry.box(snap_x - cut_w / 2.0, snap_y - box_th / 2.0, snap_x + cut_w / 2.0, snap_y + box_th / 2.0)
         else:
@@ -1211,14 +1209,13 @@ def snap_openings_and_cut_walls(
     # Process windows
     valid_windows = []
     for win in windows_data:
-        cx, cy = win["center"]
-        snapped = snap_point(cx, cy, win["id"], "window")
+        snapped = snap_point(win, "window")
         if snapped is None:
             continue
         snap_x, snap_y = snapped
-        win["center"] = [snap_x, snap_y]
-        cut_w = float(win.get("width", 1.2))
-        box_th = wall_thickness_m + 0.15
+        win["center"] = [round(snap_x * scale, 3), round(snap_y * scale, 3)]
+        cut_w = float(win.get("pixel_width") or (float(win.get("width", 1.2)) / scale))
+        box_th = max(2.0, thickness_px + 4.0)
         if opening_orientation((snap_x, snap_y)) == "horizontal":
             win_box = shapely.geometry.box(snap_x - cut_w / 2.0, snap_y - box_th / 2.0, snap_x + cut_w / 2.0, snap_y + box_th / 2.0)
         else:
@@ -1226,7 +1223,7 @@ def snap_openings_and_cut_walls(
         cut_boxes.append(win_box)
         valid_windows.append(win)
 
-    # Cut openings out of walls
+    # Subtract small pixel-space cutouts from the validated pixel-space walls.
     if cut_boxes:
         openings_union = unary_union(cut_boxes)
         combined_walls = combined_walls.difference(openings_union).buffer(0)
@@ -1236,13 +1233,13 @@ def snap_openings_and_cut_walls(
     geoms = combined_walls.geoms if combined_walls.geom_type == "MultiPolygon" else [combined_walls]
     wall_id = 1
     for g in geoms:
-        if g.is_empty or g.area < 0.2:
+        if g.is_empty or g.area < (1.0 if pixel_mode else 1e-6):
             continue
-        ext = [[round(x, 3), round(y, 3)] for x, y in list(g.exterior.coords)[:-1]]
+        ext = [[round(x * scale, 3), round(y * scale, 3)] for x, y in list(g.exterior.coords)[:-1]]
         holes = []
         for interior in g.interiors:
             if len(interior.coords) >= 3:
-                holes.append([[round(x, 3), round(y, 3)] for x, y in list(interior.coords)[:-1]])
+                holes.append([[round(x * scale, 3), round(y * scale, 3)] for x, y in list(interior.coords)[:-1]])
         updated_walls.append({
             "id": f"w{wall_id}",
             "polygon": ext,

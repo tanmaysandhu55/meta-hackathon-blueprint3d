@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import pytest
 
 from geometry_processor import (
     build_walls_from_rooms,
@@ -174,3 +175,46 @@ def test_wall_fallback_creates_thin_hollow_boundary_strips():
     assert len(walls[0]["polygon"]) >= 4
     assert len(walls[0]["holes"]) == 1
     assert len(walls[0]["holes"][0]) >= 4
+
+
+def test_pixel_space_opening_cut_preserves_wall_and_removes_only_doorway():
+    from geometry_processor import snap_openings_and_cut_walls
+
+    # A 100 x 10 px solid wall stored in scene meters at 1 cm / pixel.
+    mpp = 0.01
+    wall = {
+        "id": "w1",
+        "polygon": [[0.1, 0.45], [1.1, 0.45], [1.1, 0.55], [0.1, 0.55]],
+    }
+    door = {
+        "id": "d1",
+        "center": [0.6, 0.5],
+        "pixel_center": [60, 50],
+        "width": 0.2,
+        "pixel_width": 20,
+    }
+
+    cut_walls, kept_doors, kept_windows, dropped = snap_openings_and_cut_walls(
+        [wall], [door], [], meters_per_pixel=mpp, wall_thickness_px=10,
+    )
+
+    assert len(kept_doors) == 1
+    assert kept_windows == []
+    assert dropped == []
+    # The 20 px doorway removes 20% of the wall; no distant wall geometry is lost.
+    area_m2 = sum(
+        abs(sum(
+            polygon[i][0] * polygon[(i + 1) % len(polygon)][1]
+            - polygon[(i + 1) % len(polygon)][0] * polygon[i][1]
+            for i in range(len(polygon))
+        )) / 2
+        for wall_part in cut_walls
+        for polygon in [wall_part["polygon"]]
+    )
+    assert abs(area_m2 - 0.08) < 1e-6
+    all_x = [point[0] for wall_part in cut_walls for point in wall_part["polygon"]]
+    all_y = [point[1] for wall_part in cut_walls for point in wall_part["polygon"]]
+    assert min(all_x) == pytest.approx(0.1)
+    assert max(all_x) == pytest.approx(1.1)
+    assert min(all_y) == pytest.approx(0.45)
+    assert max(all_y) == pytest.approx(0.55)
