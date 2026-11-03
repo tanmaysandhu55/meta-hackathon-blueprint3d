@@ -414,7 +414,7 @@
                         </div>
                     </div>
                     <div class="mt-2 flex items-center">
-                        <div id="processing-mode-badge" class="sidebar-status-chip truncate" role="status" aria-live="polite" title="{% if sam_ready %}Meta SAM 3.1 ready{% else %}OpenCV analyzes plans locally{% endif %}">{% if processing_mode == 'MOCK' %}MOCK MODE{% elif sam_ready %}SAM 3.1 SEGMENTATION{% else %}LOCAL OPENCV SEGMENTATION{% endif %}</div>
+                        <div id="processing-mode-badge" class="sidebar-status-chip truncate" role="status" aria-live="polite" title="{% if sam_ready %}SAM is configured but will only be shown after its masks are used in a processed scene.{% else %}OpenCV analyzes plans locally; no SAM masks will be used.{% endif %}">{% if processing_mode == 'MOCK' %}MOCK MODE — PREPARED DATA{% elif sam_ready %}SAM READY — NOT YET USED{% else %}OPENCV ONLY{% endif %}</div>
                     </div>
                     <!-- Hidden DOM hooks for existing demo buttons -->
                     <div class="hidden" aria-hidden="true">
@@ -454,6 +454,39 @@
                                     <button id="btn-remove-image" type="button" aria-label="Remove uploaded floor plan" class="btn-remove-image"><svg class="ui-icon" width="12" height="12" aria-hidden="true"><use href="#icon-close"></use></svg></button>
                                 </div>
                             </div>
+                            <div id="upload-review-controls" class="hidden mt-3 space-y-3">
+                                <section class="studio-card space-y-2 p-3" aria-label="Set floor plan scale">
+                                    <h3 class="mono-label">Set scale before processing</h3>
+                                    <p class="mono-caption">Click two points on a known length, then enter its real length in meters. This overrides automatic scale estimates.</p>
+                                    <div class="flex items-center gap-2">
+                                        <button id="btn-start-upload-calibration" type="button" aria-pressed="false" class="btn-outline-tab">Pick two points</button>
+                                        <label for="upload-known-length" class="text-xs">Known length (m)</label>
+                                        <input id="upload-known-length" type="number" min="0.01" max="10000" step="0.01" value="1" class="sidebar-input w-24">
+                                    </div>
+                                    <canvas id="upload-scale-canvas" class="hidden max-h-56 max-w-full cursor-crosshair touch-none border border-hairline"></canvas>
+                                    <p id="upload-scale-status" class="mono-caption" aria-live="polite">Automatic scale will be checked against room and door size limits.</p>
+                                </section>
+                                <section class="studio-card space-y-2 p-3" aria-label="Choose floor plan count and split">
+                                    <h3 class="mono-label">Floors in this image</h3>
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <select id="input-floor-count" class="sidebar-input" aria-label="Number of floor plans in this image">
+                                            <option value="1">1 floor</option><option value="2">2 floors</option><option value="3">3 floors</option>
+                                        </select>
+                                        <select id="input-split-orientation" class="sidebar-input" aria-label="Floor plan divider direction">
+                                            <option value="vertical">Side by side</option><option value="horizontal">Top and bottom</option>
+                                        </select>
+                                    </div>
+                                    <div id="input-split-sliders" class="hidden space-y-2">
+                                        <label id="split-label-1" for="input-split-position-1" class="block text-[10px]">Divider 1</label>
+                                        <input id="input-split-position-1" type="range" min="8" max="92" value="50" class="w-full">
+                                        <div id="split-position-2-wrap" class="hidden">
+                                            <label for="input-split-position-2" class="block text-[10px]">Divider 2</label>
+                                            <input id="input-split-position-2" type="range" min="16" max="92" value="67" class="w-full">
+                                        </div>
+                                        <p class="mono-caption">Drag the dividers in the preview; each section becomes one floor.</p>
+                                    </div>
+                                </section>
+                            </div>
                             <button id="btn-generate" type="button" disabled class="btn-primary-tab w-full mt-3">
                                 <span>{% if processing_mode == 'MOCK' %}Run Mock Pipeline{% elif sam_ready %}Process with Meta AI{% else %}Process locally{% endif %}</span>
                             </button>
@@ -478,12 +511,13 @@
                                     <p class="mono-caption text-[11px]">Describe a layout; review generated drawing before processing.</p>
                                     <textarea id="muse-image-prompt" maxlength="500" rows="2" placeholder="One-story home with two bedrooms, a kitchen, and central hallway" class="sidebar-input w-full" {% if not image_generation_ready %}disabled{% endif %}></textarea>
                                     <button id="btn-muse-image" type="button" class="btn-outline-tab w-full" {% if not image_generation_ready %}disabled{% endif %}>Generate draft floor plan</button>
-                                    <p id="muse-image-status" class="mono-caption text-[10px]" aria-live="polite">{% if image_generation_ready %}Muse Image is ready.{% else %}Available after adding META_API_KEY.{% endif %}</p>
+                                    <p id="muse-image-status" class="mono-caption text-[10px]" aria-live="polite">{% if image_generation_ready %}Muse Image is ready.{% else %}Available after adding MODEL_API_KEY.{% endif %}</p>
                                 </div>
                                 <div class="space-y-1.5 border-t border-hairline pt-2">
                                     <label for="map-audio-input" class="block text-xs font-semibold">Ask by voice (WAV)</label>
                                     <input id="map-audio-input" type="file" accept="audio/wav,.wav" class="sidebar-input w-full text-[10px]" {% if not voice_transcription_ready %}disabled{% endif %}>
                                     <button id="btn-transcribe-map" type="button" class="btn-outline-tab w-full" {% if not voice_transcription_ready %}disabled{% endif %}>Transcribe question</button>
+                                    <p id="map-transcription-status" class="mono-caption text-[10px]" aria-live="polite">{% if voice_transcription_ready %}Voice transcription is ready.{% else %}Available after adding MODEL_API_KEY.{% endif %}</p>
                                 </div>
                             </div>
                         </details>
@@ -547,7 +581,7 @@
                                     <button id="map-assistant-submit" type="submit" class="btn-outline-tab shrink-0 px-3">Ask</button>
                                 </div>
                             </form>
-                            <p id="map-assistant-provider" class="mono-caption mt-1.5" style="font-size: 10px;" aria-live="polite">{% if labeling_ready %}Baseten Muse Spark Open{% else %}Offline scene lookup{% endif %}</p>
+                            <p id="map-assistant-provider" class="mono-caption mt-1.5" style="font-size: 10px;" aria-live="polite">{% if labeling_ready %}{{ labeling_provider_name }}{% else %}Offline scene lookup{% endif %}</p>
                             <p id="map-assistant-answer" class="hidden border border-hairline p-2 text-xs leading-relaxed mt-2" role="status" aria-live="polite"></p>
                         </section>
                     </div>
@@ -885,6 +919,13 @@
                                 <button id="btn-apply-scale" type="button" class="px-3 py-1.5 font-semibold" disabled>Apply scale</button>
                                 <button id="btn-cancel-scale" type="button" class="px-3 py-1.5">Cancel</button>
                                 <span id="scale-calibration-status" class="mono-caption">Use two points on a known length to recalibrate.</span>
+                            </div>
+                            <div class="studio-card w-full flex flex-wrap items-center gap-2 p-3 text-xs" aria-label="Door and window correction tools">
+                                <span class="mono-label mr-1">2D OPENING EDITS</span>
+                                <button id="btn-add-door-2d" type="button" aria-pressed="false" class="px-3 py-1.5 font-semibold">Add door</button>
+                                <button id="btn-add-window-2d" type="button" aria-pressed="false" class="px-3 py-1.5 font-semibold">Add window</button>
+                                <button id="btn-delete-opening-2d" type="button" disabled class="px-3 py-1.5 font-semibold">Delete selected</button>
+                                <span id="opening-edit-status" class="mono-caption">Select an opening to delete it, or add one on a wall. Geometry rebuilds locally; SAM is not called again.</span>
                             </div>
                             <div class="w-full flex items-center justify-between text-xs">
                                 <span class="mono-caption">Detected room, wall, door, and window geometry</span>

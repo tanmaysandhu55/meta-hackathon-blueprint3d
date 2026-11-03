@@ -118,6 +118,8 @@ class FloorPlanViewer {
         window.ROOM_FLOOR_COLORS = this.roomColors;
 
         // Initialize WebGL scene
+        this.animationFrameId = null;
+        this._isDestroyed = false;
         this.init();
     }
 
@@ -168,15 +170,22 @@ class FloorPlanViewer {
         this.populateLegend();
 
         // 7. Event Listeners
-        window.addEventListener("resize", () => this.onWindowResize());
-        window.addEventListener("keydown", (event) => {
+        this._onWindowResize = () => this.onWindowResize();
+        this._onKeyDown = (event) => {
             this.panWithArrowKeys(event);
             this.onWalkthroughKeyDown(event);
-        });
-        window.addEventListener("keyup", event => this.onWalkthroughKeyUp(event));
-        window.addEventListener("blur", () => this.walkthroughKeys.clear());
-        document.addEventListener("pointerlockchange", () => this.onPointerLockChange());
-        document.addEventListener("mousemove", event => this.onWalkthroughMouseMove(event));
+        };
+        this._onKeyUp = event => this.onWalkthroughKeyUp(event);
+        this._onBlur = () => this.walkthroughKeys.clear();
+        this._onPointerLockChange = () => this.onPointerLockChange();
+        this._onMouseMove = event => this.onWalkthroughMouseMove(event);
+
+        window.addEventListener("resize", this._onWindowResize);
+        window.addEventListener("keydown", this._onKeyDown);
+        window.addEventListener("keyup", this._onKeyUp);
+        window.addEventListener("blur", this._onBlur);
+        document.addEventListener("pointerlockchange", this._onPointerLockChange);
+        document.addEventListener("mousemove", this._onMouseMove);
         this.renderer.domElement.addEventListener("pointerdown", event => this.onWalkthroughPointerDown(event));
         this.renderer.domElement.addEventListener("pointermove", event => this.onWalkthroughPointerMove(event));
         this.renderer.domElement.addEventListener("pointerup", () => {
@@ -631,6 +640,7 @@ class FloorPlanViewer {
     }
 
     createFloorInfoPanel() {
+        if (!this.container) return;
         const panel = document.createElement("div");
         panel.className = "floor-info-panel";
         panel.hidden = true;
@@ -756,9 +766,9 @@ class FloorPlanViewer {
 
     syncFloorSpacing() {
         if (!this.currentSceneData?.meta) return;
-        // The wall-height control also defines story-to-story spacing. Keeping both
-        // values in sync prevents a visible vertical gap when the height is changed.
-        this.floorHeight = this.wallHeight;
+        // The story-to-story spacing includes wall height plus the separating slab thickness (0.2m).
+        const slabThickness = Number(this.currentSceneData.meta.slabThickness) || 0.2;
+        this.floorHeight = this.wallHeight + slabThickness;
         this.currentSceneData.meta.floorHeight = this.floorHeight;
         const metaLevels = Array.isArray(this.currentSceneData.meta.levels) ? this.currentSceneData.meta.levels : [];
         metaLevels.forEach(level => {
@@ -1182,6 +1192,19 @@ class FloorPlanViewer {
                 shape.lineTo(pt.x, -pt.z);
             }
             shape.closePath();
+
+            this.getRoomHoles(room).forEach(hole => {
+                if (!Array.isArray(hole) || hole.length < 3) return;
+                const first = this.toWorldCoords(hole[0][0], hole[0][1]);
+                const holePath = new THREE.Path();
+                holePath.moveTo(first.x, -first.z);
+                hole.slice(1).forEach(point => {
+                    const converted = this.toWorldCoords(point[0], point[1]);
+                    holePath.lineTo(converted.x, -converted.z);
+                });
+                holePath.closePath();
+                shape.holes.push(holePath);
+            });
 
             const roofExtrude = new THREE.ExtrudeGeometry(shape, {
                 depth: slabThickness,
@@ -1919,7 +1942,7 @@ class FloorPlanViewer {
         }
 
         // Expand badge for selected room, collapse others
-        const selectedId = roomMesh?.userData?.roomData?.id;
+        const selectedId = roomMesh?.userData?.roomData?.id || (roomMesh && !roomMesh.isMesh ? roomMesh.id : null);
         this.floorGroups.forEach(floorGroup => {
             const labelGroup = floorGroup.getObjectByName("labels");
             if (labelGroup) {
@@ -1932,7 +1955,8 @@ class FloorPlanViewer {
 
         // Notify global UI handler
         if (typeof window.onFloorPlanRoomSelected === "function") {
-            window.onFloorPlanRoomSelected(roomMesh.userData.roomData);
+            const roomData = roomMesh?.userData?.roomData || roomMesh?.userData?.room || (roomMesh && !roomMesh.isMesh ? roomMesh : null);
+            window.onFloorPlanRoomSelected(roomData);
         }
     }
 
@@ -3869,7 +3893,9 @@ class FloorPlanViewer {
     }
 
     animate() {
-        requestAnimationFrame(now => {
+        if (this._isDestroyed) return;
+        this.animationFrameId = requestAnimationFrame(now => {
+            if (this._isDestroyed) return;
             this.updateBuildAnimations();
             this.updateFloorIsolation(now);
             this.animate();
@@ -3893,6 +3919,31 @@ class FloorPlanViewer {
         }
         if (this.renderer && this.scene && this.camera) {
             this.renderer.render(this.scene, this.camera);
+        }
+    }
+
+    destroy() {
+        this._isDestroyed = true;
+        if (this.animationFrameId) {
+            cancelAnimationFrame(this.animationFrameId);
+            this.animationFrameId = null;
+        }
+        if (this.isoRotationTween) {
+            cancelAnimationFrame(this.isoRotationTween);
+            this.isoRotationTween = null;
+        }
+        if (this._onWindowResize) window.removeEventListener("resize", this._onWindowResize);
+        if (this._onKeyDown) window.removeEventListener("keydown", this._onKeyDown);
+        if (this._onKeyUp) window.removeEventListener("keyup", this._onKeyUp);
+        if (this._onBlur) window.removeEventListener("blur", this._onBlur);
+        if (this._onPointerLockChange) document.removeEventListener("pointerlockchange", this._onPointerLockChange);
+        if (this._onMouseMove) document.removeEventListener("mousemove", this._onMouseMove);
+        this.clear();
+        if (this.renderer) {
+            if (this.renderer.domElement && this.renderer.domElement.parentNode) {
+                this.renderer.domElement.parentNode.removeChild(this.renderer.domElement);
+            }
+            this.renderer.dispose();
         }
     }
 }

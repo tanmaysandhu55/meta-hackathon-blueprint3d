@@ -17,11 +17,14 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import io
 import json
+import math
 import re
 import sys
 import threading
+import textwrap
 from pathlib import Path
 
 import cv2
@@ -43,6 +46,10 @@ STORY_CONTEXT = threading.local()
 
 def _safe_name(path: Path) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", path.stem).strip("._") or "plan"
+
+
+def _image_key(image_bytes: bytes) -> str:
+    return hashlib.sha1(image_bytes).hexdigest()
 
 
 def _load_font(size=16):
@@ -72,11 +79,38 @@ def _mask_overlay(base, masks, title, color):
     canvas = np.asarray(base.convert("RGB")).copy()
     if masks:
         combined = np.zeros(canvas.shape[:2], dtype=np.uint8)
-        for mask in masks:
+        for entry in masks:
+            if isinstance(entry, dict):
+                mask = entry.get("mask")
+                origin_x, origin_y = entry.get("origin", (0, 0))
+                bounds = entry.get("bounds")
+            else:
+                mask = entry
+                origin_x, origin_y = 0, 0
+                bounds = None
             if mask is None:
                 continue
-            resized = cv2.resize(np.asarray(mask, dtype=np.uint8), (canvas.shape[1], canvas.shape[0]), interpolation=cv2.INTER_NEAREST)
-            combined = cv2.bitwise_or(combined, resized)
+            array = np.asarray(mask, dtype=np.uint8)
+            if array.ndim != 2 or not array.size:
+                continue
+            if bounds and len(bounds) == 4:
+                _bx, _by, target_width, target_height = map(int, bounds)
+            else:
+                target_width, target_height = array.shape[1], array.shape[0]
+            if target_width <= 0 or target_height <= 0:
+                continue
+            if array.shape != (target_height, target_width):
+                array = cv2.resize(array, (target_width, target_height), interpolation=cv2.INTER_NEAREST)
+            x0, y0 = int(origin_x), int(origin_y)
+            x1, y1 = x0 + target_width, y0 + target_height
+            clipped_x0, clipped_y0 = max(0, x0), max(0, y0)
+            clipped_x1, clipped_y1 = min(canvas.shape[1], x1), min(canvas.shape[0], y1)
+            if clipped_x1 <= clipped_x0 or clipped_y1 <= clipped_y0:
+                continue
+            source = array[clipped_y0 - y0:clipped_y1 - y0, clipped_x0 - x0:clipped_x1 - x0]
+            combined[clipped_y0:clipped_y1, clipped_x0:clipped_x1] = cv2.bitwise_or(
+                combined[clipped_y0:clipped_y1, clipped_x0:clipped_x1], source
+            )
         tint = np.zeros_like(canvas)
         tint[:] = color
         active = combined > 0
@@ -170,6 +204,24 @@ def _floor_mismatch(rooms):
     return 100 * max(mismatches, default=0.0)
 
 
+def _footprint_mismatch_from_story_metrics(story_metrics):
+    bounds = []
+    for item in sorted(story_metrics or [], key=lambda value: value.get("floorIndex", 0)):
+        pixel_bounds = item.get("footprint_bounds_px")
+        scale = float(item.get("meters_per_pixel") or 0)
+        if not pixel_bounds or len(pixel_bounds) != 4 or scale <= 0:
+            continue
+        x0, y0, x1, y1 = map(float, pixel_bounds)
+        bounds.append((max(0.0, x1 - x0) * scale, max(0.0, y1 - y0) * scale))
+    if len(bounds) < 2:
+        return 0.0
+    reference = bounds[0]
+    return 100 * max(
+        max(abs(candidate[index] - reference[index]) / max(candidate[index], reference[index], 1e-6) for index in (0, 1))
+        for candidate in bounds[1:]
+    )
+
+
 def _expected_entry(expected, path):
     for key in (path.name, path.stem, str(path), str(path.relative_to(ROOT)) if path.is_relative_to(ROOT) else ""):
         if key and isinstance(expected.get(key), dict):
@@ -179,6 +231,8 @@ def _expected_entry(expected, path):
 
 def _sanity(summary, expected):
     failures = []
+    if summary.get("review_required"):
+        failures.extend(summary.get("review_issues", []) or ["scene is held for manual review"])
     area = summary["total_area_m2"]
     if not 20 <= area <= 1500:
         failures.append(f"building area {area:.1f} m2 is outside 20-1500 m2")
@@ -206,22 +260,55 @@ def _sanity(summary, expected):
 def _make_overlays(plan, original, capture, payload, summary, output_root):
     directory = output_root / _safe_name(plan)
     directory.mkdir(parents=True, exist_ok=True)
-    prepared = capture.get("prepared_image") or original
-    _banner(prepared, "01 — PREPARED IMAGE SENT TO SAM" if capture.get("prepared_image") else "01 — ORIGINAL IMAGE (SAM NOT RUN)").save(directory / "01_prepared.png")
+    prepared_by_story = capture.get("prepared_by_story") or {}
+    if prepared_by_story:
+        for story_index, prepared in sorted(prepared_by_story.items()):
+            label = f"01 — EXACT PREPARED IMAGE SENT TO SAM · FLOOR {int(story_index) + 1}"
+            _banner(prepared, label).save(directory / f"01_prepared_floor_{int(story_index) + 1}.png")
+        first_story = min(prepared_by_story)
+        _banner(prepared_by_story[first_story], "01 — EXACT PREPARED IMAGE SENT TO SAM · FLOOR 1").save(directory / "01_prepared.png")
+    else:
+        _banner(original, "01 — ORIGINAL IMAGE (SAM NOT RUN)").save(directory / "01_prepared.png")
 
     for concept in CONCEPTS:
-        masks = capture.get("masks", {}).get(concept, [])
-        mode = "SAM" if concept in capture.get("sam_concepts", set()) else "OPENCV / NONE"
+        requested_sam = capture.get("requested_mode") == "sam"
+        masks = capture.get("sam_masks", {}).get(concept, []) if requested_sam else capture.get("local_masks", {}).get(concept, [])
+        mode = "SAM RESPONSE" if requested_sam else "LOCAL OPENCV"
         _mask_overlay(original, masks, f"02 — {mode} MASK: {concept.upper()}", (35, 175, 225)).save(directory / f"02_sam_{concept}.png")
 
-    masks = capture.get("masks", {})
+    masks = {}
+    for concept in CONCEPTS:
+        masks[concept] = capture.get("sam_masks", {}).get(concept, []) or capture.get("local_masks", {}).get(concept, [])
     _mask_overlay(original, masks.get("wall", []), "03 — WALL SEGMENTATION", (40, 45, 50)).save(directory / "03_walls.png")
     _mask_overlay(original, masks.get("room", []), "04 — ROOM SEGMENTATION", (60, 140, 220)).save(directory / "04_rooms.png")
 
-    openings = original.convert("RGB").copy()
-    draw = ImageDraw.Draw(openings)
+    scene = payload.get("scene", {})
+    opening_plan = original.convert("RGB").copy()
+    plan_draw = ImageDraw.Draw(opening_plan)
     font = _load_font(13)
     mpp = summary["mpp"] or 0.02
+    drawn_openings = []
+    legend_entries = []
+
+    def add_opening_marker(kind, x, y, color, identifier, reason, rejected=False):
+        marker_number = len(legend_entries) + 1
+        radius = 8 if rejected else 7
+        if rejected:
+            plan_draw.ellipse((x-radius, y-radius, x+radius, y+radius), outline=color, width=3)
+            plan_draw.line((x-radius, y, x+radius, y), fill=color, width=2)
+            plan_draw.line((x, y-radius, x, y+radius), fill=color, width=2)
+        else:
+            plan_draw.ellipse((x-radius, y-radius, x+radius, y+radius), fill=color, outline="white", width=1)
+        plan_draw.text((x - 5, y - 6), str(marker_number), fill="white", font=_load_font(10),
+                       stroke_width=1, stroke_fill=(20, 25, 35))
+        legend_entries.append({
+            "number": marker_number,
+            "kind": kind,
+            "identifier": identifier,
+            "reason": reason,
+            "color": color,
+        })
+
     for item in capture.get("opening_candidates", []):
         collection = item.get("collection", "door")
         kept_ids = set(item.get("kept_ids", []))
@@ -234,18 +321,70 @@ def _make_overlays(plan, original, capture, payload, summary, output_root):
             origin_x, origin_y = item.get("origin", (0, 0))
             x = int(round(float(center[0]) / item_mpp + origin_x))
             y = int(round(float(center[1]) / item_mpp + origin_y))
+            if not (0 <= x < opening_plan.width and 0 <= y < opening_plan.height):
+                continue
             identifier = str(entry.get("id", "opening"))
             is_kept = identifier in kept_ids
             is_dropped = identifier in dropped_reasons
             color = (245, 55, 55) if is_dropped else (40, 190, 95) if collection == "door" else (40, 120, 240)
-            radius = 7
-            draw.ellipse((x-radius, y-radius, x+radius, y+radius), fill=color, outline="white", width=1)
-            draw.text((x + 8, y - 8), f"{identifier}: {dropped_reasons.get(identifier, 'kept' if is_kept else 'candidate')}", fill=color, font=font)
+            add_opening_marker(
+                collection, x, y, color, identifier,
+                dropped_reasons.get(identifier, "kept" if is_kept else "candidate"),
+                rejected=is_dropped,
+            )
+            drawn_openings.append((collection, x, y))
+
+    # Keep candidates rejected before wall snapping visible too. The API stores
+    # these points in original-upload pixel coordinates (including split-story
+    # origins), so no scale conversion is needed here.
+    for item in scene.get("meta", {}).get("openingDiagnostics", []):
+        if item.get("accepted") is not False:
+            continue
+        center = item.get("pixelCenter")
+        if not isinstance(center, (list, tuple)) or len(center) != 2:
+            continue
+        try:
+            x, y = (int(round(float(value))) for value in center)
+        except (TypeError, ValueError):
+            continue
+        if not (0 <= x < opening_plan.width and 0 <= y < opening_plan.height):
+            continue
+        kind = str(item.get("kind") or "opening").lower()
+        if any(old_kind == kind and math.hypot(x - old_x, y - old_y) <= 4 for old_kind, old_x, old_y in drawn_openings):
+            continue
+        reason = " ".join(str(item.get("reason") or "rejected").split())
+        identifier = str(item.get("candidate") or "candidate")
+        add_opening_marker(kind, x, y, (210, 35, 35), identifier, reason, rejected=True)
+        drawn_openings.append((kind, x, y))
+
+    panel_width = 390
+    row_layout = []
+    for entry in legend_entries:
+        wrapped = textwrap.wrap(
+            f"{entry['kind'].title()} {entry['identifier']}: {entry['reason']}",
+            width=48,
+        ) or [entry["identifier"]]
+        wrapped = wrapped[:4]
+        row_layout.append((entry, wrapped, 20 + 14 * len(wrapped)))
+    panel_height = max(opening_plan.height, 54 + sum(row[2] for row in row_layout) + 12)
+    openings = Image.new("RGB", (opening_plan.width + panel_width, panel_height), (241, 244, 248))
+    openings.paste(opening_plan, (0, 0))
+    draw = ImageDraw.Draw(openings)
     draw.rectangle((0, 0, openings.width, 30), fill=(25, 35, 55))
-    draw.text((8, 6), "05 — OPENINGS: DOORS GREEN · WINDOWS BLUE · DROPPED RED", fill="white", font=_load_font(15))
+    draw.text((8, 6), "05 — OPENING DETECTIONS · NUMBERED MARKERS MATCH THE REVIEW LIST", fill="white", font=_load_font(15))
+    panel_left = opening_plan.width
+    draw.rectangle((panel_left, 30, openings.width, panel_height), fill=(247, 248, 250))
+    draw.text((panel_left + 12, 42), "CANDIDATES AND REJECTION REASONS", fill=(25, 35, 55), font=_load_font(14))
+    draw.text((panel_left + 12, 62), "Green: kept door   Blue: kept window   Red: rejected", fill=(75, 85, 100), font=_load_font(11))
+    y_cursor = 84
+    for entry, wrapped, row_height in row_layout:
+        draw.ellipse((panel_left + 12, y_cursor + 2, panel_left + 26, y_cursor + 16), fill=entry["color"])
+        draw.text((panel_left + 33, y_cursor), f"{entry['number']}. {wrapped[0]}", fill=(30, 35, 45), font=font)
+        for line_index, line in enumerate(wrapped[1:], start=1):
+            draw.text((panel_left + 50, y_cursor + line_index * 14), line, fill=(75, 85, 95), font=font)
+        y_cursor += row_height
     openings.save(directory / "05_openings.png")
 
-    scene = payload.get("scene", {})
     final = original.convert("RGB").copy()
     offsets = {int(item.get("floorIndex", item.get("level", 0)) or 0): (float(item.get("dx") or 0), float(item.get("dy") or 0)) for item in scene.get("meta", {}).get("storyOffsets", [])}
     origins = capture.get("story_origins", {0: (0, 0)})
@@ -261,13 +400,21 @@ def _run_one(path, mode, args, expected):
         original = image.convert("RGB")
         size = image.size
 
-    capture = {"masks": {}, "sam_concepts": set(), "opening_candidates": []}
+    capture = {
+        "sam_masks": {}, "local_masks": {}, "sam_concepts": set(),
+        "opening_candidates": [], "detector_rejections": [],
+        "requested_mode": mode, "prepared_by_story": {},
+        "prepared_contexts": {}, "story_by_image_key": {},
+        "story_metrics": [], "scale_decisions": [],
+    }
     original_processing_mode = app_module._processing_mode
     original_sam_ready = app_module.sam_ready
     original_labeling_ready = app_module.labeling_ready
     original_prepare = app_module.prepare_segmentation
     original_segment = app_module.segment_prepared_concept
     original_query = app_module.query_sam_concept
+    original_choose_scale = app_module.choose_scale
+    original_detect_openings = app_module.detect_doors_and_windows_geometrically
     original_snap = app_module.snap_openings_and_cut_walls
     original_process_story = app_module._process_story_slice
     try:
@@ -289,39 +436,92 @@ def _run_one(path, mode, args, expected):
 
         def capture_prepare(*call_args, **call_kwargs):
             prepared = original_prepare(*call_args, **call_kwargs)
-            capture["prepared"] = prepared
+            image_size = call_args[1] if len(call_args) > 1 else call_kwargs.get("image_size", (prepared.get("width", 0), prepared.get("height", 0)))
+            context = {
+                "floorIndex": int(getattr(STORY_CONTEXT, "story_index", 0) or 0),
+                "origin": getattr(STORY_CONTEXT, "origin", (0, 0)),
+                "bounds": (0, 0, int(image_size[0]), int(image_size[1])),
+            }
+            capture["prepared_contexts"][id(prepared)] = context
             return prepared
 
         def capture_segment(prepared, concept):
             result = original_segment(prepared, concept)
+            context = capture["prepared_contexts"].get(id(prepared), {"origin": (0, 0), "bounds": None})
             with CAPTURE_LOCK:
-                capture["masks"].setdefault(concept, []).extend(result)
+                capture["local_masks"].setdefault(concept, []).extend(
+                    {"mask": mask, "origin": context["origin"], "bounds": context["bounds"]}
+                    for mask in result
+                )
             return result
 
         def capture_query(image_bytes, concept, image_size, **call_kwargs):
             result = original_query(image_bytes, concept, image_size, **call_kwargs)
+            masks = result[0] if isinstance(result, tuple) and len(result) == 2 and isinstance(result[1], dict) else result
+            context = capture["story_by_image_key"].get(_image_key(image_bytes), {"floorIndex": 0, "origin": (0, 0)})
+            tagged = [
+                {"mask": mask, "origin": context["origin"], "bounds": (0, 0, int(image_size[0]), int(image_size[1]))}
+                for mask in masks
+            ]
             with CAPTURE_LOCK:
-                capture["masks"].setdefault(concept, []).extend(result)
-                capture["sam_concepts"].add(concept)
+                capture["sam_masks"].setdefault(concept, []).extend(tagged)
+                if masks:
+                    capture["sam_concepts"].add(concept)
             return result
 
+        def capture_opening_detection(*call_args, **call_kwargs):
+            result = original_detect_openings(*call_args, **call_kwargs)
+            if len(result) > 3:
+                capture["detector_rejections"].extend(
+                    {**item, "floorIndex": int(getattr(STORY_CONTEXT, "story_index", 0) or 0)}
+                    for item in result[3] if not item.get("accepted")
+                )
+            return result
+
+        expected_entry = _expected_entry(expected, path)
+        floor_count = int(expected_entry.get("floor_count", 1))
+        split_orientation = str(expected_entry.get("split_orientation", "vertical"))
+        split_positions = expected_entry.get("split_positions")
         try:
-            plan_crops = app_module.split_multi_plan_image(original_bytes)
+            if floor_count > 1:
+                plan_crops = app_module.split_image_at_user_dividers(
+                    original_bytes, floor_count, split_orientation, split_positions
+                )
+            else:
+                plan_crops = [(original_bytes, (0, 0, size[0], size[1]))]
             capture["story_origins"] = {
-                index: (max(0, int(bbox[0]) - 20), max(0, int(bbox[1]) - 20))
+                index: (int(bbox[0]), int(bbox[1]))
                 for index, (_crop, bbox) in enumerate(plan_crops)
-            } if len(plan_crops) > 1 else {0: (0, 0)}
+            }
         except Exception:
             capture["story_origins"] = {0: (0, 0)}
 
         def capture_process_story(*call_args, **call_kwargs):
             story_index = int(call_kwargs.get("story_index", 0) or 0)
             source_mpp = float(call_args[2] if len(call_args) > 2 else call_kwargs.get("meters_per_pixel", app_module.DEFAULT_METERS_PER_PIXEL))
+            image_bytes = call_args[0] if call_args else call_kwargs.get("image_bytes", b"")
             STORY_CONTEXT.story_index = story_index
             STORY_CONTEXT.mpp = source_mpp
             STORY_CONTEXT.origin = capture.get("story_origins", {}).get(story_index, (0, 0))
+            if image_bytes:
+                capture["story_by_image_key"][_image_key(image_bytes)] = {
+                    "floorIndex": story_index,
+                    "origin": STORY_CONTEXT.origin,
+                }
             try:
-                return original_process_story(*call_args, **call_kwargs)
+                result = original_process_story(*call_args, **call_kwargs)
+                capture["story_metrics"].append({
+                    "floorIndex": story_index,
+                    "meters_per_pixel": result.get("meters_per_pixel"),
+                    "scale_source": result.get("scale_source"),
+                    "door_widths_px_for_scale": result.get("door_widths_px_for_scale", []),
+                    "door_width_source": result.get("door_width_source"),
+                    "wall_thickness_px": result.get("wall_thickness_px"),
+                    "room_footprint_coverage": result.get("room_footprint_coverage"),
+                    "footprint_bounds_px": result.get("footprint_bounds_px"),
+                    "footprint_contour_area_px": result.get("footprint_contour_area_px"),
+                })
+                return result
             finally:
                 STORY_CONTEXT.story_index = 0
                 STORY_CONTEXT.mpp = None
@@ -332,7 +532,8 @@ def _run_one(path, mode, args, expected):
                 result = original_sam_prepare(image_bytes, *call_args, **call_kwargs)
                 prepared_image = _decode_data_url(result[1])
                 if prepared_image is not None:
-                    capture["prepared_image"] = prepared_image
+                    context = capture["story_by_image_key"].get(_image_key(image_bytes), {"floorIndex": 0})
+                    capture["prepared_by_story"][context["floorIndex"]] = prepared_image
                 return result
             meta_sam_service._prepare_image = capture_sam_prepare
 
@@ -351,9 +552,27 @@ def _run_one(path, mode, args, expected):
                     capture["opening_candidates"].append({"collection": "window", "candidates": [dict(item) for item in windows], "kept_ids": [item.get("id") for item in kept_windows], "dropped_reasons": reason_map, "mpp": getattr(STORY_CONTEXT, "mpp", None), "origin": getattr(STORY_CONTEXT, "origin", (0, 0))})
             return result
 
+        def capture_choose_scale(*call_args, **call_kwargs):
+            result = original_choose_scale(*call_args, **call_kwargs)
+            capture["scale_decisions"].append({
+                "floorIndex": int(getattr(STORY_CONTEXT, "story_index", 0) or 0),
+                "inputs": {
+                    key: value.tolist() if isinstance(value, np.ndarray) else value
+                    for key, value in call_kwargs.items()
+                },
+                "result": dict(result),
+            })
+            try:
+                STORY_CONTEXT.mpp = float(result.get("meters_per_pixel") or STORY_CONTEXT.mpp)
+            except (AttributeError, TypeError, ValueError):
+                pass
+            return result
+
         app_module.prepare_segmentation = capture_prepare
         app_module.segment_prepared_concept = capture_segment
         app_module.query_sam_concept = capture_query
+        app_module.detect_doors_and_windows_geometrically = capture_opening_detection
+        app_module.choose_scale = capture_choose_scale
         app_module.snap_openings_and_cut_walls = capture_snap
         app_module._process_story_slice = capture_process_story
 
@@ -364,6 +583,9 @@ def _run_one(path, mode, args, expected):
             float(app_module.DEFAULT_WALL_THICKNESS),
             not args.no_auto_scale,
             lambda *_values: None,
+            floor_count=floor_count,
+            split_orientation=split_orientation,
+            split_positions=split_positions,
         )
         scene = payload["scene"]
         meta = scene.get("meta", {})
@@ -384,7 +606,7 @@ def _run_one(path, mode, args, expected):
         mpp = float(meta.get("metersPerPixel") or app_module.DEFAULT_METERS_PER_PIXEL)
         summary = {
             "image_size": size,
-            "mode": mode,
+            "mode": meta.get("segmentation") or ("OPENCV ONLY" if mode == "opencv" else "SAM REQUESTED; CHECK STATUS"),
             "mpp": mpp,
             "scale_source": meta.get("scaleSource") or meta.get("scaleMethod", "unknown"),
             "room_count": len(rooms),
@@ -401,11 +623,17 @@ def _run_one(path, mode, args, expected):
             "dropped_windows": max(detected_windows - len(windows), len(dropped_window_msgs)),
             "dropped_window_reasons": dropped_window_msgs,
             "stories": stories or int(meta.get("levelCount") or 1),
-            "footprint_mismatch_pct": _floor_mismatch(rooms),
+            "review_required": bool(meta.get("needsReview")),
+            "review_issues": list(meta.get("reviewIssues") or []),
+            "footprint_mismatch_pct": _footprint_mismatch_from_story_metrics(capture["story_metrics"]) or _floor_mismatch(rooms),
             "non_axis_wall_edges": non_axis,
             "wall_edge_count": all_edges,
             "warnings": warnings,
             "room_polygons": rooms,
+            "opening_candidate_rejections": capture["detector_rejections"],
+            "sam_concepts": meta.get("samConcepts", []),
+            "story_metrics": sorted(capture["story_metrics"], key=lambda item: item["floorIndex"]),
+            "scale_decisions": capture["scale_decisions"],
         }
         failures = _sanity(summary, _expected_entry(expected, path))
         summary["failures"] = failures
@@ -420,6 +648,8 @@ def _run_one(path, mode, args, expected):
         app_module.prepare_segmentation = original_prepare
         app_module.segment_prepared_concept = original_segment
         app_module.query_sam_concept = original_query
+        app_module.detect_doors_and_windows_geometrically = original_detect_openings
+        app_module.choose_scale = original_choose_scale
         app_module.snap_openings_and_cut_walls = original_snap
         app_module._process_story_slice = original_process_story
         if meta_sam_service is not None and original_sam_prepare is not None:
@@ -462,6 +692,18 @@ def _print_table(rows):
 
 def _print_details(items):
     for item in items:
+        if item.get("story_metrics"):
+            print(f"\n{Path(item['plan']).name} - scale and pixel-space audit:")
+            for metric in item["story_metrics"]:
+                print(
+                    f"  Floor {metric['floorIndex'] + 1}: scale={metric.get('meters_per_pixel')} m/px "
+                    f"({metric.get('scale_source')}); wall stroke={metric.get('wall_thickness_px')} px; "
+                    f"door widths used for scale={metric.get('door_widths_px_for_scale')} "
+                    f"from {metric.get('door_width_source')}; "
+                    f"room/footprint coverage={metric.get('room_footprint_coverage')}; "
+                    f"outer bounds px={metric.get('footprint_bounds_px')}; "
+                    f"outer contour area px={metric.get('footprint_contour_area_px')}"
+                )
         print(f"\n{Path(item['plan']).name} - dropped openings:")
         reasons = item.get("dropped_door_reasons", []) + item.get("dropped_window_reasons", [])
         if reasons:
@@ -476,6 +718,15 @@ def _print_details(items):
             print("  Sanity failures:")
             for failure in item["failures"]:
                 print(f"  - {failure}")
+        rejections = item.get("opening_candidate_rejections", [])
+        if rejections:
+            print("  Opening candidates rejected by geometry:")
+            for rejection in rejections:
+                print(f"  - floor {int(rejection.get('floorIndex', 0)) + 1} {rejection.get('kind', 'opening')} {rejection.get('candidate', '?')}: {rejection.get('reason', 'rejected')}")
+        if item.get("sam_concepts"):
+            print("  SAM concept results:")
+            for result in item["sam_concepts"]:
+                print(f"  - {result.get('concept')}: {result.get('status')}; used={bool(result.get('used'))}; prompt={result.get('prompt') or 'none'}; category={result.get('category') or 'none'}")
 
 
 def main():
@@ -491,16 +742,34 @@ def main():
     parser.add_argument("--with-muse-labeling", action="store_true", help="Allow optional Muse room labeling; may call the provider.")
     args = parser.parse_args()
 
-    image_paths = [Path(value).resolve() for value in args.images] if args.images else sorted(
-        path for path in (ROOT / args.eval_dir).rglob("*") if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
-    ) if (ROOT / args.eval_dir).exists() else []
-    if not image_paths:
-        print(f"No evaluation images found in {ROOT / args.eval_dir}.")
-        print("Add the representative plans and samples/eval/expected.json, or pass image paths with --images.")
-        return 2
-
     expected_path = ROOT / args.expected
     expected = json.loads(expected_path.read_text(encoding="utf-8")) if expected_path.is_file() else {}
+    if args.images:
+        image_paths = [Path(value).resolve() for value in args.images]
+    else:
+        search_dir = ROOT / args.eval_dir
+        image_paths = sorted(
+            path for path in search_dir.rglob("*")
+            if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
+        ) if search_dir.exists() else []
+        # Keep fixtures in the usual samples/ directory when expected.json is
+        # under samples/eval/. This also makes the documented default command
+        # work without duplicating several copies of each binary plan.
+        if not image_paths and expected:
+            candidate_roots = [search_dir.parent, ROOT]
+            for entry in expected:
+                expected_item = expected[entry]
+                declared = expected_item.get("image") if isinstance(expected_item, dict) else None
+                candidates = [ROOT / declared] if declared else []
+                candidates.extend(root / entry for root in candidate_roots)
+                image_path = next((path.resolve() for path in candidates if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS), None)
+                if image_path and image_path not in image_paths:
+                    image_paths.append(image_path)
+    if not image_paths:
+        print(f"No evaluation images found in {ROOT / args.eval_dir} or the configured expected-plan paths.")
+        print("Add representative plans and expected counts, or pass image paths with --images.")
+        return 2
+
     results = []
     for path in image_paths:
         try:
@@ -516,7 +785,9 @@ def main():
                 "detected_windows": 0, "kept_windows": 0, "dropped_windows": 0,
                 "stories": 0, "footprint_mismatch_pct": 0,
                 "non_axis_wall_edges": 0, "wall_edge_count": 0,
-                "warnings": [], "failures": [f"pipeline error: {type(exc).__name__}: {exc}"],
+                "review_required": True, "review_issues": [],
+                "warnings": [], "story_metrics": [], "scale_decisions": [],
+                "failures": [f"pipeline error: {type(exc).__name__}: {exc}"],
             })
 
     _print_table([_format_row(item) for item in results])

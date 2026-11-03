@@ -21,6 +21,18 @@ def test_scene_contract_rejects_invalid_polygon():
         validate_scene_contract(scene)
 
 
+def test_scene_contract_accepts_room_holes_and_two_story_connector_links():
+    scene = copy.deepcopy(get_two_story_sample_scene_json())
+    scene["meta"]["processingMode"] = "DEMO"
+    scene["rooms"][0]["holes"] = [[[1.0, 1.0], [2.0, 1.0], [2.0, 2.0], [1.0, 2.0]]]
+    assert validate_scene_contract(scene) is scene
+
+    lower = next(room for room in scene["rooms"] if room["id"] == "r7")
+    upper = next(room for room in scene["rooms"] if room["id"] == "r7_l2")
+    assert lower["connectsTo"] == upper["id"]
+    assert upper["connectsTo"] == lower["id"]
+
+
 def test_sample_scene_has_genuine_exterior_exits():
     scene = get_sample_scene_json()
     doors = scene.get("doors", [])

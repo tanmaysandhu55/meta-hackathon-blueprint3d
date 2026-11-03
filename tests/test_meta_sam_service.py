@@ -47,10 +47,11 @@ def test_sam_request_uses_meta_model_api_and_restores_original_mask_size(monkeyp
     assert request["metadata"]["mask_encoding"] == "one_bit"
     content = request["input"][0]["content"]
     assert content[0]["type"] == "input_text"
-    assert "rooms" in content[0]["text"]
+    assert "room" in content[0]["text"]
     data_url = content[1]["image_url"]
     with Image.open(io.BytesIO(base64.b64decode(data_url.split(",", 1)[1]))) as sent_image:
-        assert max(sent_image.size) == 2048
+        # The longest prepared side is capped before requests reach the API.
+        assert max(sent_image.size) <= 1500
 
 
 def test_sam_retries_temporary_server_errors(monkeypatch):
@@ -79,9 +80,10 @@ def test_sam_retries_temporary_server_errors(monkeypatch):
     assert len(attempts) == 3
 
 
-def test_sam_mask_decoder_uses_official_parser_contract(monkeypatch):
+def test_sam_mask_decoder_places_box_local_mask_at_source_bounds(monkeypatch):
     fake_mask = types.SimpleNamespace(width=3, height=2)
-    FakeRecord = type("FakeRecord", (), {"kind": "mask", "mask": fake_mask})
+    fake_bounds = types.SimpleNamespace(left=2, top=1, right=5, bottom=3)
+    FakeRecord = type("FakeRecord", (), {"kind": "mask", "mask": fake_mask, "bounds": fake_bounds})
 
     class FakeResult:
         records = (FakeRecord(),)
@@ -101,9 +103,13 @@ def test_sam_mask_decoder_uses_official_parser_contract(monkeypatch):
     fake_library.image_segmentation_format = lambda: types.SimpleNamespace(create_parser=FakeParser)
     monkeypatch.setitem(__import__("sys").modules, "meta_sam_parser", fake_library)
 
-    masks = meta_sam_service._decode_masks("wire output", (6, 4))
-    assert masks[0].shape == (4, 6)
+    masks = meta_sam_service._decode_masks("wire output", (8, 6))
+    assert masks[0].shape == (6, 8)
     assert set(np.unique(masks[0])).issubset({0, 255})
+    assert np.count_nonzero(masks[0]) == 3
+    assert not np.any(masks[0][:1, :])
+    assert not np.any(masks[0][:, :2])
+    assert np.array_equal(masks[0][1:3, 2:5], np.array([[0, 255, 0], [255, 255, 0]], dtype=np.uint8))
 
 
 def test_sam_decoder_accepts_documented_mask_payload():

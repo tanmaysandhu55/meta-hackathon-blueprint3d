@@ -3,6 +3,7 @@ import io
 from pathlib import Path
 
 import numpy as np
+import pytest
 from PIL import Image
 
 from geometry_processor import extract_doors, mask_to_polygons_with_holes
@@ -32,6 +33,22 @@ def test_local_segmentation_finds_sample_rooms_at_source_size():
     assert len(windows) <= 200
     assert all(mask.dtype == np.uint8 and mask.shape == (size[1], size[0]) for mask in rooms)
     assert all(set(np.unique(mask)).issubset({0, 255}) for mask in rooms)
+
+
+def test_local_segmentation_recovers_rooms_from_wide_door_gaps():
+    path = Path(__file__).parents[1] / "samples" / "generated_meta_floorplan.png"
+    image_bytes = path.read_bytes()
+    size = Image.open(io.BytesIO(image_bytes)).size
+
+    rooms = segment_concept(image_bytes, "room", size)
+    polygons = [
+        polygon
+        for mask in rooms
+        for polygon in mask_to_polygons_with_holes(mask, meters_per_pixel=0.02, min_area_px=200)
+    ]
+
+    assert len(polygons) >= 4
+    assert 250 <= sum(polygon["area_m2"] for polygon in polygons) <= 550
 
 
 def test_sample_geometry_keeps_thin_door_strokes():
@@ -118,6 +135,23 @@ def test_muse_image_payload_is_downscaled_to_2048_pixels():
     _, encoded = resized_url.split(",", 1)
     with Image.open(io.BytesIO(base64.b64decode(encoded))) as image:
         assert max(image.size) == 2048
+
+
+@pytest.mark.parametrize("prompt", [
+    "Design a two-story school with a lab upstairs",
+    "Make a 2-storey house with a central stair",
+    "Create a 2 floor office with a shared footprint",
+])
+def test_two_story_prompt_detection(prompt):
+    from meta_media_service import _is_two_story_prompt
+
+    assert _is_two_story_prompt(prompt)
+
+
+def test_one_story_prompt_does_not_trigger_two_story_generation():
+    from meta_media_service import _is_two_story_prompt
+
+    assert not _is_two_story_prompt("Design a one-story house with two bedrooms")
 
 
 def test_invalid_muse_image_uses_generic_label_fallback(monkeypatch):

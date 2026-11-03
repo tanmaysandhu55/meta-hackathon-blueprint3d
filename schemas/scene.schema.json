@@ -49,6 +49,7 @@
           "label": { "type": "string", "minLength": 1 },
           "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
           "polygon": { "$ref": "#/$defs/polygon" },
+          "holes": { "type": "array", "items": { "$ref": "#/$defs/polygon" } },
           "centroid": { "$ref": "#/$defs/point" },
           "area_m2": { "type": "number", "minimum": 0 },
           "level": { "type": "integer", "minimum": 0 },

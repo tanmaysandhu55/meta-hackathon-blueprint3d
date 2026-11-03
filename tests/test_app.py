@@ -1,6 +1,9 @@
 import io
 import time
+from pathlib import Path
 
+import cv2
+import numpy as np
 import pytest
 from PIL import Image
 from werkzeug.datastructures import FileStorage
@@ -13,6 +16,34 @@ def png_bytes(size=(160, 120)):
     output = io.BytesIO()
     image.save(output, format="PNG")
     return output.getvalue()
+
+
+def editable_scene(*, scale_source="user", needs_review=False, one_room=False):
+    rooms = [{
+        "id": "r1", "type": "classroom", "label": "Room A", "confidence": 0.9,
+        "polygon": [[0, 0], [5, 0], [5, 5], [0, 5]], "holes": [],
+        "centroid": [2.5, 2.5], "area_m2": 25.0, "floorIndex": 0, "level": 0,
+    }]
+    if not one_room:
+        rooms.append({
+            "id": "r2", "type": "lab", "label": "Room B", "confidence": 0.9,
+            "polygon": [[5, 0], [10, 0], [10, 5], [5, 5]], "holes": [],
+            "centroid": [7.5, 2.5], "area_m2": 25.0, "floorIndex": 0, "level": 0,
+        })
+    return {
+        "meta": {
+            "source": "editable-plan.png", "imageSize": [500, 500], "metersPerPixel": 0.02,
+            "wallHeight": 3.0, "wallThickness": 0.2, "floorHeight": 3.2,
+            "levelCount": 1, "scaleSource": scale_source, "scaleConfidence": 0.9,
+            "needsReview": needs_review, "reviewIssues": ["Scale failed sanity checks; manual calibration is required."],
+            "openingCounts": {"doorsDetected": 0, "doorsKept": 0, "windowsDetected": 0, "windowsKept": 0, "dropped": 0},
+            "levels": [{"level": 0, "floorIndex": 0, "name": "Ground Floor", "elevation": 0.0,
+                        "metersPerPixel": 0.02, "scaleSource": scale_source, "scaleConfidence": 0.9,
+                        "planOffset": [0.0, 0.0]}],
+            "warnings": ["Scale failed sanity checks; manual calibration is required.", "Keep this unrelated warning."],
+        },
+        "rooms": rooms, "walls": [], "doors": [], "windows": [],
+    }
 
 
 @pytest.fixture
@@ -46,7 +77,37 @@ def test_image_validation_rejects_unsupported_format():
         app_module._validate_image(upload)
 
 
+def test_scale_door_width_candidates_come_from_selected_masks():
+    mask = np.zeros((100, 160), dtype=np.uint8)
+    for x in (10, 60, 110):
+        cv2.rectangle(mask, (x, 20), (x + 29, 24), 255, thickness=-1)
+    widths = app_module._door_mask_widths_px([mask])
+    assert len(widths) == 3
+    assert all(28 <= width <= 31 for width in widths)
+
+
+def test_review_gate_flags_a_single_region_covering_most_of_the_plan():
+    scene = editable_scene(needs_review=False, one_room=True)
+    issues = app_module._apply_scene_sanity_gate(scene)
+    assert scene["meta"]["needsReview"] is True
+    assert any("covers 100%" in issue and "missed room dividers" in issue for issue in issues)
+
+
+def test_geometry_rebuild_rechecks_review_gate_and_clears_stale_scale_issue(client):
+    scene = editable_scene(scale_source="user", needs_review=True)
+    response = client.post("/api/scene/rebuild-geometry", json={"scene": scene})
+
+    assert response.status_code == 200
+    result = response.get_json()["scene"]
+    assert result["walls"]
+    assert result["meta"]["needsReview"] is False
+    assert result["meta"]["reviewIssues"] == []
+    assert "Scale failed sanity checks; manual calibration is required." not in result["meta"]["warnings"]
+    assert "Keep this unrelated warning." in result["meta"]["warnings"]
+
+
 def test_upload_job_completes_using_mock_pipeline_without_keys(client, monkeypatch):
+    monkeypatch.setenv("MOCK_AI", "1")
     monkeypatch.setenv("MOCK_MODE", "1")
 
     response = client.post(
@@ -74,6 +135,7 @@ def test_upload_job_completes_using_mock_pipeline_without_keys(client, monkeypat
 
 
 def test_upload_job_completes_locally_without_meta_key(client, monkeypatch):
+    monkeypatch.setenv("MOCK_AI", "0")
     monkeypatch.setenv("MOCK_MODE", "0")
     monkeypatch.setenv("META_API_KEY", "")
     monkeypatch.setenv("BASETEN_API_KEY", "")
@@ -95,7 +157,70 @@ def test_upload_job_completes_locally_without_meta_key(client, monkeypatch):
     assert any("Muse room labeling is not configured" in warning for warning in scene["meta"]["warnings"])
 
 
+def test_upload_recovers_generated_plan_with_wide_door_gaps(client, monkeypatch):
+    monkeypatch.setenv("MOCK_AI", "0")
+    monkeypatch.setenv("MOCK_MODE", "0")
+    monkeypatch.setenv("MODEL_API_KEY", "")
+    monkeypatch.setenv("META_API_KEY", "")
+    monkeypatch.setenv("BASETEN_API_KEY", "")
+    monkeypatch.setenv("SAM_MODEL", "sam-3.1")
+
+    path = Path(__file__).parents[1] / "samples" / "generated_meta_floorplan.png"
+    response = client.post(
+        "/api/upload",
+        data={"file": (io.BytesIO(path.read_bytes()), path.name), "calibrateScale": "false"},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 202
+    job_id = response.get_json()["job_id"]
+
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        status = client.get(f"/api/status/{job_id}").get_json()
+        if status["status"] != "processing":
+            break
+        time.sleep(0.05)
+    assert status["status"] == "complete", status
+
+    result = client.get(f"/api/scene/{job_id}")
+    assert result.status_code == 200
+    scene = result.get_json()["scene"]
+    assert len(scene["rooms"]) >= 4
+    assert any("wider door gaps" in warning for warning in scene["meta"]["warnings"])
+
+
+def test_unusable_sam_room_masks_fall_back_to_local_rooms(monkeypatch):
+    monkeypatch.setenv("MODEL_API_KEY", "")
+    monkeypatch.setenv("META_API_KEY", "")
+    monkeypatch.setenv("BASETEN_API_KEY", "")
+    monkeypatch.setattr(app_module, "query_sam_concept", lambda *_args, **_kwargs: [])
+
+    path = Path(__file__).parents[1] / "samples" / "generated_meta_floorplan.png"
+    raw = path.read_bytes()
+    with Image.open(io.BytesIO(raw)) as image:
+        image_size = image.size
+    result = app_module._process_story_slice(
+        raw,
+        image_size,
+        0.02,
+        3.0,
+        0.2,
+        False,
+        lambda *_args: None,
+        time.monotonic() + 30,
+        True,
+        "LOCAL",
+        "data:image/png;base64,",
+        filename=path.name,
+    )
+
+    assert len(result["rooms"]) >= 4
+    assert result["segmentation_backend"] == "opencv-fallback"
+    assert any("no matching 'room' regions" in warning for warning in result["warnings"])
+
+
 def test_mock_health_is_ready_but_never_claims_live_processing(client, monkeypatch):
+    monkeypatch.setenv("MOCK_AI", "1")
     monkeypatch.setenv("MOCK_MODE", "1")
     monkeypatch.setenv("BASETEN_API_KEY", "")
     monkeypatch.setenv("META_API_KEY", "")
@@ -109,6 +234,25 @@ def test_mock_health_is_ready_but_never_claims_live_processing(client, monkeypat
     assert "MOCK MODE" in page
     assert "Run Mock Pipeline" in page
     assert "Muse labels on" not in page
+
+
+def test_processing_mode_defaults_to_safe_prepared_demo(monkeypatch):
+    monkeypatch.delenv("MOCK_AI", raising=False)
+    monkeypatch.delenv("MOCK_MODE", raising=False)
+    monkeypatch.delenv("MODEL_API_KEY", raising=False)
+    monkeypatch.delenv("META_API_KEY", raising=False)
+    monkeypatch.delenv("BASETEN_API_KEY", raising=False)
+    assert app_module._processing_mode() == "MOCK"
+
+
+def test_mock_ai_flag_controls_processing_mode(monkeypatch):
+    monkeypatch.setenv("MOCK_AI", "1")
+    monkeypatch.setenv("MOCK_MODE", "0")
+    monkeypatch.setenv("MODEL_API_KEY", "test-only")
+    assert app_module._processing_mode() == "MOCK"
+
+    monkeypatch.setenv("MOCK_AI", "0")
+    assert app_module._processing_mode() == "LIVE"
 
 
 @pytest.mark.parametrize("route, expected_floors", [
@@ -131,7 +275,24 @@ def test_prepared_demos_load_without_provider_keys(client, monkeypatch, route, e
     assert len(payload["scene"]["meta"].get("levels", [{"level": 0}])) == expected_floors
 
 
+def test_scene_job_serializes_numpy_geometry_values(client):
+    scene = app_module.get_sample_scene_json()
+    scene["doors"][0]["pixel_width"] = np.int32(44)
+    app_module.JOBS["numpy-scene"] = {
+        "status": "complete",
+        "result": {"scene": scene},
+    }
+
+    response = client.get("/api/scene/numpy-scene")
+
+    assert response.status_code == 200
+    assert response.get_json()["scene"]["doors"][0]["pixel_width"] == 44
+    assert type(response.get_json()["scene"]["doors"][0]["pixel_width"]) is int
+
+
 def test_health_reports_local_fallback_without_meta_key(client, monkeypatch):
+    monkeypatch.setenv("MOCK_AI", "0")
+    monkeypatch.setenv("MOCK_MODE", "0")
     monkeypatch.setenv("META_API_KEY", "")
     monkeypatch.setenv("BASETEN_API_KEY", "")
     monkeypatch.setenv("SAM_MODEL", "")
@@ -263,6 +424,7 @@ def test_scene_question_rate_limit_returns_429(client, monkeypatch):
 
 
 def test_upload_returns_429_when_concurrency_cap_is_reached(client, monkeypatch):
+    monkeypatch.setenv("MOCK_AI", "1")
     monkeypatch.setenv("MOCK_MODE", "1")
     app_module.JOBS["already-running-1"] = {"status": "processing"}
     app_module.JOBS["already-running-2"] = {"status": "processing"}
@@ -278,6 +440,7 @@ def test_upload_returns_429_when_concurrency_cap_is_reached(client, monkeypatch)
 
 
 def test_upload_rate_limit_returns_429(client, monkeypatch):
+    monkeypatch.setenv("MOCK_AI", "1")
     monkeypatch.setenv("MOCK_MODE", "1")
     monkeypatch.setattr(app_module, "UPLOAD_RATE_LIMIT", 1)
     app_module._rate_limit_upload("127.0.0.1")
@@ -290,3 +453,19 @@ def test_upload_rate_limit_returns_429(client, monkeypatch):
 
     assert response.status_code == 429
     assert response.headers.get("Retry-After")
+
+
+def test_config_status_endpoint_returns_json_and_never_leaks_key(client):
+    response = client.get("/api/config/status")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert isinstance(data, dict)
+    assert "live_ready" in data
+    assert "mock_mode" in data
+    assert "key_configured" in data
+    assert "sam_model" in data
+    assert "muse_model" in data
+    assert "MODEL_API_KEY" not in data
+    assert "api_key" not in data
+    text = response.get_data(as_text=True)
+    assert "sk-" not in text

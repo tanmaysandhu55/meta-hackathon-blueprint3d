@@ -1,0 +1,22 @@
+{
+  "sample_floorplan.png": {
+    "floors": 1,
+    "rooms": 6,
+    "area_m2": 175.0,
+    "floor_count": 1
+  },
+  "generated_meta_floorplan.png": {
+    "floors": 1,
+    "rooms": 5,
+    "area_m2": 421.7,
+    "floor_count": 1
+  },
+  "test_2story_muse_draft.png": {
+    "floors": 2,
+    "rooms": 10,
+    "area_m2": 420,
+    "floor_count": 2,
+    "split_orientation": "vertical",
+    "split_positions": [0.5]
+  }
+}

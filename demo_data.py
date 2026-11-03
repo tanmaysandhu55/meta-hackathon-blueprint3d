@@ -5,9 +5,7 @@ so beginners can test and demo the 3D viewer immediately, even before configurin
 their partner-cloud API keys.
 """
 
-import io
 import os
-import base64
 import copy
 import json
 
@@ -183,6 +181,12 @@ def get_two_story_sample_scene_json():
                 upper["connects"] = [f"{room_id}_l2" if room_id != "outside" else room_id
                                      for room_id in item.get("connects", [])]
             scene[collection].append(upper)
+
+    lower_stairs = next((room for room in scene["rooms"] if room.get("id") == "r7"), None)
+    upper_stairs = next((room for room in scene["rooms"] if room.get("id") == "r7_l2"), None)
+    if lower_stairs and upper_stairs:
+        lower_stairs["connectsTo"] = upper_stairs["id"]
+        upper_stairs["connectsTo"] = lower_stairs["id"]
 
     return scene
 

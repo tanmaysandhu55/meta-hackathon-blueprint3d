@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import os
+import re
 import time
 import threading
 from io import BytesIO
@@ -18,11 +19,43 @@ _error_state = threading.local()
 ALLOWED_TYPES = {"room", "classroom", "lab", "corridor", "stairs", "elevator", "restroom", "entrance", "other"}
 
 
+def _get_provider_config():
+    # If MODEL_API_KEY is configured, prefer Meta Model API
+    model_key = os.getenv("MODEL_API_KEY", "").strip()
+    if model_key:
+        base_url = (os.getenv("MODEL_BASE_URL", "") or "https://api.meta.ai/v1").strip()
+        model = (os.getenv("MUSE_MODEL", "") or "muse-spark-1.3").strip()
+        return model_key, base_url, model, "Meta"
+
+    # Secondary: Baseten if configured
+    baseten_key = os.getenv("BASETEN_API_KEY", "").strip()
+    if baseten_key:
+        base_url = os.getenv("BASETEN_API_BASE_URL", "https://inference.baseten.co/v1").strip()
+        model = os.getenv("BASETEN_MUSE_MODEL", "meta-models/muse-spark-open-1026").strip()
+        return baseten_key, base_url, model, "Baseten"
+
+    # Legacy fallback if META_API_KEY is passed alone
+    meta_key = os.getenv("META_API_KEY", "").strip()
+    if meta_key:
+        base_url = (os.getenv("META_API_BASE_URL", "") or "https://api.meta.ai/v1").strip()
+        model = (os.getenv("MUSE_MODEL", "") or "muse-spark-1.3").strip()
+        return meta_key, base_url, model, "Meta"
+
+    return "", "", "", "None"
+
+
 def _configured():
-    return bool(
-        os.getenv("BASETEN_API_KEY", "").strip()
-        and os.getenv("BASETEN_MUSE_MODEL", "meta-models/muse-spark-open-1026").strip()
-    )
+    key, _, model, _ = _get_provider_config()
+    return bool(key and model)
+
+
+def get_labeling_provider_name():
+    _, _, model, provider = _get_provider_config()
+    if provider == "Meta":
+        return f"Meta Muse Spark ({model})"
+    if provider == "Baseten":
+        return f"Baseten Muse Spark Open ({model})"
+    return "Offline heuristic"
 
 
 def is_labeling_configured():
@@ -93,24 +126,29 @@ def label_rooms(b64_data_url, room_candidates, timeout=45):
         logger.warning("Muse labeling skipped because image preparation failed (%s)", type(exc).__name__)
         return {}
 
+    api_key, base_url, model, _ = _get_provider_config()
     client = OpenAI(
-        api_key=os.environ["BASETEN_API_KEY"].strip(),
-        base_url=os.getenv("BASETEN_API_BASE_URL", "https://inference.baseten.co/v1").strip(),
+        api_key=api_key,
+        base_url=base_url,
         timeout=timeout,
         max_retries=0,
     )
     deadline = time.monotonic() + timeout
+    system = "You are an architectural assistant. Classify each floor plan room from the image and candidate centroids. Output ONLY valid JSON in the requested format."
     prompt = (
-        "Classify only the supplied floor-plan room regions. Allowed types: "
+        "Classify the floor plan room regions. Allowed types: "
         + json.dumps(sorted(ALLOWED_TYPES))
         + '. Return JSON only in this form: {"rooms":[{"id":"r1","type":"classroom",'
           '"label":"Classroom 101","confidence":0.9}]}. Keep every candidate ID exactly once. Candidates: '
         + json.dumps(room_candidates, ensure_ascii=False)
     )
-    messages = [{"role": "user", "content": [
-        {"type": "text", "text": prompt},
-        {"type": "image_url", "image_url": {"url": image_url}},
-    ]}]
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": [
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": image_url}},
+        ]},
+    ]
     for attempt in range(3):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -118,11 +156,18 @@ def label_rooms(b64_data_url, room_candidates, timeout=45):
             return {}
         try:
             response = client.with_options(timeout=remaining).chat.completions.create(
-                model=os.getenv("BASETEN_MUSE_MODEL", "meta-models/muse-spark-open-1026").strip(), messages=messages,
-                temperature=0.1, max_tokens=4096,
+                model=model, messages=messages,
+                temperature=0.1, max_tokens=8192,
             )
             record_provider_usage(response, "room_labeling")
-            result = validate_room_labels(response.choices[0].message.content or "", room_candidates)
+            choice = response.choices[0]
+            raw_content = choice.message.content or ""
+            if not raw_content:
+                reasoning = getattr(choice.message, "reasoning_content", None) or ""
+                match = re.search(r'\{.*"rooms".*\}', reasoning, re.DOTALL)
+                if match:
+                    raw_content = match.group(0)
+            result = validate_room_labels(raw_content, room_candidates)
             if not result:
                 logger.warning("Muse room-label response had an unsupported JSON shape")
             return result
@@ -144,17 +189,18 @@ def answer_scene_question(question, scene_facts, timeout=30):
     _error_state.category = None
     if not _configured():
         return None
+    api_key, base_url, model, _ = _get_provider_config()
     deadline = time.monotonic() + timeout
     try:
         client = OpenAI(
-            api_key=os.environ["BASETEN_API_KEY"].strip(),
-            base_url=os.getenv("BASETEN_API_BASE_URL", "https://inference.baseten.co/v1").strip(),
+            api_key=api_key,
+            base_url=base_url,
             timeout=timeout,
             max_retries=0,
         )
     except Exception as exc:
         _error_state.category = "configuration"
-        logger.warning("Baseten map client could not be configured (%s)", type(exc).__name__)
+        logger.warning("Map assistant client could not be configured (%s)", type(exc).__name__)
         return None
     system = (
         "You are a floor-plan assistant. Answer only from the supplied scene facts. "
@@ -172,7 +218,7 @@ def answer_scene_question(question, scene_facts, timeout=30):
             return None
         try:
             response = client.with_options(timeout=remaining).chat.completions.create(
-                model=os.getenv("BASETEN_MUSE_MODEL", "meta-models/muse-spark-open-1026").strip(),
+                model=model,
                 messages=messages,
                 temperature=0.1,
                 max_tokens=4096,
@@ -180,9 +226,15 @@ def answer_scene_question(question, scene_facts, timeout=30):
             record_provider_usage(response, "map_assistant")
             choice = response.choices[0]
             answer = choice.message.content
-            if getattr(choice, "finish_reason", None) == "length" or not isinstance(answer, str) or not answer.strip():
+            if not answer:
+                answer = getattr(choice.message, "reasoning_content", None)
+            if getattr(choice, "finish_reason", None) == "length" and not answer:
                 _error_state.category = "bad_response"
-                logger.warning("Baseten map answer was truncated or empty (finish_reason=%s, category=bad_response)", getattr(choice, "finish_reason", "unknown"))
+                logger.warning("Map assistant answer exceeded length limit")
+                return None
+            if not isinstance(answer, str) or not answer.strip():
+                _error_state.category = "bad_response"
+                logger.warning("Map assistant answer was empty (category=bad_response)")
                 return None
             return answer.strip()[:1200]
         except Exception as exc:
@@ -190,7 +242,7 @@ def answer_scene_question(question, scene_facts, timeout=30):
             category = "auth" if status in (401, 403) else "timeout" if isinstance(exc, APITimeoutError) else "bad_response" if status in (400, 404, 422) else "unavailable"
             _error_state.category = category
             retryable = isinstance(exc, (APIConnectionError, APITimeoutError)) or (status is not None and status >= 500)
-            logger.warning("Baseten map answer failed (category=%s): %s", category, type(exc).__name__)
+            logger.warning("Map assistant answer failed (category=%s): %s", category, type(exc).__name__)
             delay = 0.4 * (2 ** attempt)
             if not retryable or attempt == 2 or time.monotonic() + delay >= deadline:
                 return None

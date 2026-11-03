@@ -16,6 +16,18 @@ document.addEventListener("DOMContentLoaded", () => {
     const imagePreviewContainer = document.getElementById("image-preview-container");
     const imagePreview = document.getElementById("image-preview");
     const btnRemoveImage = document.getElementById("btn-remove-image");
+    const uploadReviewControls = document.getElementById("upload-review-controls");
+    const uploadScaleCanvas = document.getElementById("upload-scale-canvas");
+    const uploadScaleCtx = uploadScaleCanvas?.getContext("2d");
+    const btnStartUploadCalibration = document.getElementById("btn-start-upload-calibration");
+    const uploadKnownLength = document.getElementById("upload-known-length");
+    const uploadScaleStatus = document.getElementById("upload-scale-status");
+    const inputFloorCount = document.getElementById("input-floor-count");
+    const inputSplitOrientation = document.getElementById("input-split-orientation");
+    const inputSplitSliders = document.getElementById("input-split-sliders");
+    const inputSplitPosition1 = document.getElementById("input-split-position-1");
+    const inputSplitPosition2 = document.getElementById("input-split-position-2");
+    const splitPosition2Wrap = document.getElementById("split-position-2-wrap");
 
     const btnGenerate = document.getElementById("btn-generate");
     const btnLoadDemo = document.getElementById("btn-load-demo");
@@ -105,7 +117,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // 2D Overlay canvas
     const segmentationCanvas = document.getElementById("segmentation-canvas");
-    const segCtx = segmentationCanvas.getContext("2d");
+    const segCtx = segmentationCanvas ? segmentationCanvas.getContext("2d") : null;
     const overlayScale = document.getElementById("overlay-scale");
 
     // JSON Viewer & Actions
@@ -165,6 +177,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const btnCancelScale = document.getElementById("btn-cancel-scale");
     const knownLength = document.getElementById("known-length");
     const scaleCalibrationStatus = document.getElementById("scale-calibration-status");
+    const btnAddDoor2D = document.getElementById("btn-add-door-2d");
+    const btnAddWindow2D = document.getElementById("btn-add-window-2d");
+    const btnDeleteOpening2D = document.getElementById("btn-delete-opening-2d");
+    const openingEditStatus = document.getElementById("opening-edit-status");
 
     // Application State
     let selectedFile = null;
@@ -180,28 +196,194 @@ document.addEventListener("DOMContentLoaded", () => {
     let polygonEditUndoStack = [];
     let scaleCalibrationActive = false;
     let scaleCalibrationPoints = [];
+    let uploadCalibrationActive = false;
+    let uploadCalibrationPoints = [];
+    let uploadScaleSource = "auto";
+    let uploadPreviewImage = null;
+    let activeUploadDivider = null;
+    let openingEditMode = null;
+    let selectedOpening = null;
 
-    function setProcessingBadge(mode) {
+    function uploadDividerFractions() {
+        const count = Number(inputFloorCount?.value) || 1;
+        if (count < 2) return [];
+        const first = (Number(inputSplitPosition1?.value) || 50) / 100;
+        return count === 3
+            ? [first, (Number(inputSplitPosition2?.value) || 67) / 100]
+            : [first];
+    }
+
+    function redrawUploadScaleCanvas() {
+        if (!uploadScaleCanvas || !uploadScaleCtx || !uploadPreviewImage) return;
+        const width = uploadPreviewImage.naturalWidth || uploadPreviewImage.width;
+        const height = uploadPreviewImage.naturalHeight || uploadPreviewImage.height;
+        if (!width || !height) return;
+        uploadScaleCanvas.width = width;
+        uploadScaleCanvas.height = height;
+        uploadScaleCanvas.classList.remove("hidden");
+        uploadScaleCtx.clearRect(0, 0, width, height);
+        uploadScaleCtx.drawImage(uploadPreviewImage, 0, 0, width, height);
+
+        const fractions = uploadDividerFractions();
+        if (fractions.length) {
+            uploadScaleCtx.save();
+            uploadScaleCtx.strokeStyle = "#e23b2e";
+            uploadScaleCtx.fillStyle = "#e23b2e";
+            uploadScaleCtx.lineWidth = Math.max(3, Math.min(width, height) / 250);
+            uploadScaleCtx.setLineDash([uploadScaleCtx.lineWidth * 3, uploadScaleCtx.lineWidth * 2]);
+            fractions.forEach((fraction, index) => {
+                const vertical = inputSplitOrientation?.value !== "horizontal";
+                const position = fraction * (vertical ? width : height);
+                uploadScaleCtx.beginPath();
+                if (vertical) {
+                    uploadScaleCtx.moveTo(position, 0);
+                    uploadScaleCtx.lineTo(position, height);
+                } else {
+                    uploadScaleCtx.moveTo(0, position);
+                    uploadScaleCtx.lineTo(width, position);
+                }
+                uploadScaleCtx.stroke();
+                uploadScaleCtx.setLineDash([]);
+                uploadScaleCtx.beginPath();
+                uploadScaleCtx.arc(vertical ? position : width / 2, vertical ? height / 2 : position, Math.max(7, Math.min(width, height) / 55), 0, Math.PI * 2);
+                uploadScaleCtx.fill();
+                uploadScaleCtx.fillStyle = "#fff";
+                uploadScaleCtx.font = `bold ${Math.max(12, Math.min(width, height) / 30)}px sans-serif`;
+                uploadScaleCtx.textAlign = "center";
+                uploadScaleCtx.textBaseline = "middle";
+                uploadScaleCtx.fillText(String(index + 1), vertical ? position : width / 2, vertical ? height / 2 : position);
+                uploadScaleCtx.fillStyle = "#e23b2e";
+                uploadScaleCtx.setLineDash([uploadScaleCtx.lineWidth * 3, uploadScaleCtx.lineWidth * 2]);
+            });
+            uploadScaleCtx.restore();
+        }
+
+        if (uploadCalibrationPoints.length) {
+            uploadScaleCtx.save();
+            uploadScaleCtx.strokeStyle = "#00a6bd";
+            uploadScaleCtx.fillStyle = "#00f3ff";
+            uploadScaleCtx.lineWidth = Math.max(3, Math.min(width, height) / 250);
+            uploadCalibrationPoints.forEach(([x, y], index) => {
+                uploadScaleCtx.beginPath();
+                uploadScaleCtx.arc(x, y, Math.max(8, Math.min(width, height) / 45), 0, Math.PI * 2);
+                uploadScaleCtx.fill();
+                uploadScaleCtx.stroke();
+                uploadScaleCtx.fillStyle = "#08131b";
+                uploadScaleCtx.font = `bold ${Math.max(12, Math.min(width, height) / 28)}px sans-serif`;
+                uploadScaleCtx.textAlign = "center";
+                uploadScaleCtx.textBaseline = "middle";
+                uploadScaleCtx.fillText(String(index + 1), x, y);
+                uploadScaleCtx.fillStyle = "#00f3ff";
+            });
+            if (uploadCalibrationPoints.length === 2) {
+                uploadScaleCtx.beginPath();
+                uploadScaleCtx.moveTo(...uploadCalibrationPoints[0]);
+                uploadScaleCtx.lineTo(...uploadCalibrationPoints[1]);
+                uploadScaleCtx.stroke();
+            }
+            uploadScaleCtx.restore();
+        }
+    }
+
+    function updateUploadSplitControls() {
+        const count = Number(inputFloorCount?.value) || 1;
+        inputSplitSliders?.classList.toggle("hidden", count < 2);
+        splitPosition2Wrap?.classList.toggle("hidden", count < 3);
+        if (count === 3) {
+            const first = Number(inputSplitPosition1?.value) || 33;
+            let second = Number(inputSplitPosition2?.value) || 67;
+            if (second < first + 8) {
+                second = Math.min(92, first + 8);
+                inputSplitPosition2.value = String(second);
+            }
+            inputSplitPosition2.min = String(Math.min(84, first + 8));
+        }
+        redrawUploadScaleCanvas();
+    }
+
+    function applyUploadCalibration() {
+        const [first, second] = uploadCalibrationPoints;
+        if (!first || !second) return;
+        const known = Number(uploadKnownLength?.value);
+        const pixels = Math.hypot(second[0] - first[0], second[1] - first[1]);
+        const scale = known / pixels;
+        if (!Number.isFinite(scale) || scale < 0.001 || scale > 0.1) {
+            if (uploadScaleStatus) uploadScaleStatus.textContent = "That measurement is outside the supported scale range. Check the points and real length.";
+            uploadCalibrationPoints = [];
+            redrawUploadScaleCanvas();
+            return;
+        }
+        uploadScaleSource = "user";
+        if (inputMpp) inputMpp.value = String(scale);
+        if (labelMpp) labelMpp.textContent = `${scale.toFixed(4)} m/px`;
+        if (chkAutoScale) {
+            chkAutoScale.checked = false;
+            chkAutoScale.dispatchEvent(new Event("change"));
+        }
+        if (uploadScaleStatus) uploadScaleStatus.textContent = `User scale set to ${scale.toFixed(4)} m/px. The processor will validate it before creating 3D.`;
+        uploadCalibrationActive = false;
+        btnStartUploadCalibration?.classList.remove("calibration-active");
+        btnStartUploadCalibration?.setAttribute("aria-pressed", "false");
+        redrawUploadScaleCanvas();
+    }
+
+    function setProcessingBadge(mode, meta = null) {
         if (!processingModeBadge) return;
         const messages = {
-            MOCK: "MOCK MODE — PREPARED SAMPLE, NOT LIVE AI",
-            DEMO: "PREPARED DEMO — NOT A LIVE AI RESULT",
-            LIVE: "META SAM 3.1 RESULT",
-            LOCAL: "LOCAL OPENCV SEGMENTATION",
+            MOCK: "MOCK — PREPARED DATA",
+            DEMO: "PREPARED DEMO — NOT LIVE AI",
+            READY: "SAM READY — NOT YET USED",
+            LOCAL: "OPENCV ONLY",
         };
-        const activeMode = messages[mode] ? mode : "LOCAL";
-        processingModeBadge.textContent = messages[activeMode];
-        processingModeBadge.title = activeMode === "MOCK"
-            ? "Generated from the prepared sample plan. Uploaded image pixels were not analyzed."
-            : activeMode === "LOCAL"
-                ? "OpenCV analyzes plans locally; Meta SAM 3.1 can segment uploads, and Baseten-hosted Muse Spark Open can suggest room labels."
-                : activeMode === "LIVE"
-                    ? "At least one segmentation concept was processed by Meta SAM 3.1. Check scene warnings for local fallback concepts."
-                : "Prepared sample data, not a live provider result.";
+        let label = messages[mode] || messages.LOCAL;
+        if (meta && mode !== "MOCK" && mode !== "DEMO") {
+            const segmentation = String(meta.segmentation || "").toLowerCase();
+            if (segmentation.includes("sam-3.1")) {
+                label = String(meta.labeling || "").toLowerCase() === "muse"
+                    ? "SAM + MUSE"
+                    : "SAM 3.1 — GENERIC LABELS";
+            } else {
+                label = String(meta.labeling || "").toLowerCase() === "muse" ? "OPENCV + MUSE" : "OPENCV ONLY";
+            }
+        } else if (mode === "READY") {
+            label = messages.READY;
+        }
+        processingModeBadge.textContent = label;
+        processingModeBadge.title = mode === "MOCK"
+            ? "Prepared mock data. The uploaded floor plan was not analyzed."
+            : mode === "DEMO"
+                ? "Prepared sample data, not a live provider result."
+                : meta?.segmentation?.toLowerCase?.().includes("sam-3.1")
+                    ? "SAM masks contributed to the scene. Per-concept results and local fallbacks are listed in Review."
+                    : String(meta?.labeling || "").toLowerCase() === "muse"
+                        ? "Geometry was segmented locally and room names were generated by Muse."
+                    : mode === "READY"
+                        ? "SAM credentials are present; no SAM result has been used in a scene yet."
+                        : "This scene was segmented with local OpenCV; no SAM masks were used.";
         processingModeBadge.classList.remove("hidden");
     }
 
     if (initialProcessingMode === "MOCK") setProcessingBadge(initialProcessingMode);
+    async function initConfigStatusChip() {
+        try {
+            const res = await fetch("/api/config/status");
+            if (!res.ok) return;
+            const data = await res.json();
+            if (!data) return;
+            if (data.live_ready) {
+                setProcessingBadge("READY");
+            } else if (data.key_configured && data.mock_mode) {
+                if (processingModeBadge) {
+                    processingModeBadge.textContent = "MOCK MODE (KEY SET)";
+                    processingModeBadge.title = "MODEL_API_KEY is configured, but MOCK_AI=1 is active.";
+                    processingModeBadge.classList.remove("hidden");
+                }
+            }
+        } catch (_) {
+            // graceful ignore
+        }
+    }
+    initConfigStatusChip();
 
     let appMessageTimer = null;
     function showMessage(message, kind = "info") {
@@ -279,6 +461,13 @@ document.addEventListener("DOMContentLoaded", () => {
         return Math.abs(twiceArea) / 2;
     }
 
+    function roomArea(room) {
+        const exterior = polygonArea(room?.polygon || []);
+        const holes = (Array.isArray(room?.holes) ? room.holes : [])
+            .reduce((sum, ring) => sum + polygonArea(ring), 0);
+        return Math.max(0, exterior - holes);
+    }
+
     function polygonHasSelfIntersection(polygon) {
         const orient = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
         const crosses = (a, b, c, d) => {
@@ -308,7 +497,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         const rooms = currentSceneData.rooms || [];
         const meta = currentSceneData.meta || {};
-        const totalArea = rooms.reduce((sum, room) => sum + polygonArea(room.polygon), 0);
+        const totalArea = rooms.reduce((sum, room) => sum + roomArea(room), 0);
         const roomLevels = rooms.map(room => Number(room.floorIndex ?? room.level) || 0);
         const floorCount = Math.max(1, (meta.levels || []).length, Number(meta.levelCount) || 0, ...roomLevels.map(level => level + 1));
         if (areaSummaryTotal) {
@@ -323,13 +512,22 @@ document.addEventListener("DOMContentLoaded", () => {
                 name.textContent = room.label || room.id;
                 const area = document.createElement("span");
                 area.className = "font-mono";
-                area.textContent = `${polygonArea(room.polygon).toFixed(1)} m²`;
+                area.textContent = `${roomArea(room).toFixed(1)} m²`;
                 row.append(name, area);
                 areaSummaryRooms.appendChild(row);
             });
         }
-        const validRoomCount = rooms.filter(room => (room.polygon || []).length >= 3 && polygonArea(room.polygon) > 0).length;
-        const connectorCount = rooms.filter(room => ["stairs", "stair", "elevator"].includes(String(room.type || "").toLowerCase())).length;
+        const validRoomCount = rooms.filter(room => (room.polygon || []).length >= 3 && roomArea(room) > 0).length;
+        const connectors = rooms.filter(room => ["stairs", "stair", "elevator"].includes(String(room.type || "").toLowerCase()));
+        const connectorFloors = new Set(connectors.map(room => Number(room.floorIndex ?? room.level) || 0));
+        const hasVerticalConnectorPair = floorCount < 2 || (
+            connectorFloors.has(0)
+            && Array.from({ length: floorCount - 1 }, (_, index) => index + 1).some(floor => connectorFloors.has(floor))
+            && connectors.some(room => room.connectsTo && connectors.some(other =>
+                other.id === room.connectsTo
+                && (Number(other.floorIndex ?? other.level) || 0) !== (Number(room.floorIndex ?? room.level) || 0)
+            ))
+        );
         const walls = currentSceneData.walls || [];
         const doors = currentSceneData.doors || [];
         const windows = currentSceneData.windows || [];
@@ -337,16 +535,54 @@ document.addEventListener("DOMContentLoaded", () => {
         const genericLabel = label => /^room\s+\w+$/i.test(String(label || "").trim());
         const namedRoomCount = rooms.filter(room => room.confidence > 0 && !genericLabel(room.label)).length;
         const scaleMethod = String(meta.scaleMethod || "");
-        const scaleNeedsReview = !scaleMethod || /fallback/i.test(scaleMethod);
+        const scaleSource = String(meta.scaleSource || "unverified");
+        const scaleConfidence = Math.max(0, Math.min(1, Number(meta.scaleConfidence) || 0));
+        const levelScaleNeedsReview = (meta.levels || []).some(level =>
+            String(level.scaleSource || "").toLowerCase() === "needs-review"
+        );
+        const scaleNeedsReview = scaleSource.toLowerCase() === "needs-review" || levelScaleNeedsReview;
         const rows = [
             { state: validRoomCount === rooms.length && rooms.length > 0 ? "ok" : "review", label: "Room outlines", detail: `${validRoomCount} of ${rooms.length} have a usable polygon.` },
             { state: walls.length ? "ok" : "review", label: "Walls", detail: `${walls.length} wall region(s) in the scene.` },
             { state: doors.length ? "ok" : "review", label: "Doors", detail: `${doors.length} detected opening(s); check the 2D overlay for alignment.` },
             { state: windows.length ? "ok" : "review", label: "Windows", detail: `${windows.length} detected opening(s); check the 2D overlay for alignment.` },
-            { state: scaleNeedsReview ? "review" : "info", label: "Scale", detail: scaleNeedsReview ? "No verified calibration recorded. Compare with a known dimension." : `${scaleMethod}; confirm against a known dimension.` },
-            { state: floorCount < 2 || connectorCount > 0 ? "ok" : "review", label: "Floor connection", detail: floorCount < 2 ? "Single-story scene." : `${connectorCount} stair/elevator room(s) for ${floorCount} floors.` },
+            { state: scaleNeedsReview ? "review" : "ok", label: "Scale", detail: `${scaleSource} (${Math.round(scaleConfidence * 100)}% confidence): ${scaleMethod}.` },
+            { state: hasVerticalConnectorPair ? "ok" : "review", label: "Floor connection", detail: floorCount < 2 ? "Single-story scene." : hasVerticalConnectorPair ? "A matching stair/elevator pair links the stories." : `${connectors.length} connector room(s) found; verify that a stair/elevator links both stories.` },
             { state: namedRoomCount === rooms.length && rooms.length > 0 ? "ok" : "review", label: "Room labels", detail: `${namedRoomCount} of ${rooms.length} have non-generic labels.` },
         ];
+        const openingCounts = meta.openingCounts || {};
+        if (Number(openingCounts.doorsDetected) || Number(openingCounts.windowsDetected)) {
+            rows.push({
+                state: Number(openingCounts.dropped) ? "review" : "ok",
+                label: "Opening checks",
+                detail: `Doors ${openingCounts.doorsKept ?? doors.length}/${openingCounts.doorsDetected ?? doors.length}; windows ${openingCounts.windowsKept ?? windows.length}/${openingCounts.windowsDetected ?? windows.length}; ${openingCounts.dropped || 0} dropped.`,
+            });
+        }
+        (meta.openingDiagnostics || [])
+            .filter(item => item && item.accepted === false)
+            .slice(0, 12)
+            .forEach(item => rows.push({
+                state: "review",
+                label: `${String(item.kind || "opening").toUpperCase()} ${item.candidate || "candidate"}`,
+                detail: String(item.reason || "Candidate was rejected by geometry checks."),
+            }));
+        if (meta.needsReview) {
+            rows.unshift({ state: "review", label: "Needs review", detail: (meta.reviewIssues || []).join(" ") || "Quality checks failed; inspect the 2D overlay before viewing 3D." });
+        }
+        (meta.samConcepts || []).forEach(item => {
+            const status = String(item.status || "UNKNOWN").toUpperCase();
+            rows.push({
+                state: status === "OK" ? "ok" : status === "NOT RUN" ? "info" : "review",
+                label: `SAM ${item.concept || "concept"}`,
+                detail: status === "OK"
+                    ? `${item.used ? "Masks were used" : "Masks returned but local geometry was used"}${item.prompt && item.prompt !== item.concept ? ` with prompt “${item.prompt}”` : ""}${item.floorIndex !== undefined ? ` on floor ${Number(item.floorIndex) + 1}` : ""}.`
+                    : status === "EMPTY"
+                        ? `SAM completed but found no matching ${item.concept} regions; local fallback was used.`
+                        : status === "NOT RUN"
+                            ? "SAM was not run; local OpenCV handled this concept."
+                            : `SAM failed safely (${item.category || "provider unavailable"}); local fallback was used.`,
+            });
+        });
         if (mapQualityChecks) {
             mapQualityChecks.replaceChildren();
             rows.forEach(item => {
@@ -387,32 +623,44 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    btnReview2D.addEventListener("click", () => {
-        if (!currentSceneData) {
-            showMessage("Load a demo or plan before reviewing 2D detections.", "info");
-            return;
-        }
-        document.querySelector('[data-tab="2d"]').click();
-    });
+    if (btnReview2D) {
+        btnReview2D.addEventListener("click", () => {
+            if (!currentSceneData) {
+                showMessage("Load a demo or plan before reviewing 2D detections.", "info");
+                return;
+            }
+            const tab2d = document.querySelector('[data-tab="2d"]');
+            if (tab2d) tab2d.click();
+        });
+    }
 
-    btnReviewRoom.addEventListener("click", () => {
-        if (!currentSceneData || !loadedImageElement) {
-            showMessage("Load a demo or upload a plan before editing a room outline.", "info");
-            return;
-        }
-        const rooms = currentSceneData.rooms || [];
-        const room = rooms.find(item => (item.polygon || []).length < 3 || polygonHasSelfIntersection(item.polygon)) || rooms[0];
-        if (!room) {
-            showMessage("There are no room outlines available to edit.", "warning");
-            return;
-        }
-        window.onFloorPlanRoomSelected(room);
-        btnEditBoundary.click();
-    });
+    if (btnReviewRoom) {
+        btnReviewRoom.addEventListener("click", () => {
+            if (!currentSceneData || !loadedImageElement) {
+                showMessage("Load a demo or upload a plan before editing a room outline.", "info");
+                return;
+            }
+            const rooms = currentSceneData.rooms || [];
+            const room = rooms.find(item => (item.polygon || []).length < 3 || polygonHasSelfIntersection(item.polygon)) || rooms[0];
+            if (!room) {
+                showMessage("There are no room outlines available to edit.", "warning");
+                return;
+            }
+            if (typeof window.onFloorPlanRoomSelected === "function") {
+                window.onFloorPlanRoomSelected(room);
+            }
+            if (btnEditBoundary) btnEditBoundary.click();
+        });
+    }
 
     function refreshEditedScene() {
         if (!currentSceneData) return;
-        viewer.loadScene(currentSceneData, { animateBuild: false, resetCamera: false });
+        if (currentSceneData.meta?.needsReview) {
+            viewer.clear();
+            viewer.hideLoadingState();
+        } else {
+            viewer.loadScene(currentSceneData, { animateBuild: false, resetCamera: false });
+        }
         jsonOutput.textContent = JSON.stringify(currentSceneData, null, 2);
         updateAreaSummary();
         populateRoomControls(currentSceneData);
@@ -424,22 +672,76 @@ document.addEventListener("DOMContentLoaded", () => {
         if (btnEditBoundary) btnEditBoundary.disabled = true;
     }
 
+    function levelInfoFor(levelIndex) {
+        return (currentSceneData?.meta?.levels || []).find(level => Number(level.level ?? level.floorIndex) === Number(levelIndex));
+    }
+
+    function scaleForLevel(levelIndex) {
+        return Number(levelInfoFor(levelIndex)?.metersPerPixel) || Number(currentSceneData?.meta?.metersPerPixel) || 0.02;
+    }
+
+    function offsetForLevel(levelIndex) {
+        const offset = levelInfoFor(levelIndex)?.planOffset || [0, 0];
+        return [Number(offset[0]) || 0, Number(offset[1]) || 0];
+    }
+
+    function entityFloorIndex(item) {
+        return Number(item?.level ?? item?.floorIndex) || 0;
+    }
+
+    function scenePointToSourcePixels(item, point) {
+        const floor = entityFloorIndex(item);
+        const mpp = scaleForLevel(floor);
+        const offset = offsetForLevel(floor);
+        return [(Number(point[0]) - offset[0]) / mpp, (Number(point[1]) - offset[1]) / mpp];
+    }
+
+    function sourcePixelsToScenePoint(point, floorIndex) {
+        const mpp = scaleForLevel(floorIndex);
+        const offset = offsetForLevel(floorIndex);
+        return [Number(point[0]) * mpp + offset[0], Number(point[1]) * mpp + offset[1]];
+    }
+
+    async function rebuildEditedGeometry(candidate, successText = "2D edits saved.") {
+        try {
+            if (openingEditStatus) openingEditStatus.textContent = "Rebuilding walls and openings locally…";
+            const response = await fetch("/api/scene/rebuild-geometry", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ scene: candidate }),
+            });
+            const result = await response.json();
+            if (!response.ok || !result.success) throw new Error(result.error || "Geometry could not be rebuilt.");
+            currentSceneData = result.scene;
+            window.currentSceneData = currentSceneData;
+            selectedOpening = null;
+            if (btnDeleteOpening2D) btnDeleteOpening2D.disabled = true;
+            refreshEditedScene();
+            if (openingEditStatus) openingEditStatus.textContent = "Geometry updated locally. SAM was not called again.";
+            showMessage(successText, "info");
+            return true;
+        } catch (error) {
+            if (openingEditStatus) openingEditStatus.textContent = error.message || "Could not rebuild geometry.";
+            showMessage(error.message || "Could not rebuild the edited geometry.", "error");
+            return false;
+        }
+    }
+
     function refreshBoundaryScene() {
         if (!currentSceneData) return;
         currentSceneData.rooms.forEach(room => {
-            room.area_m2 = polygonArea(room.polygon || []);
+            room.area_m2 = roomArea(room);
             room.centroid = roomCentroid(room);
         });
-        viewer.loadScene(currentSceneData, { animateBuild: false, resetCamera: false });
-        jsonOutput.textContent = JSON.stringify(currentSceneData, null, 2);
-        updateAreaSummary();
-        populateRoomControls(currentSceneData);
-        if (loadedImageElement) render2DSegmentationCanvas();
-        const room = currentSceneData.rooms.find(item => item.id === selectedRoomId);
-        if (room) {
-            window.onFloorPlanRoomSelected(room);
-            viewer.previewRoomBoundary(room);
-        }
+        const roomId = selectedRoomId;
+        rebuildEditedGeometry(JSON.parse(JSON.stringify(currentSceneData)), "Room outline saved; wall geometry was rebuilt locally.").then(success => {
+            if (!success) return;
+            const room = currentSceneData.rooms.find(item => item.id === roomId);
+            if (room) {
+                window.onFloorPlanRoomSelected(room);
+                viewer.previewRoomBoundary(room);
+            }
+        });
     }
 
     function showRoomRoute(scene, startId, endId) {
@@ -580,25 +882,31 @@ document.addEventListener("DOMContentLoaded", () => {
         routeStatus.textContent = `Route shown through ${doorCount} door${doorCount === 1 ? "" : "s"} and ${floorChanges} floor change${floorChanges === 1 ? "" : "s"}.`;
     }
 
-    btnFocusRoom.addEventListener("click", () => {
-        const room = (currentSceneData?.rooms || []).find(item => item.id === roomSearch.value);
-        if (!room) {
-            routeStatus.textContent = "Load a scene and choose a room first.";
-            return;
-        }
-        viewer.focusRoom(room);
-        if (typeof window.onFloorPlanRoomSelected === "function") {
-            window.onFloorPlanRoomSelected(room);
-        }
-    });
+    if (btnFocusRoom) {
+        btnFocusRoom.addEventListener("click", () => {
+            const room = (currentSceneData?.rooms || []).find(item => item.id === (roomSearch ? roomSearch.value : ""));
+            if (!room) {
+                if (routeStatus) routeStatus.textContent = "Load a scene and choose a room first.";
+                return;
+            }
+            if (viewer) viewer.focusRoom(room);
+            if (typeof window.onFloorPlanRoomSelected === "function") {
+                window.onFloorPlanRoomSelected(room);
+            }
+        });
+    }
 
-    btnShowRoute.addEventListener("click", () => {
-        if (!currentSceneData) {
-            routeStatus.textContent = "Load a scene before creating a route.";
-            return;
-        }
-        showRoomRoute(currentSceneData, routeFrom.value, routeTo.value);
-    });
+    if (btnShowRoute) {
+        btnShowRoute.addEventListener("click", () => {
+            if (!currentSceneData) {
+                if (routeStatus) routeStatus.textContent = "Load a scene before creating a route.";
+                return;
+            }
+            if (routeFrom && routeTo) {
+                showRoomRoute(currentSceneData, routeFrom.value, routeTo.value);
+            }
+        });
+    }
 
     async function requestSceneInsight(kind, button) {
         if (!currentSceneData) {
@@ -711,90 +1019,187 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
-    btnTranscribeMap.addEventListener("click", async () => {
-        if (!mapAudioInput.files.length) {
-            mapTranscriptionStatus.textContent = "Choose a supported mono PCM WAV recording first.";
-            return;
-        }
-        btnTranscribeMap.disabled = true;
-        mapTranscriptionStatus.textContent = "Transcribing…";
-        try {
-            const formData = new FormData();
-            formData.append("audio", mapAudioInput.files[0]);
-            const response = await fetch("/api/transcribe", { method: "POST", body: formData });
-            const result = await response.json();
-            if (!response.ok || !result.success) throw new Error(result.error || "Transcription failed.");
-            mapAssistantQuestion.value = result.transcript;
-            mapTranscriptionStatus.textContent = "Transcript added to the question box. Review it, then select Ask map assistant.";
-        } catch (error) {
-            mapTranscriptionStatus.textContent = error.message || "Transcription is unavailable.";
-        } finally {
-            btnTranscribeMap.disabled = false;
-        }
-    });
+    if (btnTranscribeMap) {
+        btnTranscribeMap.addEventListener("click", async () => {
+            if (!mapAudioInput || !mapAudioInput.files || !mapAudioInput.files.length) {
+                if (mapTranscriptionStatus) mapTranscriptionStatus.textContent = "Choose a supported mono PCM WAV recording first.";
+                return;
+            }
+            btnTranscribeMap.disabled = true;
+            if (mapTranscriptionStatus) mapTranscriptionStatus.textContent = "Transcribing…";
+            try {
+                const formData = new FormData();
+                formData.append("audio", mapAudioInput.files[0]);
+                const response = await fetch("/api/transcribe", { method: "POST", body: formData });
+                const result = await response.json();
+                if (!response.ok || !result.success) throw new Error(result.error || "Transcription failed.");
+                if (mapAssistantQuestion) mapAssistantQuestion.value = result.transcript;
+                if (mapTranscriptionStatus) mapTranscriptionStatus.textContent = "Transcript added to the question box. Review it, then select Ask map assistant.";
+            } catch (error) {
+                if (mapTranscriptionStatus) mapTranscriptionStatus.textContent = error.message || "Transcription is unavailable.";
+            } finally {
+                btnTranscribeMap.disabled = false;
+            }
+        });
+    }
 
     // -------------------------------------------------------------
     // Slider Events
     // -------------------------------------------------------------
-    inputMpp.addEventListener("input", (e) => {
-        labelMpp.textContent = `${parseFloat(e.target.value).toFixed(3)} m/px`;
-    });
+    if (inputMpp && labelMpp) {
+        inputMpp.addEventListener("input", (e) => {
+            labelMpp.textContent = `${parseFloat(e.target.value).toFixed(3)} m/px`;
+            if (!chkAutoScale?.checked && uploadScaleSource !== "user") {
+                uploadScaleSource = "manual";
+                if (uploadScaleStatus) uploadScaleStatus.textContent = "Manual scale selected. The processor will check it against building and room size limits.";
+            }
+        });
+    }
 
-    chkAutoScale.addEventListener("change", () => {
+    if (chkAutoScale && inputMpp) {
+        chkAutoScale.addEventListener("change", () => {
+            inputMpp.disabled = chkAutoScale.checked;
+            inputMpp.classList.toggle("opacity-40", chkAutoScale.checked);
+            if (uploadScaleSource !== "user") uploadScaleSource = chkAutoScale.checked ? "auto" : "manual";
+        });
         inputMpp.disabled = chkAutoScale.checked;
         inputMpp.classList.toggle("opacity-40", chkAutoScale.checked);
-    });
-    inputMpp.disabled = chkAutoScale.checked;
-    inputMpp.classList.toggle("opacity-40", chkAutoScale.checked);
+    }
 
-    inputWallHeight.addEventListener("input", (e) => {
-        const val = parseFloat(e.target.value).toFixed(1);
-        labelWallHeight.textContent = `${val} m`;
-        viewer.setWallHeight(val);
-    });
+    if (inputWallHeight && labelWallHeight) {
+        inputWallHeight.addEventListener("input", (e) => {
+            const val = parseFloat(e.target.value).toFixed(1);
+            labelWallHeight.textContent = `${val} m`;
+            if (viewer) viewer.setWallHeight(val);
+        });
+    }
 
-    inputWallThickness.addEventListener("input", (e) => {
-        const value = parseFloat(e.target.value);
-        labelWallThickness.textContent = `${value.toFixed(2)} m`;
-    });
-    inputWallThickness.addEventListener("change", e => viewer.setWallThickness(parseFloat(e.target.value)));
+    if (inputWallThickness && labelWallThickness) {
+        inputWallThickness.addEventListener("input", (e) => {
+            const value = parseFloat(e.target.value);
+            labelWallThickness.textContent = `${value.toFixed(2)} m`;
+        });
+        inputWallThickness.addEventListener("change", e => {
+            if (viewer) viewer.setWallThickness(parseFloat(e.target.value));
+        });
+    }
 
     // -------------------------------------------------------------
     // Drag & Drop / File Selection
     // -------------------------------------------------------------
-    dropZone.addEventListener("click", () => fileInput.click());
+    if (dropZone && fileInput) {
+        dropZone.addEventListener("click", () => fileInput.click());
+    }
 
-    fileInput.addEventListener("change", (e) => {
-        if (e.target.files && e.target.files.length) handleFileSelection(Array.from(e.target.files));
+    if (fileInput) {
+        fileInput.addEventListener("change", (e) => {
+            if (e.target.files && e.target.files.length) handleFileSelection(Array.from(e.target.files));
+        });
+    }
+
+    btnStartUploadCalibration?.addEventListener("click", () => {
+        if (!uploadPreviewImage) {
+            if (uploadScaleStatus) uploadScaleStatus.textContent = "Choose a floor plan image before setting its scale.";
+            return;
+        }
+        uploadCalibrationActive = true;
+        uploadCalibrationPoints = [];
+        uploadScaleSource = "auto";
+        btnStartUploadCalibration.classList.add("calibration-active");
+        btnStartUploadCalibration.setAttribute("aria-pressed", "true");
+        if (uploadScaleStatus) uploadScaleStatus.textContent = "Click the first endpoint, then the second endpoint of a known length.";
+        redrawUploadScaleCanvas();
     });
 
-    dropZone.addEventListener("dragover", (e) => {
-        e.preventDefault();
-        dropZone.classList.add("drag-active");
+    uploadScaleCanvas?.addEventListener("click", event => {
+        if (!uploadCalibrationActive || !uploadScaleCanvas) return;
+        const rect = uploadScaleCanvas.getBoundingClientRect();
+        const point = [
+            Math.max(0, Math.min(uploadScaleCanvas.width, (event.clientX - rect.left) * uploadScaleCanvas.width / rect.width)),
+            Math.max(0, Math.min(uploadScaleCanvas.height, (event.clientY - rect.top) * uploadScaleCanvas.height / rect.height)),
+        ];
+        uploadCalibrationPoints.push(point);
+        if (uploadCalibrationPoints.length === 1 && uploadScaleStatus) uploadScaleStatus.textContent = "First point saved. Click the second endpoint.";
+        if (uploadCalibrationPoints.length === 2) applyUploadCalibration();
+        redrawUploadScaleCanvas();
     });
 
-    dropZone.addEventListener("dragleave", () => {
-        dropZone.classList.remove("drag-active");
+    uploadScaleCanvas?.addEventListener("pointerdown", event => {
+        if (uploadCalibrationActive || Number(inputFloorCount?.value) < 2 || !uploadPreviewImage) return;
+        const rect = uploadScaleCanvas.getBoundingClientRect();
+        const vertical = inputSplitOrientation?.value !== "horizontal";
+        const pointerPosition = vertical ? event.clientX - rect.left : event.clientY - rect.top;
+        const displayLength = vertical ? rect.width : rect.height;
+        const linePositions = uploadDividerFractions().map(fraction => fraction * displayLength);
+        const nearest = linePositions.map((value, index) => ({ index, distance: Math.abs(value - pointerPosition) }))
+            .sort((a, b) => a.distance - b.distance)[0];
+        if (!nearest || nearest.distance > 18) return;
+        activeUploadDivider = nearest.index;
+        uploadScaleCanvas.setPointerCapture(event.pointerId);
+        event.preventDefault();
     });
 
-    dropZone.addEventListener("drop", (e) => {
-        e.preventDefault();
-        dropZone.classList.remove("drag-active");
-        if (e.dataTransfer.files && e.dataTransfer.files.length) handleFileSelection(Array.from(e.dataTransfer.files));
+    uploadScaleCanvas?.addEventListener("pointermove", event => {
+        if (activeUploadDivider === null) return;
+        const rect = uploadScaleCanvas.getBoundingClientRect();
+        const vertical = inputSplitOrientation?.value !== "horizontal";
+        const coordinate = vertical ? event.clientX - rect.left : event.clientY - rect.top;
+        const displayLength = vertical ? rect.width : rect.height;
+        let percent = Math.max(8, Math.min(92, coordinate / displayLength * 100));
+        if (Number(inputFloorCount?.value) === 3) {
+            if (activeUploadDivider === 0) percent = Math.min(percent, Number(inputSplitPosition2.value) - 8);
+            else percent = Math.max(percent, Number(inputSplitPosition1.value) + 8);
+        }
+        const slider = activeUploadDivider === 0 ? inputSplitPosition1 : inputSplitPosition2;
+        if (slider) slider.value = String(Math.round(percent));
+        updateUploadSplitControls();
+        event.preventDefault();
     });
 
-    btnRemoveImage.addEventListener("click", (e) => {
-        e.stopPropagation();
-        selectedFile = null;
-        selectedFiles = [];
-        fileInput.value = "";
-        imagePreviewContainer.classList.add("hidden");
-        dropZonePrompt.classList.remove("hidden");
-        btnGenerate.disabled = true;
-        btnProcessBuilding.classList.add("hidden");
-        buildingUploadStatus.classList.add("hidden");
-        clearMessage();
+    const finishUploadDividerDrag = () => { activeUploadDivider = null; };
+    uploadScaleCanvas?.addEventListener("pointerup", finishUploadDividerDrag);
+    uploadScaleCanvas?.addEventListener("pointercancel", finishUploadDividerDrag);
+    [inputFloorCount, inputSplitOrientation, inputSplitPosition1, inputSplitPosition2].forEach(control => {
+        control?.addEventListener("input", updateUploadSplitControls);
+        control?.addEventListener("change", updateUploadSplitControls);
     });
+
+    if (dropZone) {
+        dropZone.addEventListener("dragover", (e) => {
+            e.preventDefault();
+            dropZone.classList.add("drag-active");
+        });
+
+        dropZone.addEventListener("dragleave", () => {
+            dropZone.classList.remove("drag-active");
+        });
+
+        dropZone.addEventListener("drop", (e) => {
+            e.preventDefault();
+            dropZone.classList.remove("drag-active");
+            if (e.dataTransfer.files && e.dataTransfer.files.length) handleFileSelection(Array.from(e.dataTransfer.files));
+        });
+    }
+
+    if (btnRemoveImage) {
+        btnRemoveImage.addEventListener("click", (e) => {
+            e.stopPropagation();
+            selectedFile = null;
+            selectedFiles = [];
+            uploadCalibrationActive = false;
+            uploadCalibrationPoints = [];
+            uploadPreviewImage = null;
+            uploadScaleSource = "auto";
+            if (fileInput) fileInput.value = "";
+            if (imagePreviewContainer) imagePreviewContainer.classList.add("hidden");
+            if (uploadReviewControls) uploadReviewControls.classList.add("hidden");
+            if (dropZonePrompt) dropZonePrompt.classList.remove("hidden");
+            if (btnGenerate) btnGenerate.disabled = true;
+            if (btnProcessBuilding) btnProcessBuilding.classList.add("hidden");
+            if (buildingUploadStatus) buildingUploadStatus.classList.add("hidden");
+            clearMessage();
+        });
+    }
 
     function handleFileSelection(files) {
         const valid = files.filter(file => ["image/png", "image/jpeg", "image/webp"].includes(file.type.toLowerCase()) && file.size <= 10 * 1024 * 1024);
@@ -805,6 +1210,9 @@ document.addEventListener("DOMContentLoaded", () => {
         clearMessage();
         selectedFiles = valid.slice(0, 8);
         selectedFile = selectedFiles[0];
+        uploadCalibrationActive = false;
+        uploadCalibrationPoints = [];
+        uploadScaleSource = "auto";
         const multiple = selectedFiles.length > 1;
         btnProcessBuilding.classList.toggle("hidden", !multiple);
         btnProcessBuilding.disabled = !processingReady || !multiple;
@@ -817,6 +1225,7 @@ document.addEventListener("DOMContentLoaded", () => {
         reader.onload = (event) => {
             imagePreview.src = event.target.result;
             imagePreviewContainer.classList.remove("hidden");
+            uploadReviewControls?.classList.remove("hidden");
             dropZonePrompt.classList.add("hidden");
             btnGenerate.disabled = !processingReady || !selectedFile;
 
@@ -824,6 +1233,9 @@ document.addEventListener("DOMContentLoaded", () => {
             const img = new Image();
             img.onload = () => {
                 loadedImageElement = img;
+                uploadPreviewImage = img;
+                redrawUploadScaleCanvas();
+                updateUploadSplitControls();
                 if (currentSceneData) render2DSegmentationCanvas();
             };
             img.src = event.target.result;
@@ -887,47 +1299,54 @@ document.addEventListener("DOMContentLoaded", () => {
     btnViewReset?.addEventListener("click", () => {
         viewer.resetCameraView();
     });
-    levelFilter.addEventListener("change", () => {
-        viewer.setVisibleLevel(levelFilter.value === "all" ? null : levelFilter.value);
-        if (floorPlanImages.length > 1) {
-            const imageIndex = levelFilter.value === "all" ? 0 : Number(levelFilter.value);
-            loadedImageElement = floorPlanImages[imageIndex] || floorPlanImages[0];
-        }
-        if (loadedImageElement) render2DSegmentationCanvas();
-    });
+    if (levelFilter) {
+        levelFilter.addEventListener("change", () => {
+            if (viewer) viewer.setVisibleLevel(levelFilter.value === "all" ? null : levelFilter.value);
+            if (floorPlanImages.length > 1) {
+                const imageIndex = levelFilter.value === "all" ? 0 : Number(levelFilter.value);
+                loadedImageElement = floorPlanImages[imageIndex] || floorPlanImages[0];
+            }
+            if (loadedImageElement) render2DSegmentationCanvas();
+        });
+    }
 
-    btnCutaway.addEventListener("click", () => {
-        isCutawayActive = !isCutawayActive;
-        if (isCutawayActive) {
-            btnCutaway.classList.add("bg-amber-600", "text-white");
-            btnCutaway.classList.remove("bg-slate-800", "text-slate-300");
-            viewer.setWallHeight(1.1, { syncFloors: false }); // Cutaway height only; preserve story spacing.
-            labelWallHeight.textContent = "1.1 m (Cutaway)";
-        } else {
-            btnCutaway.classList.remove("bg-amber-600", "text-white");
-            btnCutaway.classList.add("bg-slate-800", "text-slate-300");
-            const originalHeight = parseFloat(inputWallHeight.value) || 3.0;
-            viewer.setWallHeight(originalHeight, { syncFloors: false });
-            labelWallHeight.textContent = `${originalHeight.toFixed(1)} m`;
-        }
-    });
+    if (btnCutaway) {
+        btnCutaway.addEventListener("click", () => {
+            isCutawayActive = !isCutawayActive;
+            if (isCutawayActive) {
+                btnCutaway.classList.add("bg-amber-600", "text-white");
+                btnCutaway.classList.remove("bg-slate-800", "text-slate-300");
+                if (viewer) viewer.setWallHeight(1.1, { syncFloors: false }); // Cutaway height only; preserve story spacing.
+                if (labelWallHeight) labelWallHeight.textContent = "1.1 m (Cutaway)";
+            } else {
+                btnCutaway.classList.remove("bg-amber-600", "text-white");
+                btnCutaway.classList.add("bg-slate-800", "text-slate-300");
+                const originalHeight = parseFloat(inputWallHeight?.value) || 3.0;
+                if (viewer) viewer.setWallHeight(originalHeight, { syncFloors: false });
+                if (labelWallHeight) labelWallHeight.textContent = `${originalHeight.toFixed(1)} m`;
+            }
+        });
+    }
 
-    chkWalls.addEventListener("change", (e) => viewer.toggleLayer("walls", e.target.checked));
-    if (chkFloors) chkFloors.addEventListener("change", (e) => viewer.toggleLayer("rooms", e.target.checked));
-    if (chkRoof) chkRoof.addEventListener("change", (e) => viewer.toggleLayer("roof", e.target.checked));
-    chkLabels.addEventListener("change", (e) => viewer.toggleLayer("labels", e.target.checked));
-    chkOpenings.addEventListener("change", (e) => {
-        viewer.toggleLayer("doors", e.target.checked);
-        viewer.toggleLayer("windows", e.target.checked);
+    if (chkWalls) chkWalls.addEventListener("change", (e) => viewer?.toggleLayer("walls", e.target.checked));
+    if (chkFloors) chkFloors.addEventListener("change", (e) => viewer?.toggleLayer("rooms", e.target.checked));
+    if (chkRoof) chkRoof.addEventListener("change", (e) => viewer?.toggleLayer("roof", e.target.checked));
+    if (chkLabels) chkLabels.addEventListener("change", (e) => viewer?.toggleLayer("labels", e.target.checked));
+    if (chkOpenings) chkOpenings.addEventListener("change", (e) => {
+        viewer?.toggleLayer("doors", e.target.checked);
+        viewer?.toggleLayer("windows", e.target.checked);
     });
-    chkGrid.addEventListener("change", (e) => viewer.toggleLayer("grid", e.target.checked));
-    chkFurniture.addEventListener("change", (e) => viewer.toggleLayer("furniture", e.target.checked));
+    if (chkGrid) chkGrid.addEventListener("change", (e) => viewer?.toggleLayer("grid", e.target.checked));
+    if (chkFurniture) chkFurniture.addEventListener("change", (e) => viewer?.toggleLayer("furniture", e.target.checked));
 
-    btnWalkthrough.addEventListener("click", () => {
-        const enabled = viewer.toggleWalkthroughMode();
-        btnWalkthrough.setAttribute("aria-pressed", String(enabled));
-        btnWalkthrough.textContent = enabled ? "Exit Walkthrough" : "Walkthrough";
-    });
+    if (btnWalkthrough) {
+        btnWalkthrough.addEventListener("click", () => {
+            if (!viewer) return;
+            const enabled = viewer.toggleWalkthroughMode();
+            btnWalkthrough.setAttribute("aria-pressed", String(enabled));
+            btnWalkthrough.textContent = enabled ? "Exit Walkthrough" : "Walkthrough";
+        });
+    }
     viewer.onWalkthroughChange = enabled => {
         btnWalkthrough.setAttribute("aria-pressed", String(enabled));
         btnWalkthrough.textContent = enabled ? "Exit Walkthrough" : "Walkthrough";
@@ -946,37 +1365,48 @@ document.addEventListener("DOMContentLoaded", () => {
             if (viewer) viewer.walkInside();
         });
     }
-    btnMeasure.addEventListener("click", () => {
-        const enabled = viewer.toggleMeasurementMode();
-        btnMeasure.setAttribute("aria-pressed", String(enabled));
-        btnMeasure.textContent = enabled ? "Stop Measure" : "Measure";
-        measurementPanel.classList.toggle("hidden", !enabled);
-        measurementStatus.textContent = enabled ? "Click a first point in the 3D view." : "Measurement stopped.";
-    });
-    btnClearMeasurement.addEventListener("click", () => {
-        viewer.clearMeasurement();
-        measurementStatus.textContent = "Click a first point to measure.";
-    });
-    viewer.onMeasurementUpdate = message => { measurementStatus.textContent = message; };
-    viewer.onMeasurementModeChange = enabled => {
-        btnMeasure.setAttribute("aria-pressed", String(enabled));
-        btnMeasure.textContent = enabled ? "Stop Measure" : "Measure";
-        measurementPanel.classList.toggle("hidden", !enabled);
-    };
+    if (btnMeasure) {
+        btnMeasure.addEventListener("click", () => {
+            if (!viewer) return;
+            const enabled = viewer.toggleMeasurementMode();
+            btnMeasure.setAttribute("aria-pressed", String(enabled));
+            btnMeasure.textContent = enabled ? "Stop Measure" : "Measure";
+            if (measurementPanel) measurementPanel.classList.toggle("hidden", !enabled);
+            if (measurementStatus) measurementStatus.textContent = enabled ? "Click a first point in the 3D view." : "Measurement stopped.";
+        });
+    }
+    if (btnClearMeasurement) {
+        btnClearMeasurement.addEventListener("click", () => {
+            if (viewer) viewer.clearMeasurement();
+            if (measurementStatus) measurementStatus.textContent = "Click a first point to measure.";
+        });
+    }
+    if (viewer) {
+        viewer.onMeasurementUpdate = message => { if (measurementStatus) measurementStatus.textContent = message; };
+        viewer.onMeasurementModeChange = enabled => {
+            if (btnMeasure) {
+                btnMeasure.setAttribute("aria-pressed", String(enabled));
+                btnMeasure.textContent = enabled ? "Stop Measure" : "Measure";
+            }
+            if (measurementPanel) measurementPanel.classList.toggle("hidden", !enabled);
+        };
+    }
 
-    btnCalibrateScale.addEventListener("click", () => {
-        if (!currentSceneData || !loadedImageElement) {
-            scaleCalibrationStatus.textContent = "Load a floor plan before calibrating scale.";
-            return;
-        }
-        scaleCalibrationActive = true;
-        scaleCalibrationPoints = [];
-        btnCalibrateScale.setAttribute("aria-pressed", "true");
-        btnCalibrateScale.classList.add("calibration-active");
-        btnApplyScale.disabled = true;
-        scaleCalibrationStatus.textContent = "Click the first point, then the second point on the plan.";
-        segmentationCanvas.classList.add("calibration-crosshair");
-    });
+    if (btnCalibrateScale) {
+        btnCalibrateScale.addEventListener("click", () => {
+            if (!currentSceneData || !loadedImageElement) {
+                if (scaleCalibrationStatus) scaleCalibrationStatus.textContent = "Load a floor plan before calibrating scale.";
+                return;
+            }
+            scaleCalibrationActive = true;
+            scaleCalibrationPoints = [];
+            btnCalibrateScale.setAttribute("aria-pressed", "true");
+            btnCalibrateScale.classList.add("calibration-active");
+            if (btnApplyScale) btnApplyScale.disabled = true;
+            if (scaleCalibrationStatus) scaleCalibrationStatus.textContent = "Click the first point, then the second point on the plan.";
+            if (segmentationCanvas) segmentationCanvas.classList.add("calibration-crosshair");
+        });
+    }
 
     segmentationCanvas.addEventListener("click", event => {
         if (!scaleCalibrationActive) return;
@@ -1000,42 +1430,152 @@ document.addEventListener("DOMContentLoaded", () => {
         render2DSegmentationCanvas();
     });
 
-    btnEditBoundary.addEventListener("click", () => {
-        const room = (currentSceneData?.rooms || []).find(item => item.id === selectedRoomId);
-        if (!room || !loadedImageElement || (room.polygon || []).length < 3) {
-            boundaryEditStatus.textContent = "Select a room with a valid outline and its plan image first.";
+    function setOpeningEditMode(mode) {
+        openingEditMode = mode;
+        selectedOpening = null;
+        if (btnDeleteOpening2D) btnDeleteOpening2D.disabled = true;
+        [[btnAddDoor2D, "add-door"], [btnAddWindow2D, "add-window"]].forEach(([button, buttonMode]) => {
+            if (!button) return;
+            const active = mode === buttonMode;
+            button.setAttribute("aria-pressed", String(active));
+            button.classList.toggle("calibration-active", active);
+        });
+        if (segmentationCanvas) segCtx.canvas.style.cursor = mode ? "crosshair" : "";
+        if (!openingEditStatus) return;
+        openingEditStatus.textContent = mode === "add-door"
+            ? "Click the source plan on a wall to add a 0.9 m door."
+            : mode === "add-window"
+                ? "Click the source plan on an exterior wall to add a 1.2 m window."
+                : "Select an opening to delete it, or add one on a wall. Geometry rebuilds locally; SAM is not called again.";
+        render2DSegmentationCanvas();
+    }
+
+    btnAddDoor2D?.addEventListener("click", () => {
+        if (!currentSceneData) return showMessage("Load a floor plan before adding a door.", "info");
+        setOpeningEditMode(openingEditMode === "add-door" ? null : "add-door");
+    });
+    btnAddWindow2D?.addEventListener("click", () => {
+        if (!currentSceneData) return showMessage("Load a floor plan before adding a window.", "info");
+        setOpeningEditMode(openingEditMode === "add-window" ? null : "add-window");
+    });
+
+    segmentationCanvas.addEventListener("click", event => {
+        if (!currentSceneData || scaleCalibrationActive || polygonEditActive || !loadedImageElement) return;
+        const rect = segmentationCanvas.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        const sourcePixels = [
+            (event.clientX - rect.left) * segmentationCanvas.width / rect.width,
+            (event.clientY - rect.top) * segmentationCanvas.height / rect.height,
+        ];
+
+        if (openingEditMode === "add-door" || openingEditMode === "add-window") {
+            const kind = openingEditMode === "add-door" ? "door" : "window";
+            const floorIndex = levelFilter.value === "all" ? 0 : Number(levelFilter.value);
+            const candidate = JSON.parse(JSON.stringify(currentSceneData));
+            const collection = kind === "door" ? "doors" : "windows";
+            candidate[collection] ||= [];
+            let number = 1;
+            const prefix = kind === "door" ? "manual_d" : "manual_win";
+            const ids = new Set(candidate[collection].map(item => item.id));
+            while (ids.has(`${prefix}${number}`)) number += 1;
+            const item = {
+                id: `${prefix}${number}`,
+                center: sourcePixelsToScenePoint(sourcePixels, floorIndex),
+                width: kind === "door" ? 0.9 : 1.2,
+                floorIndex,
+                level: floorIndex,
+                source: "manual",
+            };
+            if (kind === "door") item.connects = [];
+            candidate[collection].push(item);
+            setOpeningEditMode(null);
+            rebuildEditedGeometry(candidate, `${kind === "door" ? "Door" : "Window"} added and wall geometry rebuilt locally.`);
             return;
         }
-        polygonEditActive = true;
-        segmentationCanvas.classList.add("polygon-edit-active");
-        polygonEditUndoStack = [];
-        polygonEditDragIndex = null;
-        boundaryEditControls.classList.remove("hidden");
-        boundaryEditStatus.textContent = "Open 2D Segmentation, then drag a cyan vertex to adjust the outline.";
-        viewer.previewRoomBoundary(room);
-        document.querySelector('[data-tab="2d"]').click();
+
+        const allowedFloors = levelFilter.value === "all" ? null : Number(levelFilter.value);
+        const candidates = [
+            ...(currentSceneData.doors || []).map(item => ({ kind: "door", item })),
+            ...(currentSceneData.windows || []).map(item => ({ kind: "window", item })),
+        ].filter(entry => allowedFloors === null || entityFloorIndex(entry.item) === allowedFloors);
+        let nearest = null;
+        for (const entry of candidates) {
+            const source = scenePointToSourcePixels(entry.item, entry.item.center || [0, 0]);
+            const distance = Math.hypot(sourcePixels[0] - source[0], sourcePixels[1] - source[1]);
+            const widthPx = (Number(entry.item.width) || (entry.kind === "door" ? 0.9 : 1.2)) / scaleForLevel(entityFloorIndex(entry.item));
+            const hitRadius = Math.max(16, Math.min(48, widthPx / 2 + 8));
+            if (distance <= hitRadius && (!nearest || distance < nearest.distance)) nearest = { ...entry, distance };
+        }
+        selectedOpening = nearest ? { kind: nearest.kind, id: nearest.item.id } : null;
+        if (btnDeleteOpening2D) btnDeleteOpening2D.disabled = !selectedOpening;
+        if (openingEditStatus) openingEditStatus.textContent = selectedOpening
+            ? `Selected ${selectedOpening.kind} ${selectedOpening.id}. Use Delete selected or press Delete.`
+            : "No opening selected. Click a door or window marker to select it.";
         render2DSegmentationCanvas();
     });
 
-    btnBoundaryUndo.addEventListener("click", () => {
-        const room = (currentSceneData?.rooms || []).find(item => item.id === selectedRoomId);
-        const previous = polygonEditUndoStack.pop();
-        if (!room || !previous) return;
-        room.polygon = previous;
-        btnBoundaryUndo.disabled = polygonEditUndoStack.length === 0;
-        boundaryEditStatus.textContent = "Previous outline restored.";
-        refreshBoundaryScene();
+    btnDeleteOpening2D?.addEventListener("click", () => {
+        if (!currentSceneData || !selectedOpening) return;
+        const candidate = JSON.parse(JSON.stringify(currentSceneData));
+        const collection = selectedOpening.kind === "door" ? "doors" : "windows";
+        candidate[collection] = (candidate[collection] || []).filter(item => item.id !== selectedOpening.id);
+        rebuildEditedGeometry(candidate, `${selectedOpening.kind === "door" ? "Door" : "Window"} deleted and wall geometry rebuilt locally.`);
     });
 
-    btnBoundaryDone.addEventListener("click", () => {
-        polygonEditActive = false;
-        segmentationCanvas.classList.remove("polygon-edit-active");
-        polygonEditDragIndex = null;
-        boundaryEditControls.classList.add("hidden");
-        viewer.clearRoomBoundaryPreview();
-        boundaryEditStatus.textContent = "Outline saved and shown on the 3D floor. The cyan edge marks the edit; detected wall solids are a separate geometry layer. Export scene.json or GLB to keep it.";
-        render2DSegmentationCanvas();
+    document.addEventListener("keydown", event => {
+        const focused = document.activeElement;
+        if ((event.key === "Delete" || event.key === "Backspace")
+            && selectedOpening
+            && !focused?.matches("input, textarea, select, [contenteditable='true']")
+            && btnDeleteOpening2D && !btnDeleteOpening2D.disabled) {
+            event.preventDefault();
+            btnDeleteOpening2D.click();
+        }
     });
+
+    if (btnEditBoundary) {
+        btnEditBoundary.addEventListener("click", () => {
+            const room = (currentSceneData?.rooms || []).find(item => item.id === selectedRoomId);
+            if (!room || !loadedImageElement || (room.polygon || []).length < 3) {
+                if (boundaryEditStatus) boundaryEditStatus.textContent = "Select a room with a valid outline and its plan image first.";
+                return;
+            }
+            polygonEditActive = true;
+            if (segmentationCanvas) segmentationCanvas.classList.add("polygon-edit-active");
+            polygonEditUndoStack = [];
+            polygonEditDragIndex = null;
+            if (boundaryEditControls) boundaryEditControls.classList.remove("hidden");
+            if (boundaryEditStatus) boundaryEditStatus.textContent = "Open 2D Segmentation, then drag a cyan vertex to adjust the outline.";
+            if (viewer) viewer.previewRoomBoundary(room);
+            const tab2d = document.querySelector('[data-tab="2d"]');
+            if (tab2d) tab2d.click();
+            render2DSegmentationCanvas();
+        });
+    }
+
+    if (btnBoundaryUndo) {
+        btnBoundaryUndo.addEventListener("click", () => {
+            const room = (currentSceneData?.rooms || []).find(item => item.id === selectedRoomId);
+            const previous = polygonEditUndoStack.pop();
+            if (!room || !previous) return;
+            room.polygon = previous;
+            btnBoundaryUndo.disabled = polygonEditUndoStack.length === 0;
+            if (boundaryEditStatus) boundaryEditStatus.textContent = "Previous outline restored.";
+            refreshBoundaryScene();
+        });
+    }
+
+    if (btnBoundaryDone) {
+        btnBoundaryDone.addEventListener("click", () => {
+            polygonEditActive = false;
+            if (segmentationCanvas) segmentationCanvas.classList.remove("polygon-edit-active");
+            polygonEditDragIndex = null;
+            if (boundaryEditControls) boundaryEditControls.classList.add("hidden");
+            if (viewer) viewer.clearRoomBoundaryPreview();
+            if (boundaryEditStatus) boundaryEditStatus.textContent = "Outline saved and shown on the 3D floor. The cyan edge marks the edit; detected wall solids are a separate geometry layer. Export scene.json or GLB to keep it.";
+            render2DSegmentationCanvas();
+        });
+    }
 
     segmentationCanvas.addEventListener("pointerdown", event => {
         if (!polygonEditActive || scaleCalibrationActive || !selectedRoomId) return;
@@ -1044,12 +1584,12 @@ document.addEventListener("DOMContentLoaded", () => {
         const rect = segmentationCanvas.getBoundingClientRect();
         const x = (event.clientX - rect.left) * segmentationCanvas.width / rect.width;
         const y = (event.clientY - rect.top) * segmentationCanvas.height / rect.height;
-        const mpp = Number(currentSceneData.meta.metersPerPixel) || 0.02;
         const hitRadius = Math.max(12, Math.min(28, segmentationCanvas.width * 0.025));
         let bestIndex = -1;
         let bestDistance = hitRadius;
         room.polygon.forEach((point, index) => {
-            const distance = Math.hypot(point[0] / mpp - x, point[1] / mpp - y);
+            const source = scenePointToSourcePixels(room, point);
+            const distance = Math.hypot(source[0] - x, source[1] - y);
             if (distance < bestDistance) { bestIndex = index; bestDistance = distance; }
         });
         if (bestIndex < 0) {
@@ -1068,12 +1608,12 @@ document.addEventListener("DOMContentLoaded", () => {
         const room = (currentSceneData?.rooms || []).find(item => item.id === selectedRoomId);
         if (!room) return;
         const rect = segmentationCanvas.getBoundingClientRect();
-        const mpp = Number(currentSceneData.meta.metersPerPixel) || 0.02;
         const candidate = room.polygon.map(point => [...point]);
-        candidate[polygonEditDragIndex] = [
-            Math.max(0, (event.clientX - rect.left) * segmentationCanvas.width / rect.width) * mpp,
-            Math.max(0, (event.clientY - rect.top) * segmentationCanvas.height / rect.height) * mpp,
+        const sourcePoint = [
+            Math.max(0, (event.clientX - rect.left) * segmentationCanvas.width / rect.width),
+            Math.max(0, (event.clientY - rect.top) * segmentationCanvas.height / rect.height),
         ];
+        candidate[polygonEditDragIndex] = sourcePixelsToScenePoint(sourcePoint, entityFloorIndex(room));
         if (polygonArea(candidate) < 0.05 || polygonHasSelfIntersection(candidate)) {
             boundaryEditStatus.textContent = "That move would make the room outline invalid. Try another position.";
             return;
@@ -1096,16 +1636,20 @@ document.addEventListener("DOMContentLoaded", () => {
     segmentationCanvas.addEventListener("pointerup", finishBoundaryDrag);
     segmentationCanvas.addEventListener("pointercancel", finishBoundaryDrag);
 
-    btnCancelScale.addEventListener("click", () => {
-        scaleCalibrationActive = false;
-        scaleCalibrationPoints = [];
-        btnApplyScale.disabled = true;
-        btnCalibrateScale.setAttribute("aria-pressed", "false");
-        btnCalibrateScale.classList.remove("calibration-active");
-        segmentationCanvas.classList.remove("calibration-crosshair");
-        scaleCalibrationStatus.textContent = "Scale calibration cancelled.";
-        if (loadedImageElement) render2DSegmentationCanvas();
-    });
+    if (btnCancelScale) {
+        btnCancelScale.addEventListener("click", () => {
+            scaleCalibrationActive = false;
+            scaleCalibrationPoints = [];
+            if (btnApplyScale) btnApplyScale.disabled = true;
+            if (btnCalibrateScale) {
+                btnCalibrateScale.setAttribute("aria-pressed", "false");
+                btnCalibrateScale.classList.remove("calibration-active");
+            }
+            if (segmentationCanvas) segmentationCanvas.classList.remove("calibration-crosshair");
+            if (scaleCalibrationStatus) scaleCalibrationStatus.textContent = "Scale calibration cancelled.";
+            if (loadedImageElement) render2DSegmentationCanvas();
+        });
+    }
 
     btnApplyScale.addEventListener("click", () => {
         const knownMeters = Number(knownLength.value);
@@ -1120,7 +1664,7 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
         const newScale = knownMeters / pixelDistance;
-        if (floorPlanImages.length > 1) {
+        if ((currentSceneData.meta.levels || []).length > 1) {
             const levelIndex = levelFilter.value === "all" ? 0 : Number(levelFilter.value);
             const levelInfo = (currentSceneData.meta.levels || []).find(level => Number(level.level ?? level.floorIndex) === levelIndex);
             if (!levelInfo) {
@@ -1147,6 +1691,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const belongs = item => Number(item.level ?? item.floorIndex) === levelIndex;
             currentSceneData.rooms.filter(belongs).forEach(room => {
                 room.polygon = (room.polygon || []).map(transformPoint);
+                room.holes = (room.holes || []).map(polygon => polygon.map(transformPoint));
                 if (room.centroid) room.centroid = transformPoint(room.centroid);
                 if (Number.isFinite(Number(room.area_m2))) room.area_m2 *= factor * factor;
             });
@@ -1161,6 +1706,8 @@ document.addEventListener("DOMContentLoaded", () => {
             levelInfo.planAnchor = [oldAnchor[0] * factor, oldAnchor[1] * factor];
             levelInfo.planOffset = [targetAnchor[0] - levelInfo.planAnchor[0], targetAnchor[1] - levelInfo.planAnchor[1]];
             levelInfo.metersPerPixel = newScale;
+            levelInfo.scaleSource = "user";
+            levelInfo.scaleConfidence = 1.0;
             if (levelIndex === 0) {
                 const shift = [targetAnchor[0] - previousTarget[0], targetAnchor[1] - previousTarget[1]];
                 const shiftPoint = point => [point[0] + shift[0], point[1] + shift[1]];
@@ -1169,6 +1716,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     const isOtherFloor = item => Number(item.level ?? item.floorIndex) === otherIndex;
                     currentSceneData.rooms.filter(isOtherFloor).forEach(room => {
                         room.polygon = (room.polygon || []).map(shiftPoint);
+                        room.holes = (room.holes || []).map(polygon => polygon.map(shiftPoint));
                         if (room.centroid) room.centroid = shiftPoint(room.centroid);
                     });
                     currentSceneData.walls.filter(isOtherFloor).forEach(wall => {
@@ -1183,6 +1731,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 currentSceneData.meta.metersPerPixel = newScale;
             }
             currentSceneData.meta.scaleMethod = `interactive two-point calibration on story ${levelIndex + 1}`;
+            const allLevelsCalibrated = currentSceneData.meta.levels.every(level => String(level.scaleSource || "needs-review") !== "needs-review");
+            currentSceneData.meta.scaleSource = allLevelsCalibrated
+                ? (currentSceneData.meta.levels.every(level => level.scaleSource === "user") ? "user" : "mixed")
+                : "needs-review";
+            currentSceneData.meta.scaleConfidence = Math.min(...currentSceneData.meta.levels.map(level => Number(level.scaleConfidence) || 0));
             currentSceneData.meta.warnings = [...new Set([...(currentSceneData.meta.warnings || []), `Story ${levelIndex + 1} scale was recalibrated from two user-selected points and a known length.`])];
             labelMpp.textContent = `${newScale.toFixed(4)} m/px`;
             overlayScale.textContent = `Scale: ${newScale.toFixed(4)} m/px`;
@@ -1192,7 +1745,7 @@ document.addEventListener("DOMContentLoaded", () => {
             scaleCalibrationPoints = [];
             btnApplyScale.disabled = true;
             scaleCalibrationStatus.textContent = `Story ${levelIndex + 1} scale updated to ${newScale.toFixed(5)} m/px.`;
-            refreshEditedScene();
+            rebuildEditedGeometry(JSON.parse(JSON.stringify(currentSceneData)), `Story ${levelIndex + 1} scale saved; review checks were recalculated.`);
             return;
         }
         const previousScale = Number(currentSceneData.meta.metersPerPixel) || 0.02;
@@ -1200,6 +1753,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const scalePoints = points => (points || []).map(([x, y]) => [x * factor, y * factor]);
         currentSceneData.rooms.forEach(room => {
             room.polygon = scalePoints(room.polygon);
+            room.holes = (room.holes || []).map(scalePoints);
             if (room.centroid) room.centroid = [room.centroid[0] * factor, room.centroid[1] * factor];
             if (Number.isFinite(Number(room.area_m2))) room.area_m2 *= factor * factor;
         });
@@ -1213,6 +1767,14 @@ document.addEventListener("DOMContentLoaded", () => {
         }));
         currentSceneData.meta.metersPerPixel = newScale;
         currentSceneData.meta.scaleMethod = "interactive two-point calibration";
+        currentSceneData.meta.scaleSource = "user";
+        currentSceneData.meta.scaleConfidence = 1.0;
+        const groundLevel = (currentSceneData.meta.levels || []).find(level => Number(level.level ?? level.floorIndex) === 0);
+        if (groundLevel) {
+            groundLevel.metersPerPixel = newScale;
+            groundLevel.scaleSource = "user";
+            groundLevel.scaleConfidence = 1.0;
+        }
         currentSceneData.meta.warnings = [...new Set([...(currentSceneData.meta.warnings || []), "Scale was recalibrated from two user-selected points and a known length."])];
         inputMpp.min = String(Math.min(0.005, newScale));
         inputMpp.max = String(Math.max(0.08, newScale));
@@ -1222,7 +1784,7 @@ document.addEventListener("DOMContentLoaded", () => {
         scaleCalibrationPoints = [];
         btnApplyScale.disabled = true;
         scaleCalibrationStatus.textContent = `Scale updated to ${newScale.toFixed(5)} m/px.`;
-        refreshEditedScene();
+        rebuildEditedGeometry(JSON.parse(JSON.stringify(currentSceneData)), "Scale saved; review checks were recalculated.");
     });
 
     // -------------------------------------------------------------
@@ -1259,7 +1821,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // -------------------------------------------------------------
     // Load Demo Hackathon Floor Plan
     // -------------------------------------------------------------
-    btnLoadDemo.addEventListener("click", async () => {
+    if (btnLoadDemo) btnLoadDemo.addEventListener("click", async () => {
         try {
             btnLoadDemo.disabled = true;
             btnLoadDemo.textContent = "Loading Demo...";
@@ -1291,7 +1853,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
-    btnLoadTwoStoryDemo.addEventListener("click", async () => {
+    if (btnLoadTwoStoryDemo) btnLoadTwoStoryDemo.addEventListener("click", async () => {
         try {
             viewer.showLoadingState();
             btnLoadTwoStoryDemo.disabled = true;
@@ -1321,7 +1883,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // -------------------------------------------------------------
     // Process uploads through a real job/status API.
     // -------------------------------------------------------------
-    btnGenerate.addEventListener("click", async () => {
+    if (btnGenerate) btnGenerate.addEventListener("click", async () => {
         if (!selectedFile) {
             alert("Please select a floor plan image first.");
             return;
@@ -1336,8 +1898,14 @@ document.addEventListener("DOMContentLoaded", () => {
             formData.append("file", selectedFile);
             formData.append("metersPerPixel", inputMpp.value);
             formData.append("calibrateScale", chkAutoScale.checked ? "true" : "false");
+            formData.append("scaleSource", uploadScaleSource);
             formData.append("wallHeight", inputWallHeight.value);
             formData.append("wallThickness", inputWallThickness.value);
+            const floorCount = Number(inputFloorCount?.value) || 1;
+            formData.append("floorCount", String(floorCount));
+            formData.append("splitOrientation", inputSplitOrientation?.value || "vertical");
+            if (floorCount >= 2) formData.append("splitPosition1", String((Number(inputSplitPosition1.value) || 50) / 100));
+            if (floorCount >= 3) formData.append("splitPosition2", String((Number(inputSplitPosition2.value) || 67) / 100));
 
             progressStatus.textContent = "Uploading floor plan…";
             progressBar.style.width = "5%";
@@ -1511,7 +2079,7 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    btnProcessBuilding.addEventListener("click", async () => {
+    if (btnProcessBuilding) btnProcessBuilding.addEventListener("click", async () => {
         if (selectedFiles.length < 2) return;
         btnProcessBuilding.disabled = true;
         btnGenerate.disabled = true;
@@ -1564,7 +2132,9 @@ document.addEventListener("DOMContentLoaded", () => {
         currentSceneData = data.scene;
         window.currentSceneData = currentSceneData;
         floorPlanImages = Array.isArray(data.floorImages) ? data.floorImages : [];
-        setProcessingBadge(currentSceneData.meta?.processingMode || "");
+        const sceneMeta = currentSceneData.meta || {};
+        const needsReview = Boolean(sceneMeta.needsReview);
+        setProcessingBadge(sceneMeta.processingMode || "", sceneMeta);
         currentOverlays = data.overlays;
         const sceneWallHeight = Number(currentSceneData.meta.wallHeight);
         if (Number.isFinite(sceneWallHeight) && sceneWallHeight >= Number(inputWallHeight.min) && sceneWallHeight <= Number(inputWallHeight.max)) {
@@ -1608,18 +2178,26 @@ document.addEventListener("DOMContentLoaded", () => {
             render2DSegmentationCanvas();
         }
 
-        // 1. Render in Three.js
-        viewer.loadScene(data.scene);
-        if (data.imageUrl && data.scene && data.scene.meta) {
-            viewer.setBlueprintImage(data.imageUrl, data.scene.meta.imageSize, data.scene.meta.metersPerPixel);
+        // Do not silently turn implausible extraction into a 3D building.
+        if (needsReview) {
+            viewer.clear();
+            viewer.hideLoadingState();
+        } else {
+            viewer.loadScene(data.scene);
+            if (data.imageUrl && data.scene && data.scene.meta) {
+                viewer.setBlueprintImage(data.imageUrl, data.scene.meta.imageSize, data.scene.meta.metersPerPixel);
+            }
         }
 
         // 2. Populate scene.json viewer
         jsonOutput.textContent = JSON.stringify(data.scene, null, 2);
 
         // 3. Switch to 3D tab
-        document.querySelector('[data-tab="3d"]').click();
+        document.querySelector(`[data-tab="${needsReview ? "2d" : "3d"}"]`)?.click();
         updateAreaSummary();
+        if (needsReview) {
+            showMessage(`Needs review before 3D: ${(sceneMeta.reviewIssues || []).join(" ") || "Check the scale and 2D detections."}`, "warning");
+        }
         if (typeof switchSidebarTab === "function") {
             switchSidebarTab("review");
         }
@@ -1629,7 +2207,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // 2D AI Segmentation Canvas Renderer
     // -------------------------------------------------------------
     function render2DSegmentationCanvas() {
-        if (!loadedImageElement) return;
+        if (!loadedImageElement || !segmentationCanvas || !segCtx) return;
 
         const img = loadedImageElement;
         segmentationCanvas.width = img.naturalWidth || 800;
@@ -1644,16 +2222,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const selectedLevel = levelFilter.value === "all" ? null : Number(levelFilter.value);
         const overlayLevel = selectedLevel ?? (floorPlanImages.length > 1 ? 0 : null);
-        const levelInfo = (currentSceneData.meta.levels || []).find(level => Number(level.level ?? level.floorIndex) === (overlayLevel ?? 0));
-        const mpp = Number(levelInfo?.metersPerPixel) || Number(currentSceneData.meta.metersPerPixel) || 0.02;
+        const drawScale = scaleForLevel(selectedLevel ?? overlayLevel ?? 0);
+        if (drawScale && drawScale > 0 && overlayScale) overlayScale.textContent = `Scale: ${drawScale.toFixed(4)} m/px`;
         const belongsToSelectedLevel = item => selectedLevel === null
             ? (overlayLevel === null || (Number(item.level ?? item.floorIndex) || 0) === overlayLevel)
             : (Number(item.level ?? item.floorIndex) || 0) === selectedLevel;
-        const sourcePoint = (item, point) => {
-            const level = (currentSceneData.meta.levels || []).find(entry => Number(entry.level ?? entry.floorIndex) === (Number(item.level ?? item.floorIndex) || 0));
-            const offset = level?.planOffset || [0, 0];
-            return [point[0] - (Number(offset[0]) || 0), point[1] - (Number(offset[1]) || 0)];
-        };
+        const sourcePoint = (item, point) => scenePointToSourcePixels(item, point);
 
         // Draw Room Polygons
         (currentSceneData.rooms || []).filter(belongsToSelectedLevel).forEach(room => {
@@ -1662,24 +2236,34 @@ document.addEventListener("DOMContentLoaded", () => {
 
             segCtx.beginPath();
             const firstPoint = sourcePoint(room, poly[0]);
-            segCtx.moveTo(firstPoint[0] / mpp, firstPoint[1] / mpp);
+            segCtx.moveTo(firstPoint[0], firstPoint[1]);
             for (let i = 1; i < poly.length; i++) {
                 const point = sourcePoint(room, poly[i]);
-                segCtx.lineTo(point[0] / mpp, point[1] / mpp);
+                segCtx.lineTo(point[0], point[1]);
             }
             segCtx.closePath();
+            (room.holes || []).forEach(hole => {
+                if (!Array.isArray(hole) || hole.length < 3) return;
+                const firstHolePoint = sourcePoint(room, hole[0]);
+                segCtx.moveTo(firstHolePoint[0], firstHolePoint[1]);
+                hole.slice(1).forEach(point => {
+                    const source = sourcePoint(room, point);
+                    segCtx.lineTo(source[0], source[1]);
+                });
+                segCtx.closePath();
+            });
 
             // Fill color matching room type
             segCtx.fillStyle = getRoomTypeCanvasColor(room.type);
-            segCtx.fill();
+            segCtx.fill("evenodd");
             segCtx.strokeStyle = "#121212";
             segCtx.lineWidth = 3;
             segCtx.stroke();
 
             // Draw a square paper label with an ink outline.
-            const [centroidX, centroidY] = sourcePoint(room, roomCentroid(room));
-            const cx = centroidX / mpp;
-            const cy = centroidY / mpp;
+            const [centroidX, centroidY] = sourcePoint(room, room.centroid || roomCentroid(room));
+            const cx = centroidX;
+            const cy = centroidY;
 
             segCtx.fillStyle = "#F0F0F0";
             segCtx.fillRect(cx - 50, cy - 14, 100, 24);
@@ -1697,8 +2281,9 @@ document.addEventListener("DOMContentLoaded", () => {
             if (room) {
                 const radius = Math.max(6, Math.min(11, segmentationCanvas.width / 100));
                 room.polygon.forEach((point, index) => {
-                    const x = point[0] / mpp;
-                    const y = point[1] / mpp;
+                    const [sourceX, sourceY] = sourcePoint(room, point);
+                    const x = sourceX;
+                    const y = sourceY;
                     segCtx.beginPath();
                     segCtx.arc(x, y, radius, 0, Math.PI * 2);
                     segCtx.fillStyle = index === polygonEditDragIndex ? "#D02020" : "#00A6C7";
@@ -1718,11 +2303,11 @@ document.addEventListener("DOMContentLoaded", () => {
         // Draw Doors
         (currentSceneData.doors || []).filter(belongsToSelectedLevel).forEach(door => {
             const [sourceX, sourceY] = sourcePoint(door, door.center || [0, 0]);
-            const cx = sourceX / mpp;
-            const cy = sourceY / mpp;
-            const w = (door.width || 0.9) / mpp;
+            const cx = sourceX;
+            const cy = sourceY;
+            const w = (door.width || 0.9) / scaleForLevel(entityFloorIndex(door));
 
-            segCtx.strokeStyle = "#D02020";
+            segCtx.strokeStyle = selectedOpening?.kind === "door" && selectedOpening.id === door.id ? "#f0a020" : "#D02020";
             segCtx.lineWidth = 4;
             segCtx.beginPath();
             segCtx.arc(cx, cy, w / 2, 0, Math.PI * 2);
@@ -1732,17 +2317,38 @@ document.addEventListener("DOMContentLoaded", () => {
         // Draw Windows
         (currentSceneData.windows || []).filter(belongsToSelectedLevel).forEach(win => {
             const [sourceX, sourceY] = sourcePoint(win, win.center || [0, 0]);
-            const cx = sourceX / mpp;
-            const cy = sourceY / mpp;
-            const w = (win.width || 1.2) / mpp;
+            const cx = sourceX;
+            const cy = sourceY;
+            const w = (win.width || 1.2) / scaleForLevel(entityFloorIndex(win));
 
-            segCtx.strokeStyle = "#1040C0";
+            segCtx.strokeStyle = selectedOpening?.kind === "window" && selectedOpening.id === win.id ? "#f0a020" : "#1040C0";
             segCtx.lineWidth = 4;
             segCtx.beginPath();
             segCtx.moveTo(cx - w / 2, cy);
             segCtx.lineTo(cx + w / 2, cy);
             segCtx.stroke();
         });
+
+        // Rejected detector candidates stay visible as red crosses so they can
+        // be compared to the source plan; the review checklist explains why.
+        (currentSceneData.meta?.openingDiagnostics || [])
+            .filter(item => item && item.accepted === false && item.pixelCenter
+                && (selectedLevel === null || entityFloorIndex(item) === selectedLevel))
+            .slice(0, 80)
+            .forEach(item => {
+                const x = Number(item.pixelCenter[0]);
+                const y = Number(item.pixelCenter[1]);
+                if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+                const size = Math.max(5, Math.min(12, segmentationCanvas.width / 100));
+                segCtx.strokeStyle = "#D02020";
+                segCtx.lineWidth = Math.max(2, size / 4);
+                segCtx.beginPath();
+                segCtx.moveTo(x - size, y - size);
+                segCtx.lineTo(x + size, y + size);
+                segCtx.moveTo(x + size, y - size);
+                segCtx.lineTo(x - size, y + size);
+                segCtx.stroke();
+            });
 
         scaleCalibrationPoints.forEach((point, index) => {
             segCtx.fillStyle = "#D02020";
@@ -1796,7 +2402,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Calculate approximate area in sq meters
         const poly = room.polygon || [];
-        const area = polygonArea(poly);
+        const area = roomArea(room);
         const sqft = area * 10.7639;
         inspectorArea.textContent = `${area.toFixed(1)} m² (${sqft.toFixed(0)} sq ft)`;
         inspectorPoints.textContent = `${poly.length} Vertices`;
@@ -1824,7 +2430,7 @@ document.addEventListener("DOMContentLoaded", () => {
         [editRoomName, editRoomType, btnSaveRoomEdit, btnDeleteRoom, btnEditBoundary].forEach(control => { if (control) control.disabled = false; });
     };
 
-    btnSaveRoomEdit.addEventListener("click", () => {
+    if (btnSaveRoomEdit) btnSaveRoomEdit.addEventListener("click", () => {
         const room = (currentSceneData?.rooms || []).find(item => item.id === selectedRoomId);
         const name = editRoomName.value.trim();
         if (!room || !name) {
@@ -1837,22 +2443,22 @@ document.addEventListener("DOMContentLoaded", () => {
         showMessage("Room edit saved to the scene. Export scene.json or GLB to keep it.");
     });
 
-    btnDeleteRoom.addEventListener("click", () => {
+    if (btnDeleteRoom) btnDeleteRoom.addEventListener("click", () => {
         if (!currentSceneData || !selectedRoomId) return;
         const deletedId = selectedRoomId;
-        currentSceneData.rooms = currentSceneData.rooms.filter(room => room.id !== deletedId);
-        currentSceneData.doors = (currentSceneData.doors || []).map(door => ({
+        const candidate = JSON.parse(JSON.stringify(currentSceneData));
+        candidate.rooms = candidate.rooms.filter(room => room.id !== deletedId);
+        candidate.doors = (candidate.doors || []).map(door => ({
             ...door,
             connects: (door.connects || []).filter(roomId => roomId !== deletedId),
         })).filter(door => (door.connects || []).length > 0);
-        refreshEditedScene();
-        showMessage("Room removed from the scene. Export scene.json or GLB to keep the edit.", "warning");
+        rebuildEditedGeometry(candidate, "Room removed and wall geometry rebuilt locally.");
     });
 
     // -------------------------------------------------------------
     // Copy & Download scene.json
     // -------------------------------------------------------------
-    btnCopyJson.addEventListener("click", () => {
+    if (btnCopyJson) btnCopyJson.addEventListener("click", () => {
         if (!currentSceneData) return;
         navigator.clipboard.writeText(JSON.stringify(currentSceneData, null, 2))
             .then(() => {
@@ -1863,7 +2469,7 @@ document.addEventListener("DOMContentLoaded", () => {
             .catch(err => alert("Copy failed: " + err));
     });
 
-    btnDownloadJson.addEventListener("click", () => {
+    if (btnDownloadJson) btnDownloadJson.addEventListener("click", () => {
         if (!currentSceneData) return;
         const jsonStr = JSON.stringify(currentSceneData, null, 2);
         const blob = new Blob([jsonStr], { type: "application/json" });
