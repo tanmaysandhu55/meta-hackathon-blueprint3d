@@ -337,9 +337,7 @@ document.addEventListener("DOMContentLoaded", () => {
         };
         let label = messages[mode] || messages.LOCAL;
         if (mode === "DEMO" && meta?.preparedSample) {
-            label = String(meta?.labeling || "").toLowerCase() === "muse"
-                ? "MUSE-LABELED · SAVED SCENE"
-                : "SAVED SCENE · LOCAL GEOMETRY";
+            label = "PREBUILT SAMPLE · NO LIVE CALL";
         } else if (meta && mode !== "MOCK" && mode !== "DEMO") {
             const segmentation = String(meta.segmentation || "").toLowerCase();
             if (segmentation.includes("sam-3.1")) {
@@ -356,9 +354,7 @@ document.addEventListener("DOMContentLoaded", () => {
         processingModeBadge.title = mode === "MOCK"
             ? "Prepared mock data. The uploaded floor plan was not analyzed."
             : mode === "DEMO" && meta?.preparedSample
-                ? String(meta?.labeling || "").toLowerCase() === "muse"
-                    ? "This saved scene contains room labels generated earlier by Meta Muse Spark. Its geometry is stored with the sample; loading it makes no new model call. Check Review for remaining items."
-                    : "This saved scene uses stored geometry and local labels. Loading it makes no model call. Check Review for remaining items."
+                ? "This prepared scene uses saved geometry and labels. Loading it does not call Meta models. Check Review for remaining items."
             : mode === "DEMO"
                 ? "Curated sample scene with stored geometry and labels; loading it does not run a model."
                 : meta?.segmentation?.toLowerCase?.().includes("sam-3.1")
@@ -540,6 +536,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const doors = currentSceneData.doors || [];
         const windows = currentSceneData.windows || [];
         const warnings = Array.isArray(meta.warnings) ? meta.warnings : [];
+        const isPreparedSample = Boolean(meta.preparedSample);
         const genericLabel = label => /^room\s+\w+$/i.test(String(label || "").trim());
         const namedRoomCount = rooms.filter(room => room.confidence > 0 && !genericLabel(room.label)).length;
         const scaleMethod = String(meta.scaleMethod || "");
@@ -559,14 +556,23 @@ document.addEventListener("DOMContentLoaded", () => {
             { state: namedRoomCount === rooms.length && rooms.length > 0 ? "ok" : "review", label: "Room labels", detail: `${namedRoomCount} of ${rooms.length} have non-generic labels.` },
         ];
         const openingCounts = meta.openingCounts || {};
+        if (isPreparedSample) {
+            rows.push({
+                state: "info",
+                label: "Prepared sample",
+                detail: "Saved scene data loaded; no model API was called for this load.",
+            });
+        }
         if (Number(openingCounts.doorsDetected) || Number(openingCounts.windowsDetected)) {
             rows.push({
                 state: Number(openingCounts.dropped) ? "review" : "ok",
                 label: "Opening checks",
-                detail: `Doors ${openingCounts.doorsKept ?? doors.length}/${openingCounts.doorsDetected ?? doors.length}; windows ${openingCounts.windowsKept ?? windows.length}/${openingCounts.windowsDetected ?? windows.length}; ${openingCounts.dropped || 0} dropped.`,
+                detail: isPreparedSample
+                    ? `${doors.length} saved doors and ${windows.length} saved windows are available; inspect the 2D overlay for alignment.`
+                    : `Doors ${openingCounts.doorsKept ?? doors.length}/${openingCounts.doorsDetected ?? doors.length}; windows ${openingCounts.windowsKept ?? windows.length}/${openingCounts.windowsDetected ?? windows.length}; ${openingCounts.dropped || 0} dropped.`,
             });
         }
-        const rejectedOpenings = (meta.openingDiagnostics || []).filter(item => item && item.accepted === false);
+        const rejectedOpenings = isPreparedSample ? [] : (meta.openingDiagnostics || []).filter(item => item && item.accepted === false);
         if (rejectedOpenings.length) {
             const byReason = new Map();
             rejectedOpenings.forEach(item => {
@@ -584,7 +590,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (meta.needsReview) {
             rows.unshift({ state: "review", label: "Needs review", detail: (meta.reviewIssues || []).join(" ") || "Quality checks failed; inspect the 2D overlay before viewing 3D." });
         }
-        (meta.samConcepts || []).forEach(item => {
+        (isPreparedSample ? [] : (meta.samConcepts || [])).forEach(item => {
             const status = String(item.status || "UNKNOWN").toUpperCase();
             rows.push({
                 state: status === "OK" ? "ok" : status === "NOT RUN" ? "info" : "review",
@@ -643,9 +649,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
                 row.title = `${item.label}: ${item.detail}`;
                 const marker = document.createElement("span");
-                marker.className = item.state === "ok" ? "mono-check text-[var(--ink)]" : "mono-check text-[var(--pigment)]";
-                marker.textContent = item.state === "ok" ? "OK" : "!";
-                marker.setAttribute("aria-label", item.state === "ok" ? "Checked" : "Review");
+                marker.className = item.state === "review"
+                    ? "mono-check text-[var(--pigment)]"
+                    : "mono-check text-[var(--ink)]";
+                marker.textContent = item.state === "review" ? "!" : item.state === "info" ? "i" : "OK";
+                marker.setAttribute("aria-label", item.state === "review" ? "Review" : item.state === "info" ? "Information" : "Checked");
                 const text = document.createElement("span");
                 text.className = "min-w-0 whitespace-normal break-words text-[var(--secondary-ink)]";
                 text.textContent = `${item.label}: ${item.detail}`;
@@ -655,17 +663,24 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         if (mapQualityWarnings) {
             mapQualityWarnings.replaceChildren();
-            const warningItems = warnings.length ? warnings : ["No pipeline warnings recorded."];
+            const sampleWarnings = isPreparedSample
+                ? warnings.filter(warning => !/SAM (?:was not run|failed)|local OpenCV handled|OpenCV fallback|\bdropped\b/i.test(String(warning)))
+                : warnings;
+            const warningItems = sampleWarnings.length ? sampleWarnings : [
+                isPreparedSample
+                    ? "Prepared sample: stored scene data is shown; no model call was made while loading it."
+                    : "No pipeline warnings recorded.",
+            ];
             warningItems.forEach(warning => {
                 const row = document.createElement("li");
-                row.className = "flex items-center gap-2 text-[12.5px] truncate cursor-default";
+                row.className = "flex items-start gap-2 text-[12.5px] cursor-default";
                 row.title = String(warning);
                 const marker = document.createElement("span");
-                marker.className = warnings.length ? "mono-check text-[var(--pigment)]" : "mono-check text-[var(--ink)]";
-                marker.textContent = warnings.length ? "!" : "OK";
-                marker.setAttribute("aria-label", warnings.length ? "Warning" : "Checked");
+                marker.className = sampleWarnings.length ? "mono-check text-[var(--pigment)]" : "mono-check text-[var(--ink)]";
+                marker.textContent = sampleWarnings.length ? "!" : "OK";
+                marker.setAttribute("aria-label", sampleWarnings.length ? "Warning" : "Checked");
                 const text = document.createElement("span");
-                text.className = "truncate text-[var(--secondary-ink)]";
+                text.className = "min-w-0 whitespace-normal break-words text-[var(--secondary-ink)]";
                 text.textContent = String(warning);
                 row.append(marker, text);
                 mapQualityWarnings.appendChild(row);
@@ -2190,6 +2205,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const sceneMeta = currentSceneData.meta || {};
         const needsReview = Boolean(sceneMeta.needsReview);
         const isSavedSample = Boolean(sceneMeta.preparedSample);
+        document.querySelector('[data-tab="json"]')?.classList.toggle("hidden", isSavedSample);
         setProcessingBadge(sceneMeta.processingMode || "", sceneMeta);
         currentOverlays = data.overlays;
         const sceneWallHeight = Number(currentSceneData.meta.wallHeight);
