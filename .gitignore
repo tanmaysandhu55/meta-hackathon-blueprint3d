@@ -28,3 +28,6 @@ Thumbs.db
 .vscode/
 .idea/
 *.log
+
+samples/eval/hard/
+samples/eval/private/

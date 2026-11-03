@@ -1,22 +1,10 @@
 {
-  "sample_floorplan.png": {
-    "floors": 1,
-    "rooms": 6,
-    "area_m2": 175.0,
-    "floor_count": 1
-  },
-  "generated_meta_floorplan.png": {
-    "floors": 1,
-    "rooms": 5,
-    "area_m2": 421.7,
-    "floor_count": 1
-  },
-  "test_2story_muse_draft.png": {
-    "floors": 2,
-    "rooms": 10,
-    "area_m2": 420,
-    "floor_count": 2,
-    "split_orientation": "vertical",
-    "split_positions": [0.5]
-  }
+  "sample_floorplan.png": {"floors": 1, "rooms": 6, "area_m2": 175.0, "floor_count": 1, "image": "samples/sample_floorplan.png"},
+  "generated_meta_floorplan.png": {"floors": 1, "rooms": 5, "area_m2": 421.7, "floor_count": 1},
+  "c1_apartment.jpg": {"floors": 1, "rooms": 10, "floor_count": 1},
+  "upstairs_bedrooms.png": {"floors": 1, "rooms": 5, "floor_count": 1},
+  "plan_30x50.jpg": {"floors": 1, "rooms": 8, "floor_count": 1, "known_size_m": [9.1, 15.2]},
+  "lounge_14700.jpg": {"floors": 1, "rooms": 8, "floor_count": 1, "known_size_m": [14.7, null]},
+  "three_bed_7000.jpg": {"floors": 1, "rooms": 8, "floor_count": 1, "known_size_m": [7.0, 11.7]},
+  "two_plans_test.png": {"floors": 2, "rooms": 11, "floor_count": 2, "split_orientation": "vertical", "split_positions": [0.5]}
 }
