@@ -255,7 +255,7 @@ def get_multi_story_sample_scene_json(floor_count):
             # vertical route graph links matching stair rooms on every level.
             stairs["connectsTo"] = (
                 f"r7_l{level + 2}" if level < floor_count - 1
-                else f"r7_l{level}"
+                else ("r7" if level == 1 else f"r7_l{level}")
             )
 
     return scene
