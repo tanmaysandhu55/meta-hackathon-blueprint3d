@@ -766,9 +766,8 @@ class FloorPlanViewer {
 
     syncFloorSpacing() {
         if (!this.currentSceneData?.meta) return;
-        // The story-to-story spacing includes wall height plus the separating slab thickness (0.2m).
-        const slabThickness = Number(this.currentSceneData.meta.slabThickness) || 0.2;
-        this.floorHeight = this.wallHeight + slabThickness;
+        // Keep every story on the same X/Z footprint and stack at exactly one wall height.
+        this.floorHeight = this.wallHeight;
         this.currentSceneData.meta.floorHeight = this.floorHeight;
         const metaLevels = Array.isArray(this.currentSceneData.meta.levels) ? this.currentSceneData.meta.levels : [];
         metaLevels.forEach(level => {

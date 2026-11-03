@@ -160,11 +160,12 @@ def get_multi_story_sample_scene_json(floor_count):
 
     base_scene = get_sample_scene_json()
     scene = copy.deepcopy(base_scene)
-    floor_height = 3.2
+    floor_height = float(scene["meta"].get("wallHeight", 3.0))
     scene["meta"].update({
         "source": f"{floor_count}_story_sample_floorplan.png",
         "levelCount": floor_count,
         "floorHeight": floor_height,
+        "sampleLabel": f"{floor_count}-story prepared building",
         "levels": [
             {"level": level, "name": "Ground Floor" if level == 0 else f"Floor {level + 1}",
              "elevation": round(level * floor_height, 2)}
@@ -195,23 +196,6 @@ def get_multi_story_sample_scene_json(floor_count):
             "r7": ("stairs", "Central Stair Core"),
         },
     }
-    # Each upper floor keeps the same vertical stair core but changes its
-    # footprint scale and orientation, so the stacked building has visibly
-    # different floor plates instead of four identical copies.
-    floor_transforms = {
-        1: (0.78, math.pi / 2),
-        2: (0.86, 0.0),
-        3: (0.72, math.pi),
-    }
-    stair_anchor = (13.7, 9.1)
-
-    def transform_point(point, level):
-        scale, angle = floor_transforms.get(level, (1.0, 0.0))
-        dx, dy = float(point[0]) - stair_anchor[0], float(point[1]) - stair_anchor[1]
-        cosine, sine = math.cos(angle), math.sin(angle)
-        return [round(stair_anchor[0] + scale * (dx * cosine - dy * sine), 3),
-                round(stair_anchor[1] + scale * (dx * sine + dy * cosine), 3)]
-
     for collection in ("rooms", "walls", "doors", "windows"):
         originals = base_scene.get(collection, [])
         expanded = []
@@ -222,17 +206,6 @@ def get_multi_story_sample_scene_json(floor_count):
                 item["id"] = original_id if level == 0 else f"{original_id}_l{level + 1}"
                 item["level"] = level
                 item["floorIndex"] = level
-                if level > 0:
-                    scale, angle = floor_transforms[level]
-                    if collection in {"rooms", "walls"}:
-                        item["polygon"] = [transform_point(point, level) for point in source_item.get("polygon", [])]
-                        item["holes"] = [[transform_point(point, level) for point in hole]
-                                          for hole in source_item.get("holes", [])]
-                    elif collection in {"doors", "windows"}:
-                        item["center"] = transform_point(source_item["center"], level)
-                        item["width"] = round(float(source_item["width"]) * scale, 3)
-                        if "rotation" in item:
-                            item["rotation"] = float(item["rotation"]) + angle
                 if collection == "rooms" and level > 0:
                     labels = upper_room_labels if level == 1 else floor_room_labels.get(level, {})
                     item["type"], item["label"] = labels.get(
