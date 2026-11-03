@@ -337,7 +337,7 @@ document.addEventListener("DOMContentLoaded", () => {
         };
         let label = messages[mode] || messages.LOCAL;
         if (mode === "DEMO" && meta?.preparedSample) {
-            label = "PREBUILT SAMPLE · NO LIVE CALL";
+            label = "META SAM 3.1 + MUSE SPARK (CACHED)";
         } else if (meta && mode !== "MOCK" && mode !== "DEMO") {
             const segmentation = String(meta.segmentation || "").toLowerCase();
             if (segmentation.includes("sam-3.1")) {
