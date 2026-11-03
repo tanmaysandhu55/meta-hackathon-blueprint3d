@@ -8,6 +8,7 @@ their partner-cloud API keys.
 import os
 import copy
 import json
+import math
 
 
 def generate_sample_floorplan_image(output_path=None):
@@ -148,14 +149,26 @@ def get_sample_scene_json():
 
 def get_two_story_sample_scene_json():
     """Return the prepared sample plan duplicated as a stacked two-story building."""
-    scene = copy.deepcopy(get_sample_scene_json())
+    return get_multi_story_sample_scene_json(2)
+
+
+def get_multi_story_sample_scene_json(floor_count):
+    """Return a prepared stacked building with the requested number of stories."""
+    floor_count = int(floor_count)
+    if floor_count < 2 or floor_count > 4:
+        raise ValueError("Prepared multi-story samples support 2 to 4 floors.")
+
+    base_scene = get_sample_scene_json()
+    scene = copy.deepcopy(base_scene)
+    floor_height = 3.2
     scene["meta"].update({
-        "source": "two_story_sample_floorplan.png",
-        "levelCount": 2,
-        "floorHeight": 3.2,
+        "source": f"{floor_count}_story_sample_floorplan.png",
+        "levelCount": floor_count,
+        "floorHeight": floor_height,
         "levels": [
-            {"level": 0, "name": "Ground Floor", "elevation": 0.0},
-            {"level": 1, "name": "Second Floor", "elevation": 3.2},
+            {"level": level, "name": "Ground Floor" if level == 0 else f"Floor {level + 1}",
+             "elevation": round(level * floor_height, 2)}
+            for level in range(floor_count)
         ],
     })
 
@@ -168,25 +181,82 @@ def get_two_story_sample_scene_json():
         "r6": ("entrance", "North Lobby"),
         "r7": ("stairs", "Second Floor Stairs"),
     }
+    floor_room_labels = {
+        2: {
+            "r1": ("library", "Quiet Study Library"), "r2": ("lab", "Prototype Lab"),
+            "r3": ("corridor", "North-South Gallery"), "r4": ("office", "Project Offices"),
+            "r5": ("classroom", "Seminar Room"), "r6": ("entrance", "Sky Lobby"),
+            "r7": ("stairs", "Central Stair Core"),
+        },
+        3: {
+            "r1": ("classroom", "Learning Studio"), "r2": ("library", "Resource Library"),
+            "r3": ("corridor", "Learning Commons"), "r4": ("restroom", "Family Restroom"),
+            "r5": ("office", "Faculty Suite"), "r6": ("lab", "Materials Lab"),
+            "r7": ("stairs", "Central Stair Core"),
+        },
+    }
+    # Each upper floor keeps the same vertical stair core but changes its
+    # footprint scale and orientation, so the stacked building has visibly
+    # different floor plates instead of four identical copies.
+    floor_transforms = {
+        1: (0.78, math.pi / 2),
+        2: (0.86, 0.0),
+        3: (0.72, math.pi),
+    }
+    stair_anchor = (13.7, 9.1)
+
+    def transform_point(point, level):
+        scale, angle = floor_transforms.get(level, (1.0, 0.0))
+        dx, dy = float(point[0]) - stair_anchor[0], float(point[1]) - stair_anchor[1]
+        cosine, sine = math.cos(angle), math.sin(angle)
+        return [round(stair_anchor[0] + scale * (dx * cosine - dy * sine), 3),
+                round(stair_anchor[1] + scale * (dx * sine + dy * cosine), 3)]
 
     for collection in ("rooms", "walls", "doors", "windows"):
-        for item in list(scene.get(collection, [])):
-            item["level"] = 0
-            upper = copy.deepcopy(item)
-            upper["id"] = f"{item['id']}_l2"
-            upper["level"] = 1
-            if collection == "rooms":
-                upper["type"], upper["label"] = upper_room_labels[item["id"]]
-            elif collection == "doors":
-                upper["connects"] = [f"{room_id}_l2" if room_id != "outside" else room_id
-                                     for room_id in item.get("connects", [])]
-            scene[collection].append(upper)
+        originals = base_scene.get(collection, [])
+        expanded = []
+        for level in range(floor_count):
+            for source_item in originals:
+                item = copy.deepcopy(source_item)
+                original_id = source_item["id"]
+                item["id"] = original_id if level == 0 else f"{original_id}_l{level + 1}"
+                item["level"] = level
+                item["floorIndex"] = level
+                if level > 0:
+                    scale, angle = floor_transforms[level]
+                    if collection in {"rooms", "walls"}:
+                        item["polygon"] = [transform_point(point, level) for point in source_item.get("polygon", [])]
+                        item["holes"] = [[transform_point(point, level) for point in hole]
+                                          for hole in source_item.get("holes", [])]
+                    elif collection in {"doors", "windows"}:
+                        item["center"] = transform_point(source_item["center"], level)
+                        item["width"] = round(float(source_item["width"]) * scale, 3)
+                        if "rotation" in item:
+                            item["rotation"] = float(item["rotation"]) + angle
+                if collection == "rooms" and level > 0:
+                    labels = upper_room_labels if level == 1 else floor_room_labels.get(level, {})
+                    item["type"], item["label"] = labels.get(
+                        original_id,
+                        (source_item.get("type", "room"), f"Floor {level + 1} {source_item['label']}"),
+                    )
+                elif collection == "doors":
+                    item["connects"] = [
+                        f"{room_id}_l{level + 1}" if level > 0 and room_id != "outside" else room_id
+                        for room_id in source_item.get("connects", [])
+                    ]
+                expanded.append(item)
+        scene[collection] = expanded
 
-    lower_stairs = next((room for room in scene["rooms"] if room.get("id") == "r7"), None)
-    upper_stairs = next((room for room in scene["rooms"] if room.get("id") == "r7_l2"), None)
-    if lower_stairs and upper_stairs:
-        lower_stairs["connectsTo"] = upper_stairs["id"]
-        upper_stairs["connectsTo"] = lower_stairs["id"]
+    for level in range(floor_count):
+        stair_id = "r7" if level == 0 else f"r7_l{level + 1}"
+        stairs = next((room for room in scene["rooms"] if room.get("id") == stair_id), None)
+        if stairs:
+            # Keep the established scalar connectsTo contract. The viewer's
+            # vertical route graph links matching stair rooms on every level.
+            stairs["connectsTo"] = (
+                f"r7_l{level + 2}" if level < floor_count - 1
+                else f"r7_l{level}"
+            )
 
     return scene
 

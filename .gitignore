@@ -34,3 +34,5 @@ samples/eval/private/
 samples/eval/clean/c1_apartment.jpg
 samples/eval/clean/plan_30x50.jpg
 samples/eval/clean/two_plans_test.png
+samples/demo_plans/c1_apartment.*
+samples/demo_plans/generated_meta_floorplan.*

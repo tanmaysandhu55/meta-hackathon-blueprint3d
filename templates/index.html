@@ -394,6 +394,9 @@
                             <option value="" disabled selected>Samples...</option>
                             <option value="demo">Hackathon demo plan</option>
                             <option value="two-story">Two-story demo</option>
+                            <option value="two-plans">Two-plan, two-floor review</option>
+                            <option value="three-story">Three-story building</option>
+                            <option value="four-story">Four-story building</option>
                             <option value="evac">Preview egress connectivity</option>
                         </select>
                         <div class="relative">
@@ -734,7 +737,7 @@
                     </div>
 
                     <!-- Floating 3D Camera Controls -->
-                    <div class="flex shrink-0 items-center gap-1.5 text-xs">
+                    <div id="viewport-controls" class="flex shrink-0 items-center gap-1.5 text-xs">
                         <select id="level-filter" aria-label="Visible building stories" class="hidden max-w-36 px-2 py-1">
                             <option value="all">All Stories</option>
                         </select>
@@ -865,29 +868,29 @@
                         </div>
 
                         <!-- Emergency Evacuation Simulator Audit Card -->
-                        <div id="evacuation-card" class="absolute left-4 top-4 hidden p-3.5 text-xs z-20 space-y-2 w-80">
+                        <div id="evacuation-card" class="absolute left-4 top-4 hidden p-3.5 text-xs z-20 space-y-2 egress-card" aria-label="Egress connectivity summary">
                             <div class="flex items-center justify-between border-b border-hairline pb-1.5">
-                                <span class="mono-label">Egress Connectivity Preview</span>
+                                <span class="mono-label egress-card-title">Egress Connectivity Preview</span>
                                 <button id="btn-close-evacuation" type="button" class="text-xs px-2 py-0.5 flex items-center gap-1" aria-label="Stop egress preview"><svg class="ui-icon" width="12" height="12" aria-hidden="true"><use href="#icon-close"></use></svg><span>Stop</span></button>
                             </div>
-                            <div class="space-y-1 text-[11px]">
-                                <div class="flex justify-between">
+                            <div class="egress-summary text-[11px]">
+                                <div class="egress-summary-row">
                                     <span>Designated Exits:</span>
                                     <strong id="evac-exit-count" class="font-mono">2 Exits</strong>
                                 </div>
-                                <div class="flex justify-between">
+                                <div class="egress-summary-row">
                                     <span>Evacuation Routes:</span>
                                     <strong id="evac-room-count" class="font-mono">All Rooms Connected</strong>
                                 </div>
-                                <div class="flex justify-between">
+                                <div class="egress-summary-row">
                                     <span>Max Travel Distance:</span>
                                     <strong id="evac-max-dist" class="font-mono">13.6 m</strong>
                                 </div>
-                                <div class="flex justify-between">
+                                <div class="egress-summary-row">
                                     <span>Average Egress:</span>
                                     <strong id="evac-avg-dist" class="font-mono">8.4 m</strong>
                                 </div>
-                                <div class="flex justify-between border-t border-hairline pt-1">
+                                <div class="egress-summary-row egress-safety-row">
                                     <span>Safety / code assessment:</span>
                                     <strong id="evac-compliance" class="font-mono">Not assessed</strong>
                                 </div>

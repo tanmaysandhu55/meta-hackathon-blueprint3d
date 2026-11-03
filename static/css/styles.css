@@ -1665,3 +1665,48 @@ textarea.sidebar-input {
     bottom: 60px !important;
   }
 }
+
+/* Evacuation preview: keep the audit readable over the 3D canvas. */
+#app-view #evacuation-card.egress-card {
+  left: auto !important;
+  right: 16px !important;
+  width: 360px !important;
+  min-width: min(320px, calc(100vw - 32px)) !important;
+  max-width: calc(100% - 32px) !important;
+  max-height: calc(100% - 24px);
+  overflow: auto;
+  padding: 14px;
+  z-index: 35;
+  background: rgba(231, 227, 218, 0.97);
+  border: 1px solid var(--hairline-strong);
+}
+.egress-card > div:first-child { gap: 10px; }
+.egress-card-title { min-width: 0; line-height: 1.4; letter-spacing: 0.08em; }
+.egress-summary { display: grid; gap: 7px; }
+.egress-summary-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(max-content, 46%);
+  align-items: start;
+  gap: 12px;
+  line-height: 1.4;
+}
+.egress-summary-row > span,
+.egress-summary-row > strong { overflow-wrap: anywhere; }
+.egress-summary-row > strong { min-width: 0; text-align: right; }
+.egress-safety-row { border-top: 1px solid var(--hairline); padding-top: 7px; }
+.egress-card .mono-caption { line-height: 1.5; letter-spacing: 0.08em; }
+@media (max-width: 640px) {
+  #app-view #evacuation-card.egress-card {
+    top: 8px !important;
+    left: 8px !important;
+    right: auto !important;
+    width: min(340px, calc(100% - 16px)) !important;
+    min-width: 0 !important;
+    max-height: 45%;
+    font-size: 11px;
+  }
+  .egress-summary-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+  }
+}

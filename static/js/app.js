@@ -331,12 +331,16 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!processingModeBadge) return;
         const messages = {
             MOCK: "MOCK — PREPARED DATA",
-            DEMO: "PREPARED DEMO — NOT LIVE AI",
+            DEMO: "SAVED DEMO SCENE",
             READY: "SAM READY — NOT YET USED",
             LOCAL: "OPENCV ONLY",
         };
         let label = messages[mode] || messages.LOCAL;
-        if (meta && mode !== "MOCK" && mode !== "DEMO") {
+        if (mode === "DEMO" && meta?.preparedSample) {
+            label = String(meta?.labeling || "").toLowerCase() === "muse"
+                ? "MUSE-LABELED · SAVED SCENE"
+                : "SAVED SCENE · LOCAL GEOMETRY";
+        } else if (meta && mode !== "MOCK" && mode !== "DEMO") {
             const segmentation = String(meta.segmentation || "").toLowerCase();
             if (segmentation.includes("sam-3.1")) {
                 label = String(meta.labeling || "").toLowerCase() === "muse"
@@ -351,8 +355,12 @@ document.addEventListener("DOMContentLoaded", () => {
         processingModeBadge.textContent = label;
         processingModeBadge.title = mode === "MOCK"
             ? "Prepared mock data. The uploaded floor plan was not analyzed."
+            : mode === "DEMO" && meta?.preparedSample
+                ? String(meta?.labeling || "").toLowerCase() === "muse"
+                    ? "This saved scene contains room labels generated earlier by Meta Muse Spark. Its geometry is stored with the sample; loading it makes no new model call. Check Review for remaining items."
+                    : "This saved scene uses stored geometry and local labels. Loading it makes no model call. Check Review for remaining items."
             : mode === "DEMO"
-                ? "Prepared sample data, not a live provider result."
+                ? "Curated sample scene with stored geometry and labels; loading it does not run a model."
                 : meta?.segmentation?.toLowerCase?.().includes("sam-3.1")
                     ? "SAM masks contributed to the scene. Per-concept results and local fallbacks are listed in Review."
                     : String(meta?.labeling || "").toLowerCase() === "muse"
@@ -1855,6 +1863,8 @@ document.addEventListener("DOMContentLoaded", () => {
             });
 
             // If switching to 3D tab, trigger resize so Three.js renders correctly
+            const viewportControls = document.getElementById("viewport-controls");
+            if (viewportControls) viewportControls.classList.toggle("hidden", targetTab !== "3d");
             if (targetTab === "3d") {
                 viewer.onWindowResize();
             } else if (targetTab === "2d") {
@@ -2179,6 +2189,7 @@ document.addEventListener("DOMContentLoaded", () => {
         floorPlanImages = Array.isArray(data.floorImages) ? data.floorImages : [];
         const sceneMeta = currentSceneData.meta || {};
         const needsReview = Boolean(sceneMeta.needsReview);
+        const isSavedSample = Boolean(sceneMeta.preparedSample);
         setProcessingBadge(sceneMeta.processingMode || "", sceneMeta);
         currentOverlays = data.overlays;
         const sceneWallHeight = Number(currentSceneData.meta.wallHeight);
@@ -2223,8 +2234,9 @@ document.addEventListener("DOMContentLoaded", () => {
             render2DSegmentationCanvas();
         }
 
-        // Do not silently turn implausible extraction into a 3D building.
-        if (needsReview) {
+        // Saved review samples remain inspectable in 3D, with their review warning visible.
+        // Newly processed implausible uploads stay in 2D review until corrected.
+        if (needsReview && !isSavedSample) {
             viewer.clear();
             viewer.hideLoadingState();
         } else {
@@ -2238,7 +2250,7 @@ document.addEventListener("DOMContentLoaded", () => {
         jsonOutput.textContent = JSON.stringify(data.scene, null, 2);
 
         // 3. Switch to 3D tab
-        document.querySelector(`[data-tab="${needsReview ? "2d" : "3d"}"]`)?.click();
+        document.querySelector(`[data-tab="${needsReview && !isSavedSample ? "2d" : "3d"}"]`)?.click();
         updateAreaSummary();
         if (needsReview) {
             showMessage(`Needs review before 3D: ${(sceneMeta.reviewIssues || []).join(" ") || "Check the scale and 2D detections."}`, "warning");
@@ -2731,8 +2743,32 @@ document.addEventListener("DOMContentLoaded", () => {
                 btnLoadTwoStoryDemo.click();
             } else if (val === "evac" && btnSidebarEvac) {
                 btnSidebarEvac.click();
+            } else if (["two-plans", "three-story", "four-story"].includes(val)) {
+                loadPreparedPlan(val);
             }
         });
+    }
+
+    async function loadPreparedPlan(sampleId) {
+        try {
+            viewer.showLoadingState();
+            const response = await fetch(`/api/sample/${encodeURIComponent(sampleId)}`);
+            const data = await response.json();
+            if (!response.ok || !data.success) throw new Error(data.error || "Could not load this saved sample.");
+            handleProcessSuccess(data);
+            const usedMuseLabels = String(data.scene.meta?.labeling || "").toLowerCase() === "muse";
+            const provenance = usedMuseLabels
+                ? "Saved sample loaded with room labels previously generated by Meta Muse Spark. Loading it makes no new model call."
+                : "Saved sample loaded with its stored geometry and local labels. Loading it makes no model call.";
+            showMessage(data.scene.meta.needsReview
+                ? `${provenance} Review flagged geometry before relying on the 3D view.`
+                : provenance, data.scene.meta.needsReview ? "warning" : "info");
+        } catch (error) {
+            viewer.hideLoadingState();
+            showMessage(error.message || "Could not load this saved sample.", "error");
+        } finally {
+            if (sidebarSamplesSelect) sidebarSamplesSelect.value = "";
+        }
     }
 
     if (btnJudgeHelp && popoverJudgeWalkthrough) {

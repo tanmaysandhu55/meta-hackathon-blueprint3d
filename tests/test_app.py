@@ -275,6 +275,37 @@ def test_prepared_demos_load_without_provider_keys(client, monkeypatch, route, e
     assert len(payload["scene"]["meta"].get("levels", [{"level": 0}])) == expected_floors
 
 
+@pytest.mark.parametrize("sample_id, expected_rooms", [
+    ("two-plans", 13),
+    ("three-story", 21),
+    ("four-story", 28),
+])
+def test_saved_samples_load_without_provider_calls(client, monkeypatch, sample_id, expected_rooms):
+    monkeypatch.setenv("META_API_KEY", "")
+    monkeypatch.setenv("BASETEN_API_KEY", "")
+    monkeypatch.setenv("SAM_MODEL", "")
+    monkeypatch.setenv("BASETEN_MUSE_MODEL", "")
+
+    response = client.get(f"/api/sample/{sample_id}")
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["success"] is True
+    assert payload["demoMode"] is True
+    assert payload["scene"]["meta"]["processingMode"] == "DEMO"
+    assert payload["scene"]["meta"]["preparedSample"] is True
+    assert payload["scene"]["meta"]["liveInferenceAtLoad"] is False
+    assert len(payload["scene"]["rooms"]) == expected_rooms
+    assert payload["imageUrl"].startswith("data:image/")
+
+
+def test_saved_review_sample_rejects_unknown_id(client):
+    response = client.get("/api/sample/not-a-sample")
+
+    assert response.status_code == 404
+    assert response.get_json()["success"] is False
+
+
 def test_scene_job_serializes_numpy_geometry_values(client):
     scene = app_module.get_sample_scene_json()
     scene["doors"][0]["pixel_width"] = np.int32(44)

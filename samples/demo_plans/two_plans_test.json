@@ -1,0 +1,3432 @@
+{
+  "meta": {
+    "source": "two_plans_test.png",
+    "processingMode": "LIVE",
+    "segmentation": "opencv-heuristic",
+    "labeling": "muse",
+    "mock": false,
+    "imageSize": [
+      1775,
+      682
+    ],
+    "metersPerPixel": 0.0250874,
+    "scaleMethod": "combined estimate across user-selected floor crops",
+    "scaleSource": "typical-footprint-width",
+    "scaleConfidence": 0.35,
+    "needsReview": true,
+    "reviewIssues": [
+      "Room Room 1.7 is 1.4 m2; expected 1.5-300 m2.",
+      "17 of 28 detected openings were dropped; review the 2D detections.",
+      "Floor 2 footprint differs from the floor below by 22.9%; review story alignment."
+    ],
+    "openingCounts": {
+      "doorsDetected": 18,
+      "doorsKept": 6,
+      "windowsDetected": 10,
+      "windowsKept": 5,
+      "dropped": 17
+    },
+    "openingDiagnostics": [
+      {
+        "kind": "window",
+        "candidate": "pair-2-13",
+        "accepted": false,
+        "pixelCenter": [
+          649.5,
+          541.25
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 0
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-5-14",
+        "accepted": false,
+        "pixelCenter": [
+          319.25,
+          335.5
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 0
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-10-82",
+        "accepted": false,
+        "pixelCenter": [
+          638.75,
+          335.0
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 0
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-11-57",
+        "accepted": false,
+        "pixelCenter": [
+          421.25,
+          147.5
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 0
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-21-48",
+        "accepted": false,
+        "pixelCenter": [
+          507.0,
+          335.25
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 0
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-30-47",
+        "accepted": false,
+        "pixelCenter": [
+          365.5,
+          410.0
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 0
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-31-49",
+        "accepted": false,
+        "pixelCenter": [
+          209.0,
+          335.0
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 0
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-34-43",
+        "accepted": false,
+        "pixelCenter": [
+          869.0,
+          38.5
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 0
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-35-45",
+        "accepted": false,
+        "pixelCenter": [
+          454.75,
+          541.75
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 0
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-39-55",
+        "accepted": false,
+        "pixelCenter": [
+          331.0,
+          541.5
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 0
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-47-64",
+        "accepted": false,
+        "pixelCenter": [
+          362.75,
+          409.5
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 0
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-53-66",
+        "accepted": false,
+        "pixelCenter": [
+          314.25,
+          434.0
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 0
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-62-65",
+        "accepted": false,
+        "pixelCenter": [
+          188.25,
+          543.0
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 0
+      },
+      {
+        "kind": "door",
+        "candidate": "d1",
+        "accepted": true,
+        "pixelCenter": [
+          457.27,
+          565.89
+        ],
+        "reason": "single swing arc",
+        "openingType": "swing",
+        "floorIndex": 0
+      },
+      {
+        "kind": "door",
+        "candidate": "d2",
+        "accepted": true,
+        "pixelCenter": [
+          489.58,
+          349.93
+        ],
+        "reason": "single swing arc",
+        "openingType": "swing",
+        "floorIndex": 0
+      },
+      {
+        "kind": "door",
+        "candidate": "d3",
+        "accepted": true,
+        "pixelCenter": [
+          381.0,
+          335.0
+        ],
+        "reason": "wall gap with no swing arc or window lines",
+        "openingType": "open-doorway",
+        "floorIndex": 0
+      },
+      {
+        "kind": "door",
+        "candidate": "d4",
+        "accepted": true,
+        "pixelCenter": [
+          313.5,
+          484.0
+        ],
+        "reason": "wall gap with no swing arc or window lines",
+        "openingType": "open-doorway",
+        "floorIndex": 0
+      },
+      {
+        "kind": "door",
+        "candidate": "d1",
+        "accepted": false,
+        "pixelCenter": [
+          457.27,
+          565.89
+        ],
+        "reason": "estimated swing width 0.68 m is outside 0.7-1.2 m",
+        "floorIndex": 0
+      },
+      {
+        "kind": "door",
+        "candidate": "d2",
+        "accepted": false,
+        "pixelCenter": [
+          381.0,
+          335.0
+        ],
+        "reason": "nearest wall 21.6 px / 0.492 m; tolerance 18.0 px from wall thickness",
+        "floorIndex": 0
+      },
+      {
+        "kind": "door",
+        "candidate": "d3",
+        "accepted": false,
+        "pixelCenter": [
+          313.5,
+          484.0
+        ],
+        "reason": "nearest wall 27.3 px / 0.621 m; tolerance 18.0 px from wall thickness",
+        "floorIndex": 0
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-2-130",
+        "accepted": true,
+        "pixelCenter": [
+          1402.5,
+          535.5
+        ],
+        "reason": "paired thin lines align inside a solid wall band",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-5-55",
+        "accepted": false,
+        "pixelCenter": [
+          1565.25,
+          542.0
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-6-16",
+        "accepted": false,
+        "pixelCenter": [
+          1248.5,
+          176.75
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-7-35",
+        "accepted": false,
+        "pixelCenter": [
+          1542.0,
+          171.0
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-8-15",
+        "accepted": true,
+        "pixelCenter": [
+          1136.25,
+          488.5
+        ],
+        "reason": "paired thin lines align inside a solid wall band",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-9-22",
+        "accepted": false,
+        "pixelCenter": [
+          1627.75,
+          291.75
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-26-49",
+        "accepted": false,
+        "pixelCenter": [
+          1063.75,
+          403.0
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-28-157",
+        "accepted": true,
+        "pixelCenter": [
+          1384.0,
+          431.25
+        ],
+        "reason": "paired thin lines align inside a solid wall band",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-38-85",
+        "accepted": false,
+        "pixelCenter": [
+          1604.5,
+          400.0
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-45-103",
+        "accepted": false,
+        "pixelCenter": [
+          1058.5,
+          370.0
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-51-133",
+        "accepted": false,
+        "pixelCenter": [
+          1115.5,
+          225.0
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-56-143",
+        "accepted": true,
+        "pixelCenter": [
+          1339.25,
+          463.25
+        ],
+        "reason": "paired thin lines align inside a solid wall band",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-60-150",
+        "accepted": false,
+        "pixelCenter": [
+          1318.0,
+          204.5
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-64-73",
+        "accepted": true,
+        "pixelCenter": [
+          1410.5,
+          295.0
+        ],
+        "reason": "paired thin lines align inside a solid wall band",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-71-83",
+        "accepted": false,
+        "pixelCenter": [
+          1204.75,
+          359.0
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-92-147",
+        "accepted": false,
+        "pixelCenter": [
+          1002.25,
+          352.25
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-95-195",
+        "accepted": false,
+        "pixelCenter": [
+          1421.5,
+          540.75
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-101-153",
+        "accepted": false,
+        "pixelCenter": [
+          1237.0,
+          323.5
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-131-221",
+        "accepted": false,
+        "pixelCenter": [
+          909.75,
+          621.5
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-146-230",
+        "accepted": false,
+        "pixelCenter": [
+          1175.25,
+          484.5
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-153-169",
+        "accepted": false,
+        "pixelCenter": [
+          1234.0,
+          324.0
+        ],
+        "reason": "paired lines are outside a solid wall band",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-163-240",
+        "accepted": true,
+        "pixelCenter": [
+          1063.0,
+          522.75
+        ],
+        "reason": "paired thin lines align inside a solid wall band",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "pair-229-246",
+        "accepted": true,
+        "pixelCenter": [
+          1011.0,
+          389.75
+        ],
+        "reason": "paired thin lines align inside a solid wall band",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "d1",
+        "accepted": true,
+        "pixelCenter": [
+          1559.36,
+          495.54
+        ],
+        "reason": "single swing arc",
+        "openingType": "swing",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "d2",
+        "accepted": true,
+        "pixelCenter": [
+          1423.98,
+          438.85
+        ],
+        "reason": "single swing arc",
+        "openingType": "swing",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "d3",
+        "accepted": true,
+        "pixelCenter": [
+          1017.01,
+          415.67
+        ],
+        "reason": "single swing arc",
+        "openingType": "swing",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "d4",
+        "accepted": true,
+        "pixelCenter": [
+          1098.75,
+          372.49
+        ],
+        "reason": "single swing arc",
+        "openingType": "swing",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "d5",
+        "accepted": true,
+        "pixelCenter": [
+          1255.01,
+          317.69
+        ],
+        "reason": "single swing arc",
+        "openingType": "swing",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "d6",
+        "accepted": true,
+        "pixelCenter": [
+          1479.88,
+          172.0
+        ],
+        "reason": "wall gap with no swing arc or window lines",
+        "openingType": "open-doorway",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "d7",
+        "accepted": true,
+        "pixelCenter": [
+          1022.0,
+          225.0
+        ],
+        "reason": "wall gap with no swing arc or window lines",
+        "openingType": "open-doorway",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "d8",
+        "accepted": true,
+        "pixelCenter": [
+          1078.0,
+          225.0
+        ],
+        "reason": "wall gap with no swing arc or window lines",
+        "openingType": "open-doorway",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "d9",
+        "accepted": true,
+        "pixelCenter": [
+          1481.33,
+          391.0
+        ],
+        "reason": "wall gap with no swing arc or window lines",
+        "openingType": "open-doorway",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "d10",
+        "accepted": true,
+        "pixelCenter": [
+          1160.0,
+          393.0
+        ],
+        "reason": "wall gap with no swing arc or window lines",
+        "openingType": "open-doorway",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "d11",
+        "accepted": true,
+        "pixelCenter": [
+          1112.0,
+          445.5
+        ],
+        "reason": "wall gap with no swing arc or window lines",
+        "openingType": "open-doorway",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "d12",
+        "accepted": true,
+        "pixelCenter": [
+          1225.0,
+          531.5
+        ],
+        "reason": "wall gap with no swing arc or window lines",
+        "openingType": "open-doorway",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "d13",
+        "accepted": true,
+        "pixelCenter": [
+          1134.2,
+          420.0
+        ],
+        "reason": "wall gap with no swing arc or window lines",
+        "openingType": "open-doorway",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "d14",
+        "accepted": true,
+        "pixelCenter": [
+          1205.0,
+          352.0
+        ],
+        "reason": "wall gap with no swing arc or window lines",
+        "openingType": "open-doorway",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "d15",
+        "accepted": true,
+        "pixelCenter": [
+          1288.0,
+          506.5
+        ],
+        "reason": "wall gap with no swing arc or window lines",
+        "openingType": "open-doorway",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "d16",
+        "accepted": true,
+        "pixelCenter": [
+          1605.0,
+          430.0
+        ],
+        "reason": "wall gap with no swing arc or window lines",
+        "openingType": "open-doorway",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "d3",
+        "accepted": false,
+        "pixelCenter": [
+          1017.01,
+          415.67
+        ],
+        "reason": "estimated swing width 0.61 m is outside 0.7-1.2 m",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "s1_d1",
+        "accepted": false,
+        "pixelCenter": [
+          1559.36,
+          495.54
+        ],
+        "reason": "nearest wall 12.6 px / 0.347 m; tolerance 12.0 px from wall thickness",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "s1_d2",
+        "accepted": false,
+        "pixelCenter": [
+          1423.98,
+          438.85
+        ],
+        "reason": "nearest wall 62.1 px / 1.717 m; tolerance 12.0 px from wall thickness",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "s1_d3",
+        "accepted": false,
+        "pixelCenter": [
+          1098.75,
+          372.49
+        ],
+        "reason": "nearest wall 62.7 px / 1.733 m; tolerance 12.0 px from wall thickness",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "s1_d4",
+        "accepted": false,
+        "pixelCenter": [
+          1255.01,
+          317.69
+        ],
+        "reason": "nearest wall 46.3 px / 1.279 m; tolerance 12.0 px from wall thickness",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "s1_d8",
+        "accepted": false,
+        "pixelCenter": [
+          1481.33,
+          391.0
+        ],
+        "reason": "nearest wall 62.5 px / 1.727 m; tolerance 12.0 px from wall thickness",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "s1_d9",
+        "accepted": false,
+        "pixelCenter": [
+          1160.0,
+          393.0
+        ],
+        "reason": "nearest wall 109.1 px / 3.016 m; tolerance 12.0 px from wall thickness",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "s1_d10",
+        "accepted": false,
+        "pixelCenter": [
+          1112.0,
+          445.5
+        ],
+        "reason": "nearest wall 85.9 px / 2.373 m; tolerance 12.0 px from wall thickness",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "s1_d12",
+        "accepted": false,
+        "pixelCenter": [
+          1134.2,
+          420.0
+        ],
+        "reason": "nearest wall 111.4 px / 3.078 m; tolerance 12.0 px from wall thickness",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "s1_d13",
+        "accepted": false,
+        "pixelCenter": [
+          1205.0,
+          352.0
+        ],
+        "reason": "nearest wall 79.6 px / 2.201 m; tolerance 12.0 px from wall thickness",
+        "floorIndex": 1
+      },
+      {
+        "kind": "door",
+        "candidate": "s1_d14",
+        "accepted": false,
+        "pixelCenter": [
+          1288.0,
+          506.5
+        ],
+        "reason": "nearest wall 24.9 px / 0.687 m; tolerance 12.0 px from wall thickness",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "s1_win2",
+        "accepted": false,
+        "pixelCenter": [
+          1136.25,
+          488.5
+        ],
+        "reason": "nearest wall 42.9 px / 1.185 m; tolerance 12.0 px from wall thickness",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "s1_win3",
+        "accepted": false,
+        "pixelCenter": [
+          1384.0,
+          431.25
+        ],
+        "reason": "nearest wall 100.1 px / 2.767 m; tolerance 12.0 px from wall thickness",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "s1_win4",
+        "accepted": false,
+        "pixelCenter": [
+          1339.25,
+          463.25
+        ],
+        "reason": "nearest wall 68.1 px / 1.883 m; tolerance 12.0 px from wall thickness",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "s1_win5",
+        "accepted": false,
+        "pixelCenter": [
+          1410.5,
+          295.0
+        ],
+        "reason": "nearest wall 91.6 px / 2.531 m; tolerance 12.0 px from wall thickness",
+        "floorIndex": 1
+      },
+      {
+        "kind": "window",
+        "candidate": "s1_win7",
+        "accepted": false,
+        "pixelCenter": [
+          1011.0,
+          389.75
+        ],
+        "reason": "nearest wall 31.4 px / 0.868 m; tolerance 12.0 px from wall thickness",
+        "floorIndex": 1
+      }
+    ],
+    "samConcepts": [
+      {
+        "concept": "wall",
+        "floorIndex": 0,
+        "status": "NOT RUN",
+        "prompt": null,
+        "category": null,
+        "used": false
+      },
+      {
+        "concept": "window",
+        "floorIndex": 0,
+        "status": "NOT RUN",
+        "prompt": null,
+        "category": null,
+        "used": false
+      },
+      {
+        "concept": "room",
+        "floorIndex": 0,
+        "status": "NOT RUN",
+        "prompt": null,
+        "category": null,
+        "used": false
+      },
+      {
+        "concept": "door",
+        "floorIndex": 0,
+        "status": "NOT RUN",
+        "prompt": null,
+        "category": null,
+        "used": false
+      },
+      {
+        "concept": "window",
+        "floorIndex": 1,
+        "status": "NOT RUN",
+        "prompt": null,
+        "category": null,
+        "used": false
+      },
+      {
+        "concept": "room",
+        "floorIndex": 1,
+        "status": "NOT RUN",
+        "prompt": null,
+        "category": null,
+        "used": false
+      },
+      {
+        "concept": "wall",
+        "floorIndex": 1,
+        "status": "NOT RUN",
+        "prompt": null,
+        "category": null,
+        "used": false
+      },
+      {
+        "concept": "door",
+        "floorIndex": 1,
+        "status": "NOT RUN",
+        "prompt": null,
+        "category": null,
+        "used": false
+      }
+    ],
+    "wallHeight": 3.0,
+    "wallThickness": 0.2,
+    "wall_method": "orthogonal-mask-snapping, room-boundary-reconstruction",
+    "floorHeight": 3.2,
+    "slabThickness": 0.2,
+    "levelCount": 2,
+    "levels": [
+      {
+        "level": 0,
+        "floorIndex": 0,
+        "name": "Ground Floor",
+        "elevation": 0.0,
+        "metersPerPixel": 0.0250874,
+        "scaleSource": "typical-footprint-width",
+        "scaleConfidence": 0.35,
+        "planOffset": [
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "level": 1,
+        "floorIndex": 1,
+        "name": "Second Floor",
+        "elevation": 3.2,
+        "metersPerPixel": 0.0250874,
+        "scaleSource": "door-width",
+        "scaleConfidence": 0.7,
+        "planOffset": [
+          -22.152611,
+          0.239
+        ]
+      }
+    ],
+    "storyOffsets": [
+      {
+        "level": 0,
+        "dx": 0.0,
+        "dy": 0.0
+      },
+      {
+        "level": 1,
+        "dx": 0.125,
+        "dy": 0.239
+      }
+    ],
+    "warnings": [
+      "Local OpenCV heuristic segmentation was used; results are estimates best suited to clean, high-contrast plans.",
+      "User-selected split: processing 2 floor plans. Verify the divider positions and each floor in 2D review.",
+      "Door-based scale was not used: opening widths vary too much (coefficient of variation 2.83; limit 0.25).",
+      "Room outlines were recovered by closing wider door gaps; verify them in the 2D review before relying on the geometry.",
+      "Door d2 dropped (nearest wall 21.6 px / 0.492 m; tolerance 18.0 px from wall thickness).",
+      "Door d3 dropped (nearest wall 27.3 px / 0.621 m; tolerance 18.0 px from wall thickness).",
+      "Door-based scale was not used: opening widths vary too much (coefficient of variation 2.81; limit 0.25).",
+      "Muse room labeling timed out; generic room labels are shown.",
+      "Door s1_d1 dropped (nearest wall 12.6 px / 0.347 m; tolerance 12.0 px from wall thickness).",
+      "Door s1_d2 dropped (nearest wall 62.1 px / 1.717 m; tolerance 12.0 px from wall thickness).",
+      "Door s1_d3 dropped (nearest wall 62.7 px / 1.733 m; tolerance 12.0 px from wall thickness).",
+      "Door s1_d4 dropped (nearest wall 46.3 px / 1.279 m; tolerance 12.0 px from wall thickness).",
+      "Door s1_d8 dropped (nearest wall 62.5 px / 1.727 m; tolerance 12.0 px from wall thickness).",
+      "Door s1_d9 dropped (nearest wall 109.1 px / 3.016 m; tolerance 12.0 px from wall thickness).",
+      "Door s1_d10 dropped (nearest wall 85.9 px / 2.373 m; tolerance 12.0 px from wall thickness).",
+      "Door s1_d12 dropped (nearest wall 111.4 px / 3.078 m; tolerance 12.0 px from wall thickness).",
+      "Door s1_d13 dropped (nearest wall 79.6 px / 2.201 m; tolerance 12.0 px from wall thickness).",
+      "Door s1_d14 dropped (nearest wall 24.9 px / 0.687 m; tolerance 12.0 px from wall thickness).",
+      "Window s1_win2 dropped (nearest wall 42.9 px / 1.185 m; tolerance 12.0 px from wall thickness).",
+      "Window s1_win3 dropped (nearest wall 100.1 px / 2.767 m; tolerance 12.0 px from wall thickness).",
+      "Window s1_win4 dropped (nearest wall 68.1 px / 1.883 m; tolerance 12.0 px from wall thickness).",
+      "Window s1_win5 dropped (nearest wall 91.6 px / 2.531 m; tolerance 12.0 px from wall thickness).",
+      "Window s1_win7 dropped (nearest wall 31.4 px / 0.868 m; tolerance 12.0 px from wall thickness).",
+      "No verified stair/elevator alignment links floor 1 to floor 2. Check vertical access manually.",
+      "Room Room 1.7 is 1.4 m2; expected 1.5-300 m2.",
+      "17 of 28 detected openings were dropped; review the 2D detections.",
+      "Floor 2 footprint differs from the floor below by 22.9%; review story alignment.",
+      "Story footprint mismatch: Story 0 is 12.34x9.41 m, Story 1 is 16.01x10.18 m (diff exceeds 0.5 m)."
+    ]
+  },
+  "rooms": [
+    {
+      "id": "r1",
+      "type": "room",
+      "label": "Room G1",
+      "confidence": 0.92,
+      "polygon": [
+        [
+          4.39,
+          4.039
+        ],
+        [
+          4.39,
+          8.253
+        ],
+        [
+          8.831,
+          8.253
+        ],
+        [
+          9.031,
+          7.551
+        ],
+        [
+          9.357,
+          7.451
+        ],
+        [
+          9.357,
+          7.175
+        ],
+        [
+          9.834,
+          6.949
+        ],
+        [
+          10.361,
+          6.949
+        ],
+        [
+          10.361,
+          4.039
+        ]
+      ],
+      "holes": [],
+      "centroid": [
+        7.219,
+        6.044
+      ],
+      "area_m2": 23.59,
+      "floorIndex": 0,
+      "level": 0,
+      "floor": 0
+    },
+    {
+      "id": "r2",
+      "type": "room",
+      "label": "Room G2",
+      "confidence": 0.92,
+      "polygon": [
+        [
+          10.662,
+          4.039
+        ],
+        [
+          10.662,
+          6.925
+        ],
+        [
+          11.189,
+          6.925
+        ],
+        [
+          11.665,
+          7.2
+        ],
+        [
+          11.691,
+          7.4
+        ],
+        [
+          11.866,
+          7.4
+        ],
+        [
+          12.068,
+          7.702
+        ],
+        [
+          12.168,
+          8.253
+        ],
+        [
+          16.733,
+          8.253
+        ],
+        [
+          16.733,
+          4.039
+        ]
+      ],
+      "holes": [],
+      "centroid": [
+        13.855,
+        6.039
+      ],
+      "area_m2": 23.97,
+      "floorIndex": 0,
+      "level": 0,
+      "floor": 0
+    },
+    {
+      "id": "r3",
+      "type": "corridor",
+      "label": "Corridor",
+      "confidence": 0.88,
+      "polygon": [
+        [
+          12.418,
+          8.781
+        ],
+        [
+          11.917,
+          8.781
+        ],
+        [
+          11.842,
+          8.329
+        ],
+        [
+          10.211,
+          8.329
+        ],
+        [
+          10.211,
+          7.551
+        ],
+        [
+          9.131,
+          7.551
+        ],
+        [
+          8.805,
+          8.555
+        ],
+        [
+          5.318,
+          8.555
+        ],
+        [
+          5.318,
+          11.264
+        ],
+        [
+          7.727,
+          11.264
+        ],
+        [
+          7.727,
+          10.135
+        ],
+        [
+          10.512,
+          10.135
+        ],
+        [
+          10.612,
+          10.662
+        ],
+        [
+          11.616,
+          10.662
+        ],
+        [
+          11.866,
+          9.86
+        ],
+        [
+          12.418,
+          9.784
+        ]
+      ],
+      "holes": [],
+      "centroid": [
+        8.574,
+        9.508
+      ],
+      "area_m2": 15.85,
+      "floorIndex": 0,
+      "level": 0,
+      "floor": 0
+    },
+    {
+      "id": "r4",
+      "type": "room",
+      "label": "Room G4",
+      "confidence": 0.9,
+      "polygon": [
+        [
+          13.396,
+          8.555
+        ],
+        [
+          13.396,
+          8.982
+        ],
+        [
+          13.121,
+          9.457
+        ],
+        [
+          12.594,
+          9.834
+        ],
+        [
+          12.117,
+          9.909
+        ],
+        [
+          12.117,
+          13.447
+        ],
+        [
+          16.733,
+          13.447
+        ],
+        [
+          16.733,
+          8.555
+        ]
+      ],
+      "holes": [],
+      "centroid": [
+        14.539,
+        11.122
+      ],
+      "area_m2": 21.19,
+      "floorIndex": 0,
+      "level": 0,
+      "floor": 0
+    },
+    {
+      "id": "r5",
+      "type": "room",
+      "label": "Room G5",
+      "confidence": 0.8,
+      "polygon": [
+        [
+          4.39,
+          11.54
+        ],
+        [
+          4.39,
+          13.447
+        ],
+        [
+          7.074,
+          13.447
+        ],
+        [
+          7.074,
+          12.318
+        ],
+        [
+          6.849,
+          12.318
+        ],
+        [
+          6.648,
+          11.866
+        ],
+        [
+          6.648,
+          11.54
+        ]
+      ],
+      "holes": [],
+      "centroid": [
+        5.664,
+        12.529
+      ],
+      "area_m2": 4.83,
+      "floorIndex": 0,
+      "level": 0,
+      "floor": 0
+    },
+    {
+      "id": "s1_r1",
+      "type": "room",
+      "label": "Room 1.1",
+      "confidence": 0.0,
+      "polygon": [
+        [
+          13.822,
+          3.576
+        ],
+        [
+          10.436,
+          3.576
+        ],
+        [
+          10.436,
+          4.153
+        ],
+        [
+          12.694,
+          4.153
+        ],
+        [
+          12.694,
+          4.454
+        ],
+        [
+          13.171,
+          4.454
+        ],
+        [
+          13.397,
+          4.303
+        ],
+        [
+          13.822,
+          4.303
+        ]
+      ],
+      "holes": [],
+      "centroid": [
+        12.256,
+        3.92
+      ],
+      "area_m2": 2.22,
+      "floorIndex": 1,
+      "level": 1,
+      "floor": 1
+    },
+    {
+      "id": "s1_r2",
+      "type": "room",
+      "label": "Room 1.2",
+      "confidence": 0.0,
+      "polygon": [
+        [
+          10.41,
+          4.504
+        ],
+        [
+          10.41,
+          5.231
+        ],
+        [
+          12.719,
+          5.231
+        ],
+        [
+          12.719,
+          4.504
+        ],
+        [
+          12.067,
+          4.504
+        ],
+        [
+          11.966,
+          4.755
+        ],
+        [
+          11.389,
+          4.755
+        ],
+        [
+          11.339,
+          4.504
+        ]
+      ],
+      "holes": [],
+      "centroid": [
+        11.558,
+        4.886
+      ],
+      "area_m2": 1.52,
+      "floorIndex": 1,
+      "level": 1,
+      "floor": 1
+    },
+    {
+      "id": "s1_r3",
+      "type": "room",
+      "label": "Room 1.3",
+      "confidence": 0.0,
+      "polygon": [
+        [
+          18.615,
+          4.655
+        ],
+        [
+          14.074,
+          4.655
+        ],
+        [
+          14.074,
+          5.407
+        ],
+        [
+          13.622,
+          5.407
+        ],
+        [
+          13.622,
+          8.442
+        ],
+        [
+          13.546,
+          8.919
+        ],
+        [
+          12.493,
+          8.919
+        ],
+        [
+          12.493,
+          6.26
+        ],
+        [
+          11.364,
+          5.984
+        ],
+        [
+          11.364,
+          8.493
+        ],
+        [
+          11.815,
+          8.769
+        ],
+        [
+          10.537,
+          10.173
+        ],
+        [
+          5.82,
+          10.173
+        ],
+        [
+          5.619,
+          11.302
+        ],
+        [
+          7.576,
+          11.302
+        ],
+        [
+          7.576,
+          11.779
+        ],
+        [
+          6.823,
+          11.503
+        ],
+        [
+          6.823,
+          12.306
+        ],
+        [
+          7.651,
+          12.306
+        ],
+        [
+          7.776,
+          11.88
+        ],
+        [
+          8.203,
+          12.205
+        ],
+        [
+          8.203,
+          12.908
+        ],
+        [
+          10.059,
+          13.235
+        ],
+        [
+          9.709,
+          12.607
+        ],
+        [
+          12.744,
+          9.948
+        ],
+        [
+          18.615,
+          9.948
+        ]
+      ],
+      "holes": [
+        [
+          [
+            8.479,
+            12.03
+          ],
+          [
+            8.529,
+            11.98
+          ],
+          [
+            9.507,
+            11.98
+          ],
+          [
+            9.533,
+            12.155
+          ],
+          [
+            8.504,
+            12.181
+          ]
+        ],
+        [
+          [
+            15.529,
+            6.862
+          ],
+          [
+            17.084,
+            6.837
+          ],
+          [
+            17.134,
+            6.888
+          ],
+          [
+            17.084,
+            7.389
+          ],
+          [
+            16.934,
+            7.539
+          ],
+          [
+            15.654,
+            7.539
+          ],
+          [
+            15.604,
+            7.213
+          ],
+          [
+            15.529,
+            7.163
+          ]
+        ]
+      ],
+      "centroid": [
+        13.624,
+        8.554
+      ],
+      "area_m2": 42.43,
+      "floorIndex": 1,
+      "level": 1,
+      "floor": 1
+    },
+    {
+      "id": "s1_r4",
+      "type": "room",
+      "label": "Room 1.4",
+      "confidence": 0.0,
+      "polygon": [
+        [
+          10.21,
+          4.804
+        ],
+        [
+          6.397,
+          4.804
+        ],
+        [
+          6.397,
+          9.145
+        ],
+        [
+          6.899,
+          9.22
+        ],
+        [
+          6.573,
+          9.345
+        ],
+        [
+          6.573,
+          9.998
+        ],
+        [
+          7.2,
+          9.998
+        ],
+        [
+          7.2,
+          9.697
+        ],
+        [
+          7.401,
+          10.023
+        ],
+        [
+          8.002,
+          10.023
+        ],
+        [
+          8.002,
+          8.317
+        ],
+        [
+          10.21,
+          8.317
+        ]
+      ],
+      "holes": [
+        [
+          [
+            7.275,
+            6.41
+          ],
+          [
+            7.325,
+            6.36
+          ],
+          [
+            9.382,
+            6.36
+          ],
+          [
+            9.432,
+            6.41
+          ],
+          [
+            9.432,
+            6.636
+          ],
+          [
+            9.382,
+            6.687
+          ],
+          [
+            9.031,
+            6.687
+          ],
+          [
+            9.031,
+            6.862
+          ],
+          [
+            8.906,
+            6.987
+          ],
+          [
+            7.752,
+            7.013
+          ],
+          [
+            7.626,
+            6.937
+          ],
+          [
+            7.601,
+            6.687
+          ],
+          [
+            7.325,
+            6.687
+          ],
+          [
+            7.275,
+            6.636
+          ]
+        ]
+      ],
+      "centroid": [
+        8.126,
+        6.996
+      ],
+      "area_m2": 14.77,
+      "floorIndex": 1,
+      "level": 1,
+      "floor": 1
+    },
+    {
+      "id": "s1_r5",
+      "type": "room",
+      "label": "Room 1.5",
+      "confidence": 0.0,
+      "polygon": [
+        [
+          2.608,
+          5.984
+        ],
+        [
+          2.608,
+          8.97
+        ],
+        [
+          4.565,
+          8.97
+        ],
+        [
+          4.565,
+          10.023
+        ],
+        [
+          5.293,
+          10.023
+        ],
+        [
+          5.343,
+          9.672
+        ],
+        [
+          5.468,
+          9.998
+        ],
+        [
+          6.095,
+          9.998
+        ],
+        [
+          6.095,
+          9.345
+        ],
+        [
+          5.795,
+          9.345
+        ],
+        [
+          6.246,
+          9.145
+        ],
+        [
+          6.246,
+          5.984
+        ]
+      ],
+      "holes": [
+        [
+          [
+            5.444,
+            7.389
+          ],
+          [
+            5.444,
+            7.64
+          ],
+          [
+            5.093,
+            7.664
+          ],
+          [
+            5.093,
+            7.815
+          ],
+          [
+            4.992,
+            7.866
+          ],
+          [
+            4.967,
+            7.966
+          ],
+          [
+            3.713,
+            7.966
+          ],
+          [
+            3.662,
+            7.916
+          ],
+          [
+            3.662,
+            7.69
+          ],
+          [
+            3.386,
+            7.69
+          ],
+          [
+            3.311,
+            7.615
+          ],
+          [
+            3.311,
+            7.414
+          ],
+          [
+            3.362,
+            7.364
+          ],
+          [
+            4.942,
+            7.339
+          ]
+        ]
+      ],
+      "centroid": [
+        4.548,
+        7.737
+      ],
+      "area_m2": 11.36,
+      "floorIndex": 1,
+      "level": 1,
+      "floor": 1
+    },
+    {
+      "id": "s1_r6",
+      "type": "room",
+      "label": "Room 1.6",
+      "confidence": 0.0,
+      "polygon": [
+        [
+          14.425,
+          10.45
+        ],
+        [
+          14.425,
+          13.761
+        ],
+        [
+          18.012,
+          13.761
+        ],
+        [
+          18.012,
+          10.123
+        ],
+        [
+          15.503,
+          10.123
+        ],
+        [
+          15.428,
+          10.5
+        ],
+        [
+          15.227,
+          10.776
+        ],
+        [
+          14.826,
+          10.45
+        ]
+      ],
+      "holes": [
+        [
+          [
+            15.127,
+            11.704
+          ],
+          [
+            15.177,
+            11.654
+          ],
+          [
+            17.335,
+            11.654
+          ],
+          [
+            17.385,
+            11.704
+          ],
+          [
+            17.385,
+            11.955
+          ],
+          [
+            17.335,
+            12.005
+          ],
+          [
+            16.934,
+            12.005
+          ],
+          [
+            16.934,
+            12.155
+          ],
+          [
+            16.833,
+            12.181
+          ],
+          [
+            16.808,
+            12.281
+          ],
+          [
+            15.554,
+            12.281
+          ],
+          [
+            15.503,
+            12.005
+          ],
+          [
+            15.177,
+            12.005
+          ],
+          [
+            15.127,
+            11.955
+          ]
+        ]
+      ],
+      "centroid": [
+        16.264,
+        12.006
+      ],
+      "area_m2": 11.44,
+      "floorIndex": 1,
+      "level": 1,
+      "floor": 1
+    },
+    {
+      "id": "s1_r7",
+      "type": "room",
+      "label": "Room 1.7",
+      "confidence": 0.0,
+      "polygon": [
+        [
+          4.616,
+          11.503
+        ],
+        [
+          4.616,
+          12.03
+        ],
+        [
+          4.791,
+          12.08
+        ],
+        [
+          4.791,
+          12.306
+        ],
+        [
+          4.992,
+          12.356
+        ],
+        [
+          4.992,
+          12.733
+        ],
+        [
+          5.845,
+          12.733
+        ],
+        [
+          5.845,
+          12.332
+        ],
+        [
+          5.744,
+          12.181
+        ],
+        [
+          6.095,
+          12.181
+        ],
+        [
+          6.095,
+          11.528
+        ],
+        [
+          5.468,
+          11.528
+        ],
+        [
+          5.468,
+          11.804
+        ],
+        [
+          5.293,
+          11.754
+        ],
+        [
+          5.293,
+          11.503
+        ]
+      ],
+      "holes": [],
+      "centroid": [
+        5.369,
+        12.058
+      ],
+      "area_m2": 1.41,
+      "floorIndex": 1,
+      "level": 1,
+      "floor": 1
+    },
+    {
+      "id": "s1_r8",
+      "type": "room",
+      "label": "Room 1.8",
+      "confidence": 0.0,
+      "polygon": [
+        [
+          2.608,
+          11.83
+        ],
+        [
+          2.608,
+          12.507
+        ],
+        [
+          3.06,
+          12.507
+        ],
+        [
+          3.235,
+          12.632
+        ],
+        [
+          3.286,
+          13.259
+        ],
+        [
+          4.039,
+          13.309
+        ],
+        [
+          4.039,
+          12.532
+        ],
+        [
+          3.813,
+          12.481
+        ],
+        [
+          3.813,
+          12.332
+        ],
+        [
+          3.963,
+          12.306
+        ],
+        [
+          3.963,
+          11.704
+        ],
+        [
+          2.935,
+          11.704
+        ]
+      ],
+      "holes": [],
+      "centroid": [
+        3.422,
+        12.404
+      ],
+      "area_m2": 1.66,
+      "floorIndex": 1,
+      "level": 1,
+      "floor": 1
+    }
+  ],
+  "walls": [
+    {
+      "id": "w1",
+      "polygon": [
+        [
+          5.208,
+          11.375
+        ],
+        [
+          7.837,
+          11.375
+        ],
+        [
+          7.837,
+          10.245
+        ],
+        [
+          10.42,
+          10.245
+        ],
+        [
+          10.521,
+          10.772
+        ],
+        [
+          11.697,
+          10.772
+        ],
+        [
+          11.951,
+          9.959
+        ],
+        [
+          12.007,
+          9.951
+        ],
+        [
+          12.007,
+          13.557
+        ],
+        [
+          16.844,
+          13.557
+        ],
+        [
+          16.844,
+          8.445
+        ],
+        [
+          14.946,
+          8.445
+        ],
+        [
+          14.946,
+          8.638
+        ],
+        [
+          13.955,
+          8.638
+        ],
+        [
+          13.955,
+          8.445
+        ],
+        [
+          13.286,
+          8.445
+        ],
+        [
+          13.286,
+          8.952
+        ],
+        [
+          13.037,
+          9.381
+        ],
+        [
+          12.551,
+          9.73
+        ],
+        [
+          12.528,
+          9.733
+        ],
+        [
+          12.528,
+          8.864
+        ],
+        [
+          11.819,
+          8.864
+        ],
+        [
+          11.823,
+          8.891
+        ],
+        [
+          12.308,
+          8.891
+        ],
+        [
+          12.308,
+          9.688
+        ],
+        [
+          11.781,
+          9.76
+        ],
+        [
+          11.534,
+          10.552
+        ],
+        [
+          10.704,
+          10.552
+        ],
+        [
+          10.603,
+          10.025
+        ],
+        [
+          7.616,
+          10.025
+        ],
+        [
+          7.616,
+          11.154
+        ],
+        [
+          5.428,
+          11.154
+        ],
+        [
+          5.428,
+          8.665
+        ],
+        [
+          8.886,
+          8.665
+        ],
+        [
+          9.212,
+          7.662
+        ],
+        [
+          10.101,
+          7.662
+        ],
+        [
+          10.101,
+          8.439
+        ],
+        [
+          11.748,
+          8.439
+        ],
+        [
+          11.77,
+          8.573
+        ],
+        [
+          11.77,
+          8.478
+        ],
+        [
+          11.978,
+          8.478
+        ],
+        [
+          11.935,
+          8.219
+        ],
+        [
+          10.321,
+          8.219
+        ],
+        [
+          10.321,
+          7.441
+        ],
+        [
+          9.467,
+          7.441
+        ],
+        [
+          9.467,
+          7.244
+        ],
+        [
+          9.859,
+          7.059
+        ],
+        [
+          10.471,
+          7.059
+        ],
+        [
+          10.471,
+          3.929
+        ],
+        [
+          4.28,
+          3.929
+        ],
+        [
+          4.28,
+          8.363
+        ],
+        [
+          6.067,
+          8.363
+        ],
+        [
+          6.067,
+          8.171
+        ],
+        [
+          7.059,
+          8.171
+        ],
+        [
+          7.059,
+          8.363
+        ],
+        [
+          8.751,
+          8.363
+        ],
+        [
+          8.725,
+          8.445
+        ],
+        [
+          7.059,
+          8.445
+        ],
+        [
+          7.059,
+          8.556
+        ],
+        [
+          6.067,
+          8.556
+        ],
+        [
+          6.067,
+          8.445
+        ],
+        [
+          5.208,
+          8.445
+        ]
+      ],
+      "holes": [
+        [
+          [
+            13.205,
+            9.533
+          ],
+          [
+            13.506,
+            9.011
+          ],
+          [
+            13.506,
+            8.665
+          ],
+          [
+            16.623,
+            8.665
+          ],
+          [
+            16.623,
+            13.337
+          ],
+          [
+            12.227,
+            13.337
+          ],
+          [
+            12.227,
+            10.004
+          ],
+          [
+            12.637,
+            9.939
+          ]
+        ],
+        [
+          [
+            9.247,
+            7.37
+          ],
+          [
+            8.942,
+            7.463
+          ],
+          [
+            8.748,
+            8.143
+          ],
+          [
+            4.501,
+            8.143
+          ],
+          [
+            4.501,
+            4.149
+          ],
+          [
+            10.251,
+            4.149
+          ],
+          [
+            10.251,
+            6.839
+          ],
+          [
+            9.81,
+            6.839
+          ],
+          [
+            9.247,
+            7.105
+          ]
+        ]
+      ],
+      "floorIndex": 0,
+      "level": 0
+    },
+    {
+      "id": "w2",
+      "polygon": [
+        [
+          11.594,
+          7.511
+        ],
+        [
+          11.808,
+          7.511
+        ],
+        [
+          11.963,
+          7.744
+        ],
+        [
+          12.076,
+          8.363
+        ],
+        [
+          13.955,
+          8.363
+        ],
+        [
+          13.955,
+          8.252
+        ],
+        [
+          14.946,
+          8.252
+        ],
+        [
+          14.946,
+          8.363
+        ],
+        [
+          16.844,
+          8.363
+        ],
+        [
+          16.844,
+          3.929
+        ],
+        [
+          10.552,
+          3.929
+        ],
+        [
+          10.552,
+          7.035
+        ],
+        [
+          11.16,
+          7.035
+        ],
+        [
+          11.563,
+          7.268
+        ]
+      ],
+      "holes": [
+        [
+          [
+            12.172,
+            7.661
+          ],
+          [
+            11.924,
+            7.29
+          ],
+          [
+            11.788,
+            7.29
+          ],
+          [
+            11.768,
+            7.132
+          ],
+          [
+            11.219,
+            6.814
+          ],
+          [
+            10.772,
+            6.814
+          ],
+          [
+            10.772,
+            4.149
+          ],
+          [
+            16.623,
+            4.149
+          ],
+          [
+            16.623,
+            8.143
+          ],
+          [
+            12.259,
+            8.143
+          ]
+        ]
+      ],
+      "floorIndex": 0,
+      "level": 0
+    },
+    {
+      "id": "w3",
+      "polygon": [
+        [
+          6.758,
+          11.43
+        ],
+        [
+          4.28,
+          11.43
+        ],
+        [
+          4.28,
+          13.557
+        ],
+        [
+          7.185,
+          13.557
+        ],
+        [
+          7.185,
+          12.207
+        ],
+        [
+          6.92,
+          12.207
+        ],
+        [
+          6.758,
+          11.843
+        ]
+      ],
+      "holes": [
+        [
+          [
+            4.501,
+            13.337
+          ],
+          [
+            4.501,
+            11.65
+          ],
+          [
+            6.538,
+            11.65
+          ],
+          [
+            6.538,
+            11.889
+          ],
+          [
+            6.777,
+            12.428
+          ],
+          [
+            6.964,
+            12.428
+          ],
+          [
+            6.964,
+            13.337
+          ]
+        ]
+      ],
+      "floorIndex": 0,
+      "level": 0
+    },
+    {
+      "id": "w1",
+      "polygon": [
+        [
+          20.988,
+          13.946
+        ],
+        [
+          18.699,
+          13.946
+        ],
+        [
+          18.699,
+          14.425
+        ],
+        [
+          20.988,
+          14.534
+        ]
+      ],
+      "holes": [
+        [
+          [
+            18.881,
+            14.252
+          ],
+          [
+            18.881,
+            14.128
+          ],
+          [
+            20.807,
+            14.128
+          ],
+          [
+            20.807,
+            14.343
+          ]
+        ]
+      ],
+      "floorIndex": 1,
+      "level": 1
+    },
+    {
+      "id": "w2",
+      "polygon": [
+        [
+          12.703,
+          5.166
+        ],
+        [
+          12.132,
+          5.166
+        ],
+        [
+          12.132,
+          4.588
+        ],
+        [
+          13.147,
+          4.137
+        ],
+        [
+          9.915,
+          4.137
+        ],
+        [
+          9.908,
+          4.19
+        ],
+        [
+          11.298,
+          4.597
+        ],
+        [
+          11.298,
+          5.191
+        ],
+        [
+          10.527,
+          5.191
+        ],
+        [
+          10.527,
+          4.564
+        ],
+        [
+          6.181,
+          4.564
+        ],
+        [
+          6.181,
+          5.743
+        ],
+        [
+          2.242,
+          5.743
+        ],
+        [
+          2.242,
+          13.751
+        ],
+        [
+          11.865,
+          13.751
+        ],
+        [
+          11.865,
+          13.592
+        ],
+        [
+          14.2,
+          13.592
+        ],
+        [
+          14.2,
+          13.751
+        ],
+        [
+          18.304,
+          13.751
+        ],
+        [
+          18.304,
+          10.264
+        ],
+        [
+          18.906,
+          10.264
+        ],
+        [
+          18.906,
+          4.413
+        ],
+        [
+          12.703,
+          4.413
+        ]
+      ],
+      "holes": [
+        [
+          [
+            10.995,
+            4.319
+          ],
+          [
+            12.29,
+            4.319
+          ],
+          [
+            11.951,
+            4.47
+          ],
+          [
+            11.951,
+            5.347
+          ],
+          [
+            12.885,
+            5.347
+          ],
+          [
+            12.885,
+            4.595
+          ],
+          [
+            14.566,
+            4.595
+          ],
+          [
+            14.566,
+            4.436
+          ],
+          [
+            15.383,
+            4.436
+          ],
+          [
+            15.383,
+            4.595
+          ],
+          [
+            18.724,
+            4.595
+          ],
+          [
+            18.724,
+            10.082
+          ],
+          [
+            18.123,
+            10.082
+          ],
+          [
+            18.123,
+            10.618
+          ],
+          [
+            18.282,
+            10.618
+          ],
+          [
+            18.282,
+            11.435
+          ],
+          [
+            18.123,
+            11.435
+          ],
+          [
+            18.123,
+            12.676
+          ],
+          [
+            18.282,
+            12.676
+          ],
+          [
+            18.282,
+            13.492
+          ],
+          [
+            18.123,
+            13.492
+          ],
+          [
+            18.123,
+            13.57
+          ],
+          [
+            8.988,
+            13.57
+          ],
+          [
+            8.988,
+            13.728
+          ],
+          [
+            8.171,
+            13.728
+          ],
+          [
+            8.171,
+            13.57
+          ],
+          [
+            4.823,
+            13.57
+          ],
+          [
+            4.823,
+            13.728
+          ],
+          [
+            4.208,
+            13.728
+          ],
+          [
+            4.208,
+            13.57
+          ],
+          [
+            2.423,
+            13.57
+          ],
+          [
+            2.423,
+            5.924
+          ],
+          [
+            3.078,
+            5.924
+          ],
+          [
+            3.078,
+            5.766
+          ],
+          [
+            3.895,
+            5.766
+          ],
+          [
+            3.895,
+            5.924
+          ],
+          [
+            4.484,
+            5.924
+          ],
+          [
+            4.484,
+            5.766
+          ],
+          [
+            5.3,
+            5.766
+          ],
+          [
+            5.3,
+            5.924
+          ],
+          [
+            6.362,
+            5.924
+          ],
+          [
+            6.362,
+            4.745
+          ],
+          [
+            10.345,
+            4.745
+          ],
+          [
+            10.345,
+            5.373
+          ],
+          [
+            11.48,
+            5.373
+          ],
+          [
+            11.48,
+            4.46
+          ]
+        ]
+      ],
+      "floorIndex": 1,
+      "level": 1
+    },
+    {
+      "id": "w3",
+      "polygon": [
+        [
+          17.476,
+          12.096
+        ],
+        [
+          17.476,
+          11.614
+        ],
+        [
+          15.087,
+          11.614
+        ],
+        [
+          15.087,
+          12.071
+        ],
+        [
+          15.451,
+          12.071
+        ],
+        [
+          15.501,
+          12.371
+        ],
+        [
+          16.87,
+          12.371
+        ],
+        [
+          17.019,
+          12.224
+        ],
+        [
+          17.038,
+          12.096
+        ]
+      ],
+      "holes": [
+        [
+          [
+            15.606,
+            11.89
+          ],
+          [
+            15.268,
+            11.89
+          ],
+          [
+            15.268,
+            11.795
+          ],
+          [
+            17.294,
+            11.795
+          ],
+          [
+            17.294,
+            11.914
+          ],
+          [
+            16.88,
+            11.914
+          ],
+          [
+            16.848,
+            12.138
+          ],
+          [
+            16.796,
+            12.19
+          ],
+          [
+            15.656,
+            12.19
+          ]
+        ]
+      ],
+      "floorIndex": 1,
+      "level": 1
+    },
+    {
+      "id": "w4",
+      "polygon": [
+        [
+          15.488,
+          6.797
+        ],
+        [
+          15.488,
+          7.198
+        ],
+        [
+          15.58,
+          7.63
+        ],
+        [
+          16.996,
+          7.63
+        ],
+        [
+          17.175,
+          7.451
+        ],
+        [
+          17.175,
+          7.245
+        ],
+        [
+          17.239,
+          6.797
+        ]
+      ],
+      "holes": [
+        [
+          [
+            15.669,
+            6.978
+          ],
+          [
+            17.03,
+            6.978
+          ],
+          [
+            16.994,
+            7.232
+          ],
+          [
+            16.994,
+            7.377
+          ],
+          [
+            16.922,
+            7.448
+          ],
+          [
+            15.727,
+            7.448
+          ],
+          [
+            15.669,
+            7.178
+          ]
+        ]
+      ],
+      "floorIndex": 1,
+      "level": 1
+    },
+    {
+      "id": "w5",
+      "polygon": [
+        [
+          9.118,
+          6.924
+        ],
+        [
+          9.136,
+          6.778
+        ],
+        [
+          9.523,
+          6.778
+        ],
+        [
+          9.523,
+          6.319
+        ],
+        [
+          7.235,
+          6.319
+        ],
+        [
+          7.235,
+          6.752
+        ],
+        [
+          7.549,
+          6.752
+        ],
+        [
+          7.599,
+          7.051
+        ],
+        [
+          8.974,
+          7.105
+        ]
+      ],
+      "holes": [
+        [
+          [
+            8.888,
+            6.92
+          ],
+          [
+            7.754,
+            6.875
+          ],
+          [
+            7.703,
+            6.571
+          ],
+          [
+            7.416,
+            6.571
+          ],
+          [
+            7.416,
+            6.501
+          ],
+          [
+            9.341,
+            6.501
+          ],
+          [
+            9.341,
+            6.596
+          ],
+          [
+            8.976,
+            6.596
+          ],
+          [
+            8.944,
+            6.851
+          ]
+        ]
+      ],
+      "floorIndex": 1,
+      "level": 1
+    },
+    {
+      "id": "w6",
+      "polygon": [
+        [
+          5.196,
+          7.755
+        ],
+        [
+          5.535,
+          7.755
+        ],
+        [
+          5.535,
+          7.323
+        ],
+        [
+          3.295,
+          7.323
+        ],
+        [
+          3.295,
+          7.717
+        ],
+        [
+          3.609,
+          7.769
+        ],
+        [
+          3.661,
+          8.057
+        ],
+        [
+          5.035,
+          8.057
+        ],
+        [
+          5.179,
+          7.878
+        ]
+      ],
+      "holes": [
+        [
+          [
+            3.477,
+            7.563
+          ],
+          [
+            3.477,
+            7.505
+          ],
+          [
+            5.353,
+            7.505
+          ],
+          [
+            5.353,
+            7.574
+          ],
+          [
+            5.038,
+            7.574
+          ],
+          [
+            5.006,
+            7.803
+          ],
+          [
+            4.948,
+            7.875
+          ],
+          [
+            3.814,
+            7.875
+          ],
+          [
+            3.766,
+            7.611
+          ]
+        ]
+      ],
+      "floorIndex": 1,
+      "level": 1
+    },
+    {
+      "id": "w7",
+      "polygon": [
+        [
+          0.326,
+          16.11
+        ],
+        [
+          3.326,
+          16.057
+        ],
+        [
+          3.326,
+          15.703
+        ],
+        [
+          0.034,
+          15.703
+        ],
+        [
+          0.034,
+          16.11
+        ]
+      ],
+      "holes": [
+        [
+          [
+            0.216,
+            15.929
+          ],
+          [
+            0.216,
+            15.884
+          ],
+          [
+            2.871,
+            15.884
+          ],
+          [
+            0.325,
+            15.929
+          ]
+        ]
+      ],
+      "floorIndex": 1,
+      "level": 1
+    }
+  ],
+  "doors": [
+    {
+      "id": "d1",
+      "center": [
+        12.282,
+        8.671
+      ],
+      "width": 1.025,
+      "kind": "swing",
+      "connects": [
+        "room"
+      ],
+      "source": "swing-arc",
+      "floorIndex": 0,
+      "level": 0
+    },
+    {
+      "id": "s1_d5",
+      "center": [
+        14.974,
+        4.595
+      ],
+      "width": 0.817,
+      "kind": "open-doorway",
+      "connects": [
+        "room"
+      ],
+      "source": "wall-gap",
+      "floorIndex": 1,
+      "level": 1
+    },
+    {
+      "id": "s1_d6",
+      "center": [
+        3.487,
+        5.924
+      ],
+      "width": 0.817,
+      "kind": "open-doorway",
+      "connects": [
+        "room"
+      ],
+      "source": "wall-gap",
+      "floorIndex": 1,
+      "level": 1
+    },
+    {
+      "id": "s1_d7",
+      "center": [
+        4.892,
+        5.924
+      ],
+      "width": 0.817,
+      "kind": "open-doorway",
+      "connects": [
+        "room"
+      ],
+      "source": "wall-gap",
+      "floorIndex": 1,
+      "level": 1
+    },
+    {
+      "id": "s1_d11",
+      "center": [
+        8.58,
+        13.57
+      ],
+      "width": 0.817,
+      "kind": "open-doorway",
+      "connects": [
+        "room"
+      ],
+      "source": "wall-gap",
+      "floorIndex": 1,
+      "level": 1
+    },
+    {
+      "id": "s1_d15",
+      "center": [
+        18.123,
+        11.026
+      ],
+      "width": 0.817,
+      "kind": "open-doorway",
+      "connects": [
+        "room"
+      ],
+      "source": "wall-gap",
+      "floorIndex": 1,
+      "level": 1
+    }
+  ],
+  "windows": [
+    {
+      "id": "win1",
+      "center": [
+        6.563,
+        8.363
+      ],
+      "width": 0.992,
+      "kind": "window",
+      "source": "estimated",
+      "floorIndex": 0,
+      "level": 0
+    },
+    {
+      "id": "win2",
+      "center": [
+        14.451,
+        8.445
+      ],
+      "width": 0.992,
+      "kind": "window",
+      "source": "estimated",
+      "floorIndex": 0,
+      "level": 0
+    },
+    {
+      "id": "s1_win1",
+      "center": [
+        13.033,
+        13.751
+      ],
+      "width": 2.334,
+      "kind": "window",
+      "source": "estimated",
+      "floorIndex": 1,
+      "level": 1
+    },
+    {
+      "id": "s1_win6",
+      "center": [
+        4.515,
+        13.57
+      ],
+      "width": 0.615,
+      "kind": "window",
+      "source": "estimated",
+      "floorIndex": 1,
+      "level": 1
+    },
+    {
+      "id": "s1_win8",
+      "center": [
+        18.123,
+        13.084
+      ],
+      "width": 0.817,
+      "kind": "window",
+      "source": "estimated",
+      "floorIndex": 1,
+      "level": 1
+    }
+  ]
+}

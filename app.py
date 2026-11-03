@@ -1755,7 +1755,9 @@ def sample_data():
             data_url = "data:image/png;base64," + base64.b64encode(sample_file.read()).decode("ascii")
         scene = get_sample_scene_json()
         scene["meta"]["processingMode"] = "DEMO"
-        scene["meta"].setdefault("warnings", []).append("Prepared demo scene; this is not a live AI result.")
+        scene["meta"].setdefault("warnings", []).append(
+            "Curated demo scene with predefined geometry and labels; loading it does not run a model."
+        )
         validate_scene_contract(scene)
         return jsonify({
             "success": True,
@@ -1788,6 +1790,57 @@ def two_story_sample_data():
     except Exception:
         app.logger.exception("Could not load the built-in two-story demo scene")
         return jsonify({"success": False, "error": "The two-story demo could not be loaded."}), 500
+
+
+@app.route("/api/sample/<sample_id>", methods=["GET"])
+def saved_sample_data(sample_id):
+    """Load a precomputed review sample without running any model provider."""
+    saved_samples = {
+        "two-plans": ("two_plans_test.json", "two_plans_test.png"),
+        "three-story": ("three_story.json", "three_story.png"),
+        "four-story": ("four_story.json", "four_story.png"),
+    }
+    entry = saved_samples.get(sample_id)
+    if not entry:
+        return jsonify({"success": False, "error": "That saved sample does not exist."}), 404
+
+    sample_root = os.path.join(app.root_path, "samples", "demo_plans")
+    scene_path = os.path.join(sample_root, entry[0])
+    image_path = os.path.join(sample_root, entry[1])
+    try:
+        with open(scene_path, "r", encoding="utf-8") as scene_file:
+            scene = json.load(scene_file)
+        with open(image_path, "rb") as image_file:
+            image_bytes = image_file.read()
+        scene.setdefault("meta", {})["processingMode"] = "DEMO"
+        scene["meta"]["preparedSample"] = True
+        scene["meta"]["liveInferenceAtLoad"] = False
+        if sample_id in {"three-story", "four-story"}:
+            scene["meta"]["sampleLabel"] = f"{scene['meta'].get('levelCount', 3)}-story prepared building"
+        scene["meta"].setdefault("warnings", []).append(
+            "Saved sample scene. Review its estimated geometry against the source plan."
+        )
+        validate_scene_contract(scene)
+        overlays = {
+            "room": [{"id": room.get("id"), "label": room.get("label"), "polygon": room.get("polygon", [])} for room in scene.get("rooms", [])],
+            "wall": [{"id": wall.get("id"), "polygon": wall.get("polygon", [])} for wall in scene.get("walls", [])],
+            "door": [{"id": door.get("id"), "center": door.get("center", []), "width": door.get("width")} for door in scene.get("doors", [])],
+            "window": [{"id": window.get("id"), "center": window.get("center", []), "width": window.get("width")} for window in scene.get("windows", [])],
+        }
+        mime = "image/jpeg" if image_path.lower().endswith((".jpg", ".jpeg")) else "image/png"
+        return jsonify({
+            "success": True,
+            "scene": scene,
+            "overlays": _json_compatible(overlays),
+            "imageUrl": f"data:{mime};base64," + base64.b64encode(image_bytes).decode("ascii"),
+            "demoMode": True,
+        })
+    except FileNotFoundError:
+        app.logger.error("Saved sample assets are missing for %s", sample_id)
+        return jsonify({"success": False, "error": "This sample's saved scene or source image is missing."}), 404
+    except Exception:
+        app.logger.exception("Could not load saved sample %s", sample_id)
+        return jsonify({"success": False, "error": "The saved sample could not be loaded."}), 500
 
 
 @app.route("/api/sample_image", methods=["GET"])
