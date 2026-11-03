@@ -256,7 +256,7 @@ def _execute_sam_call(client, model, prompt_text, data_url, size, image_size, de
 
 
 def query_sam_concept(image_bytes, concept, image_size, timeout=75, return_status=False):
-    """Run one SAM prompt and return masks at the uploaded image's original size."""
+    """Meta SAM 3.1 integration point: return concept masks in source-image pixels."""
     if concept not in CONCEPT_PROMPTS:
         raise ValueError(f"Unknown segmentation concept: {concept}")
     if not is_sam_configured():

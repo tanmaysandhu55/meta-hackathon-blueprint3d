@@ -8,7 +8,6 @@ their partner-cloud API keys.
 import os
 import copy
 import json
-import math
 
 
 def generate_sample_floorplan_image(output_path=None):

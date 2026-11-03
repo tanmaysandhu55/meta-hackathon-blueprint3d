@@ -115,7 +115,7 @@ def _image_data_url(data_url):
 
 
 def label_rooms(b64_data_url, room_candidates, timeout=45):
-    """Return validated labels; empty dict triggers the app's generic fallback."""
+    """Muse Spark integration point for validated, scene-grounded room labels."""
     _error_state.category = None
     if not room_candidates or not _configured():
         return {}

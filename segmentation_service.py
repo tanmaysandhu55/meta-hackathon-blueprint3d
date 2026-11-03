@@ -79,7 +79,6 @@ def segment_prepared_concept(prepared, concept):
     width = prepared["width"]
     height = prepared["height"]
     walls = prepared["walls"]
-    kernel_size = prepared["kernel_size"]
 
     if concept == "wall":
         return [walls] if cv2.countNonZero(walls) else []

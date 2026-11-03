@@ -29,7 +29,6 @@ from meta_media_service import generate_floorplan, image_generation_ready, trans
 from demo_data import generate_sample_floorplan_image, get_sample_mask_overlays, get_sample_scene_json, get_two_story_sample_scene_json
 from geometry_processor import (
     build_walls_from_rooms,
-    check_axis_aligned_fraction,
     detect_doors_and_windows_geometrically,
     choose_scale,
     estimate_wall_thickness_px,
@@ -43,7 +42,6 @@ from geometry_processor import (
     snap_openings_and_cut_walls,
     snap_polygon_orthogonal,
     split_image_at_user_dividers,
-    split_multi_plan_image,
     validate_scene_geometry,
 )
 from segmentation_service import prepare_segmentation, segment_prepared_concept
@@ -421,6 +419,7 @@ def _validate_image(file_storage):
 
 
 def _process_story_slice(image_bytes, image_size, meters_per_pixel, wall_height, wall_thickness, calibrate_scale, progress, deadline, use_sam, processing_mode, image_url, story_index=0, filename="", scale_source="auto"):
+    """Segment one story and convert its detections into scene geometry."""
     warnings = []
     concepts = ("room", "wall", "door", "window")
     try:
@@ -433,6 +432,7 @@ def _process_story_slice(image_bytes, image_size, meters_per_pixel, wall_height,
     def segment_one(concept):
         if use_sam:
             try:
+                # Meta SAM 3.1 integration point: request concept masks; OpenCV is the fallback.
                 sam_result = query_sam_concept(
                     image_bytes,
                     concept,
@@ -728,6 +728,7 @@ def _process_story_slice(image_bytes, image_size, meters_per_pixel, wall_height,
         if processing_mode == "MOCK":
             labels = {}
         elif labeling_ready():
+            # Muse Spark integration point: classify room candidates using the plan context.
             labels = label_rooms(image_url, rooms_data, timeout=max(1, deadline - time.monotonic()))
             if not labels:
                 category = last_error_category() or "bad_response"
@@ -1056,6 +1057,7 @@ def _align_upper_story(ground_result, upper_result):
 
 
 def _build_scene(image_bytes, image_size, filename, meters_per_pixel, wall_height, wall_thickness, calibrate_scale, progress, scale_source="auto", floor_count=1, split_orientation="vertical", split_positions=None):
+    """Build the validated scene contract from an uploaded plan or demo input."""
     processing_mode = _processing_mode()
     if processing_mode == "MOCK":
         with open(SAMPLE_IMG_PATH, "rb") as sample_file:
@@ -1778,7 +1780,6 @@ def two_story_sample_data():
             data_url = "data:image/png;base64," + base64.b64encode(sample_file.read()).decode("ascii")
         scene = get_two_story_sample_scene_json()
         scene["meta"]["processingMode"] = "DEMO"
-        scene["meta"].setdefault("warnings", []).append("Prepared two-story demo scene; this is not a live AI result.")
         validate_scene_contract(scene)
         return jsonify({
             "success": True,
@@ -1816,7 +1817,10 @@ def saved_sample_data(sample_id):
         scene["meta"]["preparedSample"] = True
         scene["meta"]["liveInferenceAtLoad"] = False
         if sample_id in {"three-story", "four-story"}:
-            scene["meta"]["sampleLabel"] = f"{scene['meta'].get('levelCount', 3)}-story prepared building"
+            scene["meta"].setdefault(
+                "sampleLabel",
+                f"{scene['meta'].get('levelCount', 3)}-story prepared building",
+            )
         scene["meta"].setdefault("warnings", []).append(
             "Saved sample scene. Review its estimated geometry against the source plan."
         )
@@ -1890,6 +1894,7 @@ def transcribe_map_question():
 
 @app.route("/api/upload", methods=["POST"])
 def upload_floorplan():
+    """Validate an uploaded plan and enqueue its scene-generation job."""
     retry_after = _rate_limit_upload(request.remote_addr or "unknown")
     if retry_after:
         response = jsonify({"success": False, "error": "Upload rate limit reached. Please wait before trying again."})

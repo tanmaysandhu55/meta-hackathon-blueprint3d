@@ -47,6 +47,7 @@ def _is_two_story_prompt(prompt):
 
 
 def generate_floorplan(prompt):
+    """Generate a draft floor-plan image with the configured Muse Image model."""
     if not image_generation_ready():
         raise RuntimeError("Muse Image is not configured.")
     api_key = os.getenv("MODEL_API_KEY", "").strip() or os.getenv("META_API_KEY", "").strip()
@@ -102,6 +103,7 @@ def generate_floorplan(prompt):
 
 
 def transcribe_audio(audio_bytes, filename):
+    """Transcribe a WAV question with the configured Muse Voice model."""
     if not voice_transcription_ready():
         raise RuntimeError("Muse Voice Transcribe is not configured.")
     if len(audio_bytes) > 32 * 1024 * 1024:

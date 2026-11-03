@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 import shapely.geometry
 from shapely.validation import make_valid
-from shapely.ops import polylabel, unary_union
+from shapely.ops import unary_union
 
 
 def clean_mask(mask_uint8, kernel_size=5):
@@ -366,7 +366,6 @@ def _projected_wall_gaps(dark, meters_per_pixel, orientation):
     """Find repeated, wall-aligned blank spans; return stable gap centers in px."""
     height, width = dark.shape
     image = dark if orientation == "horizontal" else dark.T
-    length_px = image.shape[1]
     min_gap = int(math.ceil(0.7 / max(meters_per_pixel, 1e-9)))
     max_gap = int(math.floor(1.5 / max(meters_per_pixel, 1e-9)))
     min_run = max(12, int(round(0.25 / max(meters_per_pixel, 1e-9))))
