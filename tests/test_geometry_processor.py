@@ -9,7 +9,50 @@ from geometry_processor import (
     estimate_meters_per_pixel_from_door_widths,
     mask_to_polygons_with_holes,
     scale_from_two_points,
+    solidify_wall_band,
+    detect_door_swing_radii_px,
 )
+
+
+def test_parallel_wall_strokes_merge_into_measurable_solid_band():
+    mask = np.zeros((180, 220), np.uint8)
+    for y in (70, 77, 94):
+        cv2.line(mask, (20, y), (200, y), 255, 3)
+    band = solidify_wall_band(mask)
+    thickness = estimate_wall_thickness_px([band])
+    assert np.count_nonzero(band[60:105, 100]) >= 20
+    assert 20 <= thickness <= 40
+
+
+def test_door_swing_arc_radius_provides_0_9m_scale_within_ten_percent():
+    image = np.full((500, 500), 255, np.uint8)
+    for center in ((100, 100), (250, 250), (400, 100)):
+        cv2.ellipse(image, center, (60, 60), 0, 0, 90, 0, 3)
+    radii = detect_door_swing_radii_px(image)
+    assert len(radii) >= 3
+    recovered = 0.9 / float(np.median(radii))
+    assert abs(recovered - 0.9 / 60) / (0.9 / 60) <= 0.10
+
+
+def test_scale_selects_consistent_door_arc_cluster_with_unrelated_curves():
+    result = choose_scale(
+        user_scale=None, door_widths_px=[35, 44, 53, 206, 236, 261, 284, 321, 576],
+        footprint_bounds_px=(0, 0, 6000, 3500), footprint_area_px=12_000_000,
+        room_areas_px=[1_000_000, 900_000, 800_000, 700_000], default_scale=0.02,
+    )
+    assert result["accepted"] is True
+    assert result["source"] == "door-width"
+    assert abs(result["meters_per_pixel"] - 0.9 / 261) / (0.9 / 261) < 0.2
+
+
+def test_scale_candidate_rejected_when_residential_dimensions_are_implausible():
+    result = choose_scale(
+        user_scale=None, door_widths_px=[40, 42, 41],
+        footprint_bounds_px=(0, 0, 1000, 1000), footprint_area_px=1_000_000,
+        room_areas_px=[200_000, 200_000], default_scale=0.02,
+    )
+    assert result["source"] == "needs-review"
+    assert any("Rejected" in warning for warning in result["warnings"])
 
 
 def test_estimate_scale_from_door_width():
@@ -72,7 +115,7 @@ def test_door_scale_requires_three_consistent_door_openings():
     assert result["source"] == "typical-footprint-width"
 
 
-def test_scale_needs_review_when_every_candidate_fails_sanity():
+def test_explicit_user_calibration_has_priority_over_automatic_sanity_checks():
     result = choose_scale(
         user_scale=0.001,
         door_widths_px=[],
@@ -81,8 +124,8 @@ def test_scale_needs_review_when_every_candidate_fails_sanity():
         room_areas_px=[100],
         default_scale=0.002,
     )
-    assert result["accepted"] is False
-    assert result["source"] == "needs-review"
+    assert result["accepted"] is True
+    assert result["source"] == "user"
 
 
 def test_wall_thickness_estimate_and_pixel_space_snapping():

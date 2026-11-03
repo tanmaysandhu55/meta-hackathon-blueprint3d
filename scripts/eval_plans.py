@@ -516,6 +516,10 @@ def _run_one(path, mode, args, expected):
                     "scale_source": result.get("scale_source"),
                     "door_widths_px_for_scale": result.get("door_widths_px_for_scale", []),
                     "door_width_source": result.get("door_width_source"),
+                    "door_swing_radii_px": result.get("door_swing_radii_px", []),
+                    "wall_stroke_thickness_px": result.get("wall_stroke_thickness_px"),
+                    "wall_band_thickness_px": result.get("wall_band_thickness_px"),
+                    "snap_tolerance_px": result.get("snap_tolerance_px"),
                     "wall_thickness_px": result.get("wall_thickness_px"),
                     "room_footprint_coverage": result.get("room_footprint_coverage"),
                     "footprint_bounds_px": result.get("footprint_bounds_px"),
@@ -697,13 +701,17 @@ def _print_details(items):
             for metric in item["story_metrics"]:
                 print(
                     f"  Floor {metric['floorIndex'] + 1}: scale={metric.get('meters_per_pixel')} m/px "
-                    f"({metric.get('scale_source')}); wall stroke={metric.get('wall_thickness_px')} px; "
+                    f"({metric.get('scale_source')}); wall stroke={metric.get('wall_stroke_thickness_px')} px; "
+                    f"solid band={metric.get('wall_band_thickness_px')} px; "
+                    f"snap tolerance={metric.get('snap_tolerance_px')} px; "
                     f"door widths used for scale={metric.get('door_widths_px_for_scale')} "
                     f"from {metric.get('door_width_source')}; "
+                    f"door swing arc measurements={metric.get('door_swing_radii_px')}; "
                     f"room/footprint coverage={metric.get('room_footprint_coverage')}; "
                     f"outer bounds px={metric.get('footprint_bounds_px')}; "
                     f"outer contour area px={metric.get('footprint_contour_area_px')}"
                 )
+            print(f"  Room areas m2: {[round(area, 2) for area in item.get('room_areas', [])]}")
         print(f"\n{Path(item['plan']).name} - dropped openings:")
         reasons = item.get("dropped_door_reasons", []) + item.get("dropped_window_reasons", [])
         if reasons:

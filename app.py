@@ -33,6 +33,8 @@ from geometry_processor import (
     detect_doors_and_windows_geometrically,
     choose_scale,
     estimate_wall_thickness_px,
+    solidify_wall_band,
+    detect_door_swing_radii_px,
     extract_doors,
     extract_windows,
     mask_to_polygons_with_holes,
@@ -528,7 +530,7 @@ def _process_story_slice(image_bytes, image_size, meters_per_pixel, wall_height,
         raise ProviderError("down", str(room_failure)) from room_failure
 
     room_masks = masks_by_concept["room"]
-    wall_masks = masks_by_concept["wall"]
+    wall_masks = [solidify_wall_band(mask) for mask in masks_by_concept["wall"]]
     door_masks = masks_by_concept["door"]
     window_masks = masks_by_concept["window"]
 
@@ -544,8 +546,9 @@ def _process_story_slice(image_bytes, image_size, meters_per_pixel, wall_height,
     # selected SAM/OpenCV door masks only contain one or two real openings.
     door_mask_widths_px = _door_mask_widths_px(door_masks)
     geometric_door_widths_px = [float(item.get("pixel_width")) for item in geo_doors if item.get("pixel_width")]
-    door_widths_px = door_mask_widths_px or geometric_door_widths_px
-    door_width_source = "segmentation masks" if door_mask_widths_px else "geometric candidates"
+    door_swing_radii_px = detect_door_swing_radii_px(image_bytes)
+    door_widths_px = door_swing_radii_px if len(door_swing_radii_px) >= 3 else (door_mask_widths_px or geometric_door_widths_px)
+    door_width_source = "door swing arc radii" if len(door_swing_radii_px) >= 3 else ("segmentation masks" if door_mask_widths_px else "geometric candidates")
     union_room_mask = np.zeros((image_size[1], image_size[0]), dtype=np.uint8)
     room_areas_px = []
     for mask in room_masks:
@@ -816,8 +819,12 @@ def _process_story_slice(image_bytes, image_size, meters_per_pixel, wall_height,
     # the ink in the uploaded drawing. Measure the source line mask instead so
     # the pixel-space snap tolerance reflects actual wall strokes.
     thickness_masks = [prepared_image.get("dark")] if isinstance(prepared_image.get("dark"), np.ndarray) else wall_masks
-    wall_thickness_px = estimate_wall_thickness_px(
+    stroke_thickness_px = estimate_wall_thickness_px(
         thickness_masks, meters_per_pixel=meters_per_pixel, wall_thickness_m=wall_thickness
+    )
+    band_masks = [solidify_wall_band(mask) for mask in thickness_masks]
+    wall_thickness_px = estimate_wall_thickness_px(
+        band_masks, meters_per_pixel=meters_per_pixel, wall_thickness_m=wall_thickness
     )
     walls_data, doors_data, windows_data, dropped_openings = snap_openings_and_cut_walls(
         walls_data, doors_data, windows_data, wall_thickness_m=wall_thickness,
@@ -864,6 +871,10 @@ def _process_story_slice(image_bytes, image_size, meters_per_pixel, wall_height,
         "windows": windows_data,
         "warnings": warnings,
         "meters_per_pixel": meters_per_pixel,
+        "door_swing_radii_px": [round(float(value), 2) for value in door_swing_radii_px],
+        "wall_stroke_thickness_px": round(float(stroke_thickness_px), 2),
+        "wall_band_thickness_px": round(float(wall_thickness_px), 2),
+        "snap_tolerance_px": round(max(6.0, 1.5 * float(wall_thickness_px)), 2),
         "footprint_bounds": [round(float(value) * meters_per_pixel, 3) for value in footprint_bounds_px] if footprint_bounds_px else None,
         "footprint_area_m2": round(float(footprint_area_px) * meters_per_pixel * meters_per_pixel, 2) if footprint_area_px else 0.0,
         "room_footprint_coverage": round(float(room_footprint_coverage), 4),

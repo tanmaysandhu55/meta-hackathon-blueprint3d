@@ -173,18 +173,35 @@ def choose_scale(*, user_scale, door_widths_px, footprint_bounds_px, footprint_a
     """Apply the documented scale priority, rejecting candidates outside area/door sanity limits."""
     candidates = []
     if user_scale is not None:
-        candidates.append((float(user_scale), "user", 1.0))
+        candidates.append((float(user_scale), "user", 1.0, None))
 
-    door_scale, door_quality = estimate_meters_per_pixel_from_door_widths(door_widths_px)
-    if door_scale is not None:
-        candidates.append((door_scale, "door-width", 0.7))
+    door_values = sorted(float(width) for width in (door_widths_px or []) if math.isfinite(float(width)) and float(width) > 0)
+    # Arc detectors can also find unrelated curved drawing marks. Keep
+    # internally consistent groups so a few spurious radii cannot spoil the
+    # median of the actual repeated door-swing arcs.
+    door_clusters = []
+    for anchor in door_values:
+        cluster = [width for width in door_values if 0.75 * anchor <= width <= 1.25 * anchor]
+        if len(cluster) < 3:
+            continue
+        median = float(np.median(cluster))
+        cv = float(np.std(cluster) / median) if median else float("inf")
+        if cv < 0.25 and not any(cluster == existing for existing in door_clusters):
+            door_clusters.append(cluster)
+    door_clusters.sort(key=lambda values: (-len(values), float(np.median(values))))
+    for cluster in door_clusters:
+        candidates.append((0.9 / float(np.median(cluster)), "door-width", 0.7, cluster))
+
+    door_scale, door_quality = estimate_meters_per_pixel_from_door_widths(door_values)
+    if door_scale is not None and not any(source == "door-width" and abs(scale - door_scale) < 1e-10 for scale, source, _, _ in candidates):
+        candidates.append((door_scale, "door-width", 0.7, door_values))
 
     if footprint_bounds_px:
         min_x, min_y, max_x, max_y = map(float, footprint_bounds_px)
         longest_side = max(max_x - min_x, max_y - min_y)
         if longest_side > 0:
-            candidates.append((float(typical_width_m) / longest_side, "typical-footprint-width", 0.35))
-    candidates.append((float(default_scale), "configured-default", 0.15))
+            candidates.append((float(typical_width_m) / longest_side, "typical-footprint-width", 0.35, None))
+    candidates.append((float(default_scale), "configured-default", 0.15, None))
 
     warnings = []
     if user_scale is None and door_scale is None:
@@ -204,21 +221,22 @@ def choose_scale(*, user_scale, door_widths_px, footprint_bounds_px, footprint_a
         warnings.append("User scale is outside the supported range; an automatic estimate was tried instead.")
 
     seen = set()
-    for scale, source, confidence in candidates:
+    for scale, source, confidence, candidate_door_widths in candidates:
         if scale in seen or not math.isfinite(scale) or not 0.001 <= scale <= 0.1:
             continue
         seen.add(scale)
         total_area = float(footprint_area_px or 0) * scale * scale
         room_areas = [float(area) * scale * scale for area in (room_areas_px or [])]
-        door_median = float(np.median(door_widths_px)) * scale if door_widths_px else None
+        habitable_room_areas = [area for area in room_areas if area >= 6.0] or room_areas
+        validation_widths = candidate_door_widths if candidate_door_widths is not None else door_values
+        door_median = float(np.median(validation_widths)) * scale if validation_widths else None
         reasons = []
-        if total_area and not 20 <= total_area <= 1500:
-            reasons.append(f"estimated building area {total_area:.1f} m2 is outside 20-1500 m2")
-        invalid_rooms = [area for area in room_areas if area < 1.5 or area > 300]
-        if invalid_rooms:
-            reasons.append(f"{len(invalid_rooms)} estimated room area(s) are outside 1.5-300 m2")
-        if door_median is not None and len(door_widths_px) >= 3 and not 0.7 <= door_median <= 1.2:
-            reasons.append(f"median detected door width {door_median:.2f} m is outside 0.7-1.2 m")
+        if source != "user" and total_area and not 25 <= total_area <= 400:
+            reasons.append(f"estimated residential building area {total_area:.1f} m2 is outside 25-400 m2")
+        if source != "user" and habitable_room_areas and not 6 <= float(np.median(habitable_room_areas)) <= 30:
+            reasons.append(f"median estimated room area {float(np.median(habitable_room_areas)):.1f} m2 is outside 6-30 m2")
+        if door_median is not None and len(validation_widths) >= 3 and not 0.7 <= door_median <= 1.1:
+            reasons.append(f"median detected door swing/width {door_median:.2f} m is outside 0.7-1.1 m")
         if reasons:
             warnings.append(f"Rejected {source} scale: {'; '.join(reasons)}.")
             continue
@@ -246,7 +264,7 @@ def choose_scale(*, user_scale, door_widths_px, footprint_bounds_px, footprint_a
 
 
 def estimate_wall_thickness_px(wall_masks, meters_per_pixel=None, wall_thickness_m=0.2):
-    """Estimate raster wall thickness from distance-transform ridges."""
+    """Measure solid wall-band thickness from its distance-transform ridge."""
     measured = []
     for mask in wall_masks or []:
         binary = (np.asarray(mask) > 0).astype(np.uint8)
@@ -256,7 +274,7 @@ def estimate_wall_thickness_px(wall_masks, meters_per_pixel=None, wall_thickness
         local_max = cv2.dilate(distance, np.ones((3, 3), np.uint8))
         ridge = (distance >= local_max - 1e-3) & (distance >= 1.0)
         widths = 2.0 * distance[ridge]
-        widths = widths[(widths >= 2.0) & (widths <= 40.0)]
+        widths = widths[(widths >= 2.0) & (widths <= 120.0)]
         if widths.size:
             measured.extend(widths.tolist())
     if measured:
@@ -264,6 +282,73 @@ def estimate_wall_thickness_px(wall_masks, meters_per_pixel=None, wall_thickness
     if meters_per_pixel and meters_per_pixel > 0:
         return float(wall_thickness_m) / float(meters_per_pixel)
     return 8.0
+
+
+def solidify_wall_band(mask):
+    """Close the narrow white seam between parallel wall strokes on a copy."""
+    binary = (np.asarray(mask) > 0).astype(np.uint8) * 255
+    if binary.ndim != 2 or not np.any(binary):
+        return binary
+    gap_kernel = max(21, min(31, int(round(min(binary.shape) * 0.018)) | 1))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (gap_kernel, gap_kernel))
+    return cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=1)
+
+
+def detect_door_swing_radii_px(image):
+    """Find plausible partial circular swing arcs and return their radii in px."""
+    if image is None:
+        return []
+    if isinstance(image, (bytes, bytearray, memoryview)):
+        image = cv2.imdecode(np.frombuffer(image, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+        if image is None:
+            return []
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image.copy()
+    gray = cv2.medianBlur(gray, 5)
+    edges = cv2.Canny(gray, 40, 120)
+    contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+    radii = []
+    centers = []
+    min_radius = max(8, min(gray.shape) // 100)
+    max_radius = max(12, min(gray.shape) // 2)
+    for contour in contours:
+        if len(contour) < 20:
+            continue
+        points = contour[:, 0, :].astype(float)
+        x, y = points[:, 0], points[:, 1]
+        matrix = np.column_stack((2 * x, 2 * y, np.ones_like(x)))
+        try:
+            cx, cy, constant = np.linalg.lstsq(matrix, x * x + y * y, rcond=None)[0]
+        except np.linalg.LinAlgError:
+            continue
+        radius = math.sqrt(max(0.0, constant + cx * cx + cy * cy))
+        # Algebraic circle fits are biased for short arcs (door swings are
+        # commonly only a quarter-circle). Refine the fit against geometric
+        # radial error with a few Gauss-Newton steps.
+        for _ in range(8):
+            dx, dy = cx - x, cy - y
+            distances = np.maximum(np.hypot(dx, dy), 1e-6)
+            residuals = distances - radius
+            jacobian = np.column_stack((dx / distances, dy / distances, -np.ones_like(distances)))
+            try:
+                delta = np.linalg.lstsq(jacobian, -residuals, rcond=None)[0]
+            except np.linalg.LinAlgError:
+                break
+            cx += float(delta[0])
+            cy += float(delta[1])
+            radius += float(delta[2])
+            if float(np.linalg.norm(delta)) < 1e-3:
+                break
+        residual = np.median(np.abs(np.hypot(x - cx, y - cy) - radius))
+        angles = np.sort(np.mod(np.degrees(np.arctan2(y - cy, x - cx)), 360.0))
+        angular_gaps = np.diff(np.r_[angles, angles[0] + 360.0])
+        arc_span = 360.0 - float(np.max(angular_gaps)) if len(angles) else 0.0
+        # Door swing strokes are partial arcs. Full circles, rounded fixtures,
+        # and broad curved outlines should not contribute to scale.
+        if min_radius <= radius <= max_radius and 35.0 <= arc_span <= 150.0 and residual <= max(2.5, radius * 0.06):
+            if not any(math.hypot(cx - old_x, cy - old_y) < max(8.0, radius * 0.2) for old_x, old_y in centers):
+                centers.append((cx, cy))
+                radii.append(radius)
+    return radii
 
 
 def mask_to_polygons_with_holes(mask_uint8, meters_per_pixel, min_area_px=150, simplify_meters=0.04):
@@ -969,7 +1054,7 @@ def snap_openings_and_cut_walls(
         from shapely.affinity import scale as scale_geometry
         pixel_walls = scale_geometry(combined_walls, xfact=1.0 / meters_per_pixel, yfact=1.0 / meters_per_pixel, origin=(0, 0))
         wall_thickness_px = float(wall_thickness_px or (wall_thickness_m / meters_per_pixel))
-        tolerance_px = max(6.0, 2.5 * wall_thickness_px)
+        tolerance_px = max(6.0, 1.5 * wall_thickness_px)
 
     def snap_point(cx_m, cy_m, opening_id, kind):
         if tolerance_px is None:
