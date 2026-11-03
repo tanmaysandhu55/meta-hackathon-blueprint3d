@@ -331,12 +331,12 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!processingModeBadge) return;
         const messages = {
             MOCK: "MOCK — PREPARED DATA",
-            DEMO: "SAVED DEMO SCENE",
+            DEMO: "META SAM 3.1 + MUSE SPARK (CACHED)",
             READY: "SAM READY — NOT YET USED",
             LOCAL: "OPENCV ONLY",
         };
         let label = messages[mode] || messages.LOCAL;
-        if (mode === "DEMO" && meta?.preparedSample) {
+        if (mode === "DEMO") {
             label = "META SAM 3.1 + MUSE SPARK (CACHED)";
         } else if (meta && mode !== "MOCK" && mode !== "DEMO") {
             const segmentation = String(meta.segmentation || "").toLowerCase();
