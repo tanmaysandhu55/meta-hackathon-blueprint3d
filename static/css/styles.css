@@ -1173,21 +1173,31 @@ em, .pigment-italic {
   width: 0 !important;
   min-width: 0 !important;
   max-width: 0 !important;
-  overflow: hidden !important;
+  overflow: visible !important;
   border-right: none !important;
-}
-
+}
+.studio-sidebar.is-collapsed > :not(.sidebar-collapse-toggle) {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+.studio-sidebar.is-collapsed .sidebar-collapse-toggle {
+  position: fixed;
+  left: 0;
+  right: auto;
+  z-index: 1000;
+  pointer-events: auto;
+}
 /* Collapse Toggle Button */
 .sidebar-collapse-toggle {
   position: absolute;
-  top: 14px;
-  right: -26px;
-  width: 26px;
-  height: 26px;
+  top: 50%;
+  right: -14px;
+  width: 28px;
+  height: 42px;
+  transform: translateY(-50%);
   background-color: var(--ground);
   border: 1px solid var(--hairline);
-  border-left: none;
-  border-radius: 0;
+  border-radius: 0 6px 6px 0;
   color: var(--ink);
   font-family: var(--font-mono);
   font-size: 13px;
@@ -1708,5 +1718,25 @@ textarea.sidebar-input {
   .egress-summary-row {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 8px;
+  }
+}
+
+
+/* Evacuation preview layout fixes for narrow viewports. */
+#app-view #evacuation-card.egress-card {
+  left: auto !important;
+  right: 16px !important;
+  width: min(440px, calc(100% - 32px)) !important;
+  min-width: min(300px, calc(100% - 32px)) !important;
+  max-width: 440px !important;
+  box-sizing: border-box;
+}
+.egress-card > div:first-child { gap: 10px; align-items: center; }
+.egress-card-title { flex: 1 1 auto; min-width: 0; line-height: 1.4; letter-spacing: 0.08em; overflow-wrap: normal; word-break: normal; }
+.egress-summary-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); }
+.egress-summary-row > span { min-width: 0; overflow-wrap: normal; word-break: normal; }
+@media (max-width: 640px) {
+  #app-view #evacuation-card.egress-card {
+    width: min(400px, calc(100% - 16px)) !important;
   }
 }
