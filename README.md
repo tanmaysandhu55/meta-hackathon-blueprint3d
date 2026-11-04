@@ -1,86 +1,124 @@
 # FloorPlan3D
 
-FloorPlan3D converts 2D floor-plan images into metric scene data and a navigable Three.js model. Prepared one-story and two-story demos run offline and need no API key.
+### From a 2D blueprint to an interactive 3D space
 
-## Architecture
+FloorPlan3D turns architectural floor-plan images into structured scene data and an explorable Three.js model. It brings visual review, room information, editing, and navigation into one browser-based workspace.
 
-```mermaid
-flowchart LR
-    A[Image upload] --> B[Flask validation and job]
-    B --> C{Meta key configured?}
-    C -->|Yes| D[Parallel SAM 3.1 prompts]
-    C -->|No or call fails| E[Local OpenCV fallback]
-    D --> F[OpenCV and Shapely geometry]
-    E --> F
-    F --> G[Optional Muse Spark room labels]
-    G --> H[scene.json and overlays]
-    H --> I[Three.js viewer]
-    K[Text prompt] --> L[Optional Muse Image draft]
-    L --> B
-    M[WAV question] --> N[Optional Muse Voice transcription]
-    N --> O[Baseten AI or offline map assistant]
-    J[Prepared demo scenes] --> I
+> **Built by Tanmay Sandhu for the Meta Global AI Developer Hackathon**
+
+## The problem
+
+A floor plan contains walls, rooms, doors, windows, labels, and connections, but those details are flattened into a drawing. Understanding how the spaces fit together can take time, especially for people who do not work with plans every day.
+
+FloorPlan3D makes a plan easier to inspect by transforming detected features into a 3D scene while keeping review and correction tools close to the original drawing.
+
+## What FloorPlan3D does
+
+- Processes uploaded floor-plan images and displays detected rooms and architectural features.
+- Shows room labels, floor levels, estimated areas, and connections.
+- Provides 3D, top-down, and walkthrough views.
+- Includes a 2D editor for reviewing and adjusting the plan.
+- Previews routes through doors and between connected floors.
+- Offers prepared **Meta AI Drafts** that load instantly for a dependable demo.
+
+## Meta AI in the workflow
+
+Meta models add image understanding and scene interpretation to the application:
+
+- **Meta SAM 3.1** uses text prompts to segment image regions such as rooms, walls, doors, and windows.
+- **Muse Spark** helps classify rooms and interpret plan context. **Ask This Map** uses the current scene to answer questions about rooms and connections.
+- Optional **Muse Image** and **Muse Voice** features can draft a floor-plan image from text and transcribe WAV questions when the corresponding account access is configured.
+
+The Flask backend coordinates model requests and processing. OpenCV handles image operations and fallback detection; Shapely constructs and validates geometry; Three.js renders the scene in the browser. See `meta_sam_service.py`, `baseten_service.py`, and `meta_media_service.py` for the model integration points.
+
+## How it works
+
+```text
+Floor-plan image or text prompt
+              ↓
+      Flask upload and job API
+              ↓
+ Meta SAM 3.1 segmentation, when configured
+     OpenCV detection and fallback processing
+              ↓
+       Shapely geometry processing
+              ↓
+ Muse Spark scene interpretation, when configured
+              ↓
+       Structured scene data
+              ↓
+ Three.js viewer, editor, and navigation
 ```
 
-With `META_API_KEY` configured, the app can send four parallel image prompts to Meta SAM 3.1; failed concepts fall back to local OpenCV. A Baseten key enables Muse Spark Open for room labels and scene-grounded map questions. Without either key, uploads and the deterministic map lookup still work locally. Prepared demos never call providers.
+Which model steps run depends on the configured credentials and feature. Local processing and prepared scenes let users explore the project without making live model calls.
 
-## Run on Windows
+## Demo mode
+
+The prepared **Meta AI Drafts** are cached scenes. They load immediately and do not call a model during loading. Uploaded plans use the active processing configuration. The interface indicates the current mode so a cached scene is not mistaken for a live inference result.
+
+## Technology
+
+| Component | Technology |
+| --- | --- |
+| Web application and API | Python, Flask |
+| Model integrations | Meta SAM 3.1, Muse Spark; optional Muse Image and Muse Voice |
+| Image processing | OpenCV, NumPy, Pillow |
+| Geometry | Shapely |
+| 3D viewer and editor | Three.js, JavaScript, HTML, CSS |
+| Validation and tests | JSON Schema, pytest |
+
+## Run locally
+
+### Requirements
+
+- Python 3.12 or newer
+- Git
+- A modern web browser
+
+Prepared scenes and local fallback features can be explored without API credentials. Live model features require valid credentials and access to the relevant models.
+
+### Windows (PowerShell)
 
 ```powershell
-py -3.12 -m venv .venv
+git clone https://github.com/tanmaysandhu55/meta-hackathon-blueprint3d.git
+cd meta-hackathon-blueprint3d
+py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 Copy-Item .env.example .env
 .\.venv\Scripts\python.exe app.py
 ```
 
-Open http://127.0.0.1:5000. If the Python launcher is unavailable, use your installed Python executable to create the environment. Use the same environment for install and run.
-
-## Run on macOS or Linux
+### macOS or Linux
 
 ```sh
+git clone https://github.com/tanmaysandhu55/meta-hackathon-blueprint3d.git
+cd meta-hackathon-blueprint3d
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 cp .env.example .env
 .venv/bin/python app.py
 ```
 
-## What works without a key
+Open [http://127.0.0.1:5000](http://127.0.0.1:5000) in your browser.
 
-Both prepared demos, upload processing, local heuristic segmentation, generic room labels, and offline map questions. Four local segmentation jobs process rooms, walls, doors, and windows in parallel. Door and window masks may be omitted when heuristics cannot identify them reliably; wall geometry can fall back to room outlines. Failure to detect rooms is reported clearly.
+### Configure API access
 
-## Optional Meta models
-
-Baseten provides the `meta-models/muse-spark-open-1026` model through `https://inference.baseten.co/v1`. Its `BASETEN_API_KEY` enables room labeling and an AI map assistant grounded in the loaded scene. Set these values in `.env`:
-
-```env
-BASETEN_API_KEY=your_key_here
-BASETEN_API_BASE_URL=https://inference.baseten.co/v1
-BASETEN_MUSE_MODEL=meta-models/muse-spark-open-1026
-```
-
-Baseten token counts are recorded for successful provider responses in the local, gitignored `local_data/baseten_usage.json` file. The current totals are also available from the local `/api/usage` endpoint. This tracking starts after the updated app is restarted and cannot recover usage from earlier requests; it is not a balance or cost estimate.
-
-SAM 3.1, Muse Image, and Muse Voice are separate Meta Model API services and still require `META_API_KEY`; the Baseten key does not authenticate those endpoints. Without that Meta key the project uses OpenCV segmentation, and the image/voice features remain unavailable. Muse Image outputs are visual drafts, not verified architectural plans. Voice transcription accepts mono, 16-bit PCM WAV at 16 or 24 kHz, up to 10 minutes. To enable optional Meta-hosted features, add a separate `META_API_KEY` and keep the model IDs from `.env.example`:
-
-1. Open .env in the project folder.
-2. Set `META_API_KEY` only if you have Meta Model API access for SAM, Muse Image, or Muse Voice.
-3. Set the exact model IDs provided by your Meta dashboard.
-4. Restart Flask. The page badge and `/api/health` show whether SAM and Muse are configured.
-
-SAM uses Meta's Responses API and official parser. Muse Spark Open uses the OpenAI-compatible Baseten endpoint. Muse Image and Voice Transcribe are optional Meta services. See [Baseten's inference quickstart](https://docs.baseten.co/inference/overview), [Meta SAM docs](https://dev.meta.ai/docs/sam/overview), [Muse image generation](https://dev.meta.ai/docs/cookbook/image-generation-basics), and [Muse speech-to-text](https://dev.meta.ai/docs/speech-to-text). Account access is unverified until tested with your credentials. Provider failures fall back safely where available; credentials and raw provider responses are not returned to the browser.
-
-## Limitations
-
-Heuristic segmentation works best on clean, high-contrast plans with closed room boundaries. Text, furniture, shadows, low contrast and door gaps can affect results. Door and window detections may be empty or incomplete. Scale and area are estimates and should be checked against known dimensions. This prototype is for visualization only, not construction, compliance, evacuation or safety decisions.
+Copy `.env.example` to `.env`, then enter the credentials and model IDs supported by your account for the features you want to use. Keep actual keys in `.env` and never commit them. Restart the Flask app after changing environment settings. The prepared scenes do not need API keys.
 
 ## Tests
 
-Run `python -m pytest -q`. Tests use local fixtures and mocked API clients; they do not make real network calls. Live SAM and Muse access remain unverified until tested with an account key.
+Run the test suite from the project folder:
 
-To check local segmentation and geometry against the bundled sample plan without an API key, run `python scripts/evaluate_local_segmentation.py`. It reports mask and final geometry counts and applies loose fixture guardrails for room, wall, door, and window detection. This is a regression check for that one sample, not an accuracy score or a guarantee for other floor plans.
+```sh
+python -m pytest -q
+```
 
-## Demo review flow
+Tests use local fixtures and mocked API responses; they do not require real credentials or make live model calls.
 
-Use the sidebar's **Quick judge walkthrough** to rehearse the key features. The **Area Summary** includes an AI plan review and a one-click building summary; both use the current scene facts and still work offline with deterministic text. The map assistant can answer scene questions and resolve explicit requests such as “route from East Lobby to Computer Lab” into the existing door/stairs route planner. The **Review 2D detections** button opens the overlay; **Edit a room outline** selects a room and starts the boundary editor. Review all detected geometry and verify scale against a known dimension before relying on measurements. AI text is grounded in detected scene data but is not a building-code, construction, or safety assessment.
+## Limitations
 
-The 3D view also includes a time-of-day lighting preview, a 2D blueprint underlay for visual alignment checks, an exterior walkthrough view, and an egress connectivity preview through detected doors and stairs. These are visualization aids: exit candidates and travel lengths can be inferred from imperfect geometry and must not be used for evacuation planning or to claim code compliance.
+Results depend on the quality and style of the source drawing. Clear, high-contrast plans generally work best. Detected walls, openings, room boundaries, scale, and areas are estimates and may need correction. FloorPlan3D is a visualization prototype; its output is not intended for construction, safety decisions, evacuation planning, or code-compliance assessment.
+
+## About
+
+FloorPlan3D was built by **Tanmay Sandhu** for the **Meta Global AI Developer Hackathon**. The goal is to make architectural layouts easier to understand, review, and explore.
