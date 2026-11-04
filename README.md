@@ -52,6 +52,10 @@ Floor-plan image or text prompt
 
 Which model steps run depends on the configured credentials and feature. Local processing and prepared scenes let users explore the project without making live model calls.
 
+## Demo video
+
+[Watch the FloorPlan3D narrated demo](FloorPlan3D_Walkthrough_Max_Voiceover_Final.mp4).
+
 ## Demo mode
 
 The prepared **Meta AI Drafts** are cached scenes. They load immediately and do not call a model during loading. Uploaded plans use the active processing configuration. The interface indicates the current mode so a cached scene is not mistaken for a live inference result.
@@ -122,3 +126,4 @@ Results depend on the quality and style of the source drawing. Clear, high-contr
 ## About
 
 FloorPlan3D was built by **Tanmay Sandhu** for the **Meta Global AI Developer Hackathon**. The goal is to make architectural layouts easier to understand, review, and explore.
+
