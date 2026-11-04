@@ -1,28 +1,82 @@
-# FloorPlan3D
+# 🏠 FloorPlan3D
 
-**Transforming 2D floor plans into explorable 3D environments.** FloorPlan3D turns an uploaded architectural plan into an editable scene that can be inspected, measured, and explored in a browser.
+### Transform 2D floor plans into interactive 3D spaces
 
-## Meta AI integration
+FloorPlan3D is a web application for turning architectural floor-plan images into editable, explorable 3D scenes. It combines Meta model inference with computer-vision and geometry processing, then presents the result in a browser-based Three.js viewer.
 
-- **Meta SAM 3.1** performs zero-shot, prompt-based segmentation for rooms, walls, doors, and windows. If a SAM request is unavailable or does not return useful masks, local OpenCV detection provides a fallback.
-- **Muse Spark** helps classify room types, interpret labels in the plan, and answer questions grounded in the current scene. The app validates labels and uses generic labels or an offline scene lookup when the model is unavailable.
-- Optional Muse Image and Muse Voice features can create a draft plan from a text prompt and transcribe a WAV question when the account and configured models support those calls.
+---
 
-The SAM request is implemented in `meta_sam_service.py` (`query_sam_concept`). Muse room labeling and scene questions are implemented in `baseten_service.py` (`label_rooms`, `answer_scene_question`). Both integrations are called by the Flask pipeline in `app.py`.
+## 🧠 Project Overview
 
-## How it works
+Reading a floor plan means interpreting walls, openings, rooms, labels, and how spaces connect. That can be difficult when all the information is flattened into a 2D image. FloorPlan3D helps make the layout easier to understand by creating a 3D view that users can inspect, edit, and navigate.
 
-1. Flask validates the uploaded plan and manages the processing job.
-2. Meta SAM 3.1 and local OpenCV produce candidate image regions, depending on the configured mode and provider availability.
-3. OpenCV and Shapely turn the detections into room, wall, and opening geometry in the `scene.json` format.
-4. Muse Spark can add room labels and answer scene-grounded questions.
-5. The Three.js frontend displays the scene and provides editing, walkthrough, measurement, and export tools.
+## 🔍 What Problem Does It Address?
 
-## Prepared demo scenes
+Floor plans are useful technical documents, but they can be hard to visualize for people who do not regularly work with architectural drawings. Reviewing a plan also involves checking many details across the image, including room boundaries, doors, windows, and floor connections.
 
-The **Meta AI Drafts** samples load instantly from saved scene data. They are included for reliable demos when the network or model service is unavailable. Loading a cached sample does not make a live model call; uploaded plans use the configured processing pipeline.
+FloorPlan3D provides an interactive way to explore those details while keeping the source plan and review workflow close at hand.
 
-## Run locally
+## 🛠️ What Can You Do?
+
+- Upload a floor-plan image for processing.
+- Review detected rooms, walls, doors, and windows.
+- Inspect room labels, estimated areas, and floor levels.
+- Explore a model in 3D, top-down, or first-person walkthrough views.
+- Edit plan elements in the 2D editor.
+- View door-based routes and cross-floor connections.
+- Load prepared demo scenes instantly for presentations.
+
+## 🤖 Meta AI Integration
+
+Meta models contribute to the plan-understanding workflow:
+
+- **Meta SAM 3.1** performs prompt-based segmentation to identify image regions for rooms and architectural features.
+- **Muse Spark** supports room classification, scene interpretation, and the **Ask This Map** feature, which answers questions grounded in the current scene.
+- Optional **Muse Image** and **Muse Voice** integrations support text-based draft-plan generation and WAV transcription when configured for the account.
+
+Model requests are implemented in `meta_sam_service.py`, `baseten_service.py`, and `meta_media_service.py`. The Flask application coordinates processing, while OpenCV and Shapely help turn image detections into structured geometry. The browser frontend uses Three.js to render and interact with the scene.
+
+## 🧩 How the System Works
+
+```text
+Floor-plan image
+      ↓
+Flask upload and job handling
+      ↓
+Meta SAM 3.1 segmentation + OpenCV image processing
+      ↓
+Shapely geometry and structured scene data
+      ↓
+Muse Spark scene understanding and room labels
+      ↓
+Three.js 3D viewer, editor, and navigation tools
+```
+
+The exact live-model steps depend on the configured API access and runtime mode. OpenCV fallback and prepared scenes support development and demonstrations when live inference is unavailable.
+
+## 🎬 Prepared Demo Scenes
+
+The **Meta AI Drafts** are saved scenes that load immediately without making a live model request. They make the project easy to explore during a presentation and provide a reliable offline demonstration. Uploaded plans follow the configured processing pipeline.
+
+## 🧰 Technology Stack
+
+| Area | Tools |
+| --- | --- |
+| Backend and API | Python, Flask |
+| AI models | Meta SAM 3.1, Muse Spark; optional Muse Image and Muse Voice |
+| Image processing | OpenCV, NumPy, Pillow |
+| Geometry | Shapely |
+| Interactive visualization | Three.js, JavaScript, HTML, CSS |
+| Validation and tests | JSON Schema, pytest |
+
+## 🚀 Installation and Setup
+
+### Requirements
+
+- Python 3.12 or newer
+- Git
+- A modern web browser
+- Meta model API access for live inference (optional for prepared demos and local/mock mode)
 
 ### Windows PowerShell
 
@@ -32,7 +86,6 @@ cd Meta-Global-hackthon-Project
 py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 Copy-Item .env.example .env
-.\.venv\Scripts\python.exe app.py
 ```
 
 ### macOS or Linux
@@ -43,41 +96,40 @@ cd Meta-Global-hackthon-Project
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 cp .env.example .env
+```
+
+### Configure and Run
+
+Open `.env` and add the model credentials and model identifiers available to your account. Keep real keys in `.env`; do not commit that file. The checked-in `.env.example` contains placeholders.
+
+Start the app:
+
+```powershell
+# Windows
+.\.venv\Scripts\python.exe app.py
+```
+
+```sh
+# macOS or Linux
 .venv/bin/python app.py
 ```
 
-Open <http://127.0.0.1:5000> in your browser.
+Then open [http://127.0.0.1:5000](http://127.0.0.1:5000). Without API credentials, prepared scenes remain available; live model features require valid credentials and supported model access.
 
-## Configure model access
+## ✅ Tests
 
-Open `.env` and set the credentials and mode supported by your account:
-
-```dotenv
-MODEL_API_KEY=your_meta_model_api_key
-MODEL_BASE_URL=https://api.meta.ai/v1
-SAM_MODEL=sam-3.1
-MUSE_MODEL=muse-spark-1.3
-MOCK_AI=0
-```
-
-Use `MOCK_AI=1` for the prepared/offline demo. `MODEL_API_KEY` is the canonical Meta key setting; the application also recognizes the legacy `META_API_KEY` name. Muse Spark can use the Meta key when configured; a Baseten key is an optional provider fallback for Muse only. SAM 3.1 uses the Meta API key. Keep real credentials in your ignored `.env` file, never in source code, screenshots, or commits. `.env.example` contains placeholders only.
-
-Restart the Flask app after changing `.env`. Without model credentials, prepared samples and local OpenCV processing remain available; room names fall back to generic labels when Muse is unavailable.
-
-## Limitations
-
-Segmentation works best on clean, high-contrast plans with clear room boundaries. Complex drawings, text, furniture, low contrast, and open boundaries can affect detections. Scale, room areas, doors, windows, and generated geometry are estimates; review and correct them against the source plan. This prototype is for visualization and exploration, not construction, code-compliance, evacuation, or safety decisions.
-
-## Tests
-
-Run the local test suite with:
+Run the automated tests from the project directory:
 
 ```sh
 python -m pytest -q
 ```
 
-Provider calls in tests should use mocks; running the tests does not require a live API key.
+The tests use mocked provider responses and do not require real API keys or live network calls.
 
-## About
+## ⚠️ Limitations
 
-Built by Tanmay Sandhu for the Meta Global AI Developer Hackathon. Thanks for trying FloorPlan3D—feedback and careful review of the generated geometry are welcome.
+Results depend on the clarity and style of the source drawing. High-contrast plans with clear boundaries generally work best. Detected geometry, scale, room areas, doors, and windows are estimates and may need correction in the review tools. FloorPlan3D is a visualization prototype; its output is not for construction, safety, evacuation planning, or code-compliance decisions.
+
+## 👋 About
+
+Built by **Tanmay Sandhu** for the **Meta Global AI Developer Hackathon**. Feedback and careful review of generated scenes are welcome.
